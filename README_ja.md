@@ -1,6 +1,8 @@
 # FluoraPressée: Andor Spectrometer Control & Analysis GUI
 
-Author: Hiroki Kobayashi (Geochemical Research Center, The University of Tokyo). https://orcid.org/0000-0002-3682-7558 E-mail as of 2026: hiroki (at) eqchem.s.u-tokyo.ac.jp
+* Author: Hiroki Kobayashi (Geochemical Research Center, The University of Tokyo). 
+    * https://orcid.org/0000-0002-3682-7558 
+    * E-mail as of 2026: hiroki (at) eqchem.s.u-tokyo.ac.jp
 
 Andor製のカメラ（検出器）および分光器を制御し、スペクトルのリアルタイム取得からバックグラウンド補正、キャリブレーション、ピークフィッティング、そして高圧実験における圧力計算までを一貫して行うためのPythonベースのGUIアプリケーションです。
 
@@ -8,6 +10,8 @@ Andor製のカメラ（検出器）および分光器を制御し、スペクト
 
 
 ### メイン画面
+
+![](manuals/img/MainWindowFull.jpg)
 
 * スペクトルの取得、保存
     * 単発測定および連続測定
@@ -19,42 +23,59 @@ Andor製のカメラ（検出器）および分光器を制御し、スペクト
     * 利用可能な函数は、Gaussian, Lorentzian, Pseudo Voigt, Double Gaussian, Double Lorentzian, Double Pseudo Voigt の6種類
 * 圧力計算ウィンドウを開く
 
-![](manuals/img/MainWindowFull.jpg)
+
 
 ### 横軸較正画面（「Calibrate x-axis」ボタンをクリックして開く）
-* 標準試料のスペクトルを取得し、ピーク検索、Gaussian函数によるピークフィット、波長の較正までを行えます。
+
 ![](manuals/img/CalibrationWindow.png)
 
+* 標準試料のスペクトルを取得し、ピーク検索、Gaussian函数によるピークフィット、波長の較正までを行えます。
+
+
 ### 横軸較正補助画面
-* よく使うネオンの波長領域のスペクトル（事前に測定してプログラム中に保存したもの）を表示してピークの帰属の参考にできます。
+
 ![](manuals/img/CalibrationHelperWindow.png)
 
+* よく使うネオンの波長領域のスペクトル（事前に測定してプログラム中に保存したもの）を表示してピークの帰属の参考にできます。
+
+
 ### 圧力計算画面（「Open pressure calculator」ボタンをクリックして開く）
+
+![](manuals/img/PressureCalculator.png)
 
 * 横軸が波長のモードの場合、蛍光スケール、横軸がRaman shiftのモードの場合、Ramanスケールを用いた圧力計算が可能です。使用できるスケールは以下の通りです
 * 蛍光スケール
     * ルビー（Cr<sup>3+</sup>:Al<sub>2</sub>O<sub>3</sub>）
-        * 圧力計算
+        * 圧力シフト
             * Shen et al., <i>High Press. Res.</i> (2020) [DOI: 10.1080/08957959.2020.1791107](https://doi.org/10.1080/08957959.2020.1791107)
             * Holzapfel, <i>J. Appl. Phys.</i> (2003) [DOI: 10.1063/1.1525856](https://doi.org/10.1063/1.1525856)
             * Mao et al., <i>J. Geophys. Res.</i> (1986) [DOI: 10.1029/JB091iB05p04673](https://doi.org/10.1029/JB091iB05p04673)
             * Piermarini et al., <i>J. Appl. Phys.</i> (1975) [DOI: 10.1063/1.321957](10.1063/1.321957)
         * 温度シフト
-            * 0 - 600 K, Ragan et al., 
-            * 296 - 800 K, Datchi et al., 
+            * 0 - 600 K, Ragan et al., <i>J. Appl. Phys.</i> (1992) [DOI: 10.1063/1.351951](https://doi.org/10.1063/1.351951)
+            * 296 - 800 K, Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://10.1080/08957950701659593)
     * Sm<sup>2+</sup>:SrB<sub>4</sub>O<sub>7</sub>
+        * 圧力シフト
+            * Datchi et al., <i>J. Appl. Phys.</i> (1997) [calibrated using the MXB1986 ruby scale] [DOI: 10.1063/1.365025](https://doi.org/10.1063/1.365025)
+            * Datchi et al., <i>High Press. Res.</i> (2007) [calibrated using the DO2007 ruby scale] [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
+        * 温度シフト
+            * Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
 * Raman スケール
     * <sup>13</sup>C diamond first order
-    * Cubic BN
+        * Schiferl et al., <i>J. Appl. Phys.</i> (1997) [DOI: 10.1063/1.366268](https://doi.org/10.1063/1.366268)
+    * Cubic BN TO
+        * Datchi et al. <i>Phys. Rev. B.</i> (2004) [DOI: 10.1103/PhysRevB.69.144106](https://doi.org/10.1103/PhysRevB.69.144106)
     * Zircon B<sub>1g</sub>
+        * Schmidt et al., <i>Am. Min.</i> (2013) [DOI: 10.2138/am.2013.4143](https://doi.org/10.2138/am.2013.4143)
+        * Takahashi et al., <i>J. Raman Spectrosc.</i> (2024) [DOI: 10.1002/jrs.6663](https://doi.org/10.1002/jrs.6663)
 
-![](manuals/img/PressureCalculator.png)
+
 
 
 ## 必須環境 (Requirements)
 
 * **OS**: Windows 10 / 11 (Andor SDKの動作環境に依存します)
-* **Python**: Python 3.8 以上, **3.11以下**（Princeton instrumentsの通信パッケージの対応の都合）
+* **Python**: Python 3.8 以上, 3.13以下
 * **Hardware**:
   * Andor製 カメラ（検出器）
   * Andor製 分光器
@@ -69,7 +90,7 @@ Andor製のカメラ（検出器）および分光器を制御し、スペクト
     pip install PyQt5 pyqtgraph numpy scipy pylablib
     ```
 3. Andor SDKが正しくインストールされていることを確認します。
-4. ディレクトリに、``spectrometerConfig.json``を作成し、``ShamrockCIF.dll``ファイルのパス、回折格子の情報および検出器の情報を記録する。``spectrometerConfig.json``を更新したのち、再度起動すれば、新しい内容が反映される。
+4. ディレクトリに、``spectrometerConfig.json``を作成し、以下の例を参考にしながら、``ShamrockCIF.dll``ファイルのパス、回折格子の情報および検出器の情報を記録します。``spectrometerConfig.json``を更新したのち、再度起動すれば、新しい内容が反映されます。
 
 
 ```json
