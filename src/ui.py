@@ -1608,12 +1608,15 @@ class SpectrometerGUI(QMainWindow):
                         text += f" Width: {res['Width']:.3f} ± {res['Width_Err']:.3f}<br><br>"
 
                     text += f"<b>R-value:</b><br> {res['R2']:.4f}</span>"
+
                     
                     is_double_fit = res.get("is_double")
                     
                     
                     if self.pressure_window is not None and self.pressure_window.isVisible():
                         self.pressure_window.set_current_peak(w_peak1, w_err1)
+                        text += f"<br><br><span>CalculatedPressure:<br>{self.pressure_window.current_pressure:.3f} ± {self.pressure_window.current_pressure_err:.3f} {self.pressure_window.unit}</span>"
+                    
 
                         
                         

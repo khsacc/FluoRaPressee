@@ -1,14 +1,30 @@
-import os
+﻿import os
 import sys
 import time
 import numpy as np
 from PyQt5.QtCore import QThread, pyqtSignal
 
+# PVCamのDLLパス (32bit環境では通常System32に入りますが、独自の場所にある場合は書き換えてください)
+dll_path = "C:\\Windows\\System32" 
+
+if hasattr(os, 'add_dll_directory'):
+    try:
+        os.add_dll_directory(dll_path)
+    except Exception as e:
+        print("add_dll_directory failed", e)
+
+os.environ["PATH"] = dll_path + os.pathsep + os.environ.get("PATH", "")
+
 try:
     import pylablib
-    pylablib.par["devices/dlls/picam"] = r"C:\Program Files\Princeton Instruments\PICam\Runtime"
-    from pylablib.devices import PrincetonInstruments 
-except ImportError:
+    # PVCam用のモジュールをインポート
+    from pylablib.devices import PrincetonInstruments
+    print("PVCam cameras:", PrincetonInstruments.list_cameras_pvcam())
+    # pylablibの内部パス設定をPVCam用に変更
+    pylablib.par["devices/dlls/pvcam"] = dll_path  
+         
+except Exception as e:
+    print(f"Error during loading pylablib PVCam: {repr(e)}")
     PrincetonInstruments = None
 
 class CameraThreadPI(QThread):
@@ -22,7 +38,7 @@ class CameraThreadPI(QThread):
     def __init__(self, config=None, debug=False):
         super().__init__()
         self.debug = debug
-        self.config=config or {}
+        self.config = config or {}
 
         self.thread_active = True
         self.is_measuring = False
@@ -41,27 +57,28 @@ class CameraThreadPI(QThread):
         self.new_temperature = None
         
         self.mock_exposure = 0.1
-        self.mock_temp = -70 # ProEMでよく使われる冷却温度付近
+        self.mock_temp = -70 
 
     def run(self):
         try:
             if self.debug or PrincetonInstruments is None:
                 print("[DEBUG MODE] Activating dummy camera...")
-                self.det_width, self.det_height = 1024, 1024
                 time.sleep(1.0)
                 self.init_finished.emit()
             else:      
-                print("Connecting to Princeton Instruments camera...")
-                self.cam = PrincetonInstruments.PicamCamera()
+                print("Connecting to PVCam (Princeton Instruments)...")
+                # PicamCamera ではなく PVCamCamera を使用
+                self.cam = PrincetonInstruments.PVCamCamera()
 
+                # 検知器サイズの取得
                 self.det_width, self.det_height = self.cam.get_detector_size()
                 print(f"Connected. Detector size: {self.det_width}x{self.det_height}")
                 
-                # ProEMの設定初期化
+                # 初期設定
                 self.cam.set_exposure(0.1)
                 try:
-                    # 冷却の設定（PICam APIでの標準的な設定方法）
-                    self.cam.set_attribute_value("SensorTemperatureSetPoint", -70.0)
+                    # PVCamでの温度設定パラメータ名は通常 "setpoint"
+                    self.cam.set_attribute_value("setpoint", -7000) # PVCamは0.01度単位の整数値が必要な場合があります
                 except Exception as e:
                     print(f"Notice: Could not set default temperature. {e}")
 
@@ -86,7 +103,8 @@ class CameraThreadPI(QThread):
                         self.mock_temp = self.new_temperature
                     else:
                         try:
-                            self.cam.set_attribute_value("SensorTemperatureSetPoint", float(self.new_temperature))
+                            # PVCamの仕様に合わせ、必要に応じて値を100倍（-70.0 -> -7000）にします
+                            self.cam.set_attribute_value("setpoint", int(float(self.new_temperature) * 100))
                         except Exception as e:
                             print(f"Failed to set temperature: {e}")
                     self.new_temperature = None
@@ -97,9 +115,9 @@ class CameraThreadPI(QThread):
                         self.temperature_ready.emit(self.mock_temp + np.random.uniform(-0.5, 0.5))
                     else:
                         try:
-                            # 現在の温度を読み取る
-                            temp = self.cam.get_attribute_value("SensorTemperatureReading")
-                            self.temperature_ready.emit(temp)
+                            # PVCamでの現在の温度取得 (cur_tempは通常0.01度単位)
+                            temp_raw = self.cam.get_attribute_value("cur_temp")
+                            self.temperature_ready.emit(temp_raw / 100.0)
                         except Exception as e:
                             self.temperature_ready.emit(-999.0)
                     self.request_temp = False
@@ -114,7 +132,6 @@ class CameraThreadPI(QThread):
                         self.settings_changed = False
 
                     if self.debug:
-                        # デバッグ用ダミーデータ生成
                         x = np.arange(self.det_width)
                         y1 = 500 * np.exp(-((x - 700)**2) / (2 * 4**2))
                         y2 = 250 * np.exp(-((x - 675)**2) / (2 * 4**2))
@@ -126,15 +143,13 @@ class CameraThreadPI(QThread):
                             self.data_ready.emit("2d", data)
                         else:
                             self.data_ready.emit("1d", spectrum)
-                            
                         time.sleep(self.mock_exposure) 
                     else:
-                        # 実機でのデータ取得
+                        # 撮影
                         data = self.cam.snap()
                         if self.roi_mode == "2d":
                             self.data_ready.emit("2d", data)
                         else:
-                            # ハードウェアビニングされていない場合、ソフトウェアで積算
                             if data.ndim == 2:
                                 spectrum = np.sum(data, axis=0)
                             else:
@@ -162,7 +177,6 @@ class CameraThreadPI(QThread):
 
     def _apply_camera_settings(self):
         if self.cam is None: return
-        # pylablibの汎用ROI設定メソッド (hstart, hend, vstart, vend, hbin, vbin)
         try:
             if self.roi_mode == "2d":
                 self.cam.set_roi(0, self.det_width, 0, self.det_height, hbin=1, vbin=1)
@@ -171,6 +185,7 @@ class CameraThreadPI(QThread):
             elif self.roi_mode == "1d_roi":
                 v_size = self.roi_vend - self.roi_vstart
                 if v_size > 0:
+                    # PVCamでも同様の引数(hstart, hend, vstart, vend, hbin, vbin)が使えます
                     self.cam.set_roi(0, self.det_width, self.roi_vstart, self.roi_vend, hbin=1, vbin=v_size)
         except Exception as e:
             print(f"Failed to apply ROI settings: {e}")

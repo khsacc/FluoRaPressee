@@ -1,4 +1,10 @@
-import sys
+﻿import sys
+import os
+
+os.environ["QT_OPENGL"] = "software"
+import gc
+gc.enable()
+
 from PyQt5.QtWidgets import QApplication
 
 # ui.py から必要なクラスや関数をインポート
@@ -11,6 +17,7 @@ def main():
     
 
     debug_mode = "--debug" in sys.argv
+    print("debug_mode ", debug_mode)
     
     # QApplication の初期化
     app = QApplication.instance()

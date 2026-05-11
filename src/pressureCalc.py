@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.integrate import quad
 
 class PressureCalculator:
     # センサーごとの初期値（ゼロ圧力ピーク）
@@ -6,7 +7,7 @@ class PressureCalculator:
         "Ruby": 694.300,
         "Sm2+:SrB4O7": 685.410,
         "13C diamond 1st order": 1287.79,
-        "Cubic BN": 1058.3,
+        "Cubic BN TO": 1058.3,
         "Zircon B1g": 1008.6
     }
 
@@ -14,7 +15,9 @@ class PressureCalculator:
     TEMP_VALID_RANGES = {
         "Ruby": {
             "Ragan et al. 1992": (0.0, 600.0),
-            "Datchi et al. 1997": (296, 900) 
+            "Datchi et al. 1997": (296, 900) ,
+            "Kobayashi et al. unpublished": (0, 300),
+            "Yen and Nicol 1992": (0, 600)
         },
         "Sm2+:SrB4O7": {
             "Datchi et al. 2007": (296, 900.0)
@@ -24,7 +27,11 @@ class PressureCalculator:
         },
         "Zircon B1g": {
             "Schmidt et al. 2013": (296,1223),
-            "Takahashi et al. 2024": (296, 923)
+            "Takahashi et al. 2024": (294, 1078)
+        },
+        "Cubic BN TO": {
+            "Datchi et al. 2004": (300, 723),
+            "Kawamoto et al. 2004": (300, 1000)
         }
     }
 
@@ -101,7 +108,7 @@ class PressureCalculator:
 )
                     return p, dp
                 
-                elif p_scale == "Dorogokupets & Oganov 2007":
+                elif p_scale == "Dorogokupets and Oganov 2007":
                     A=1884
                     m = 5.5
                     dlam=lam - lam0
@@ -165,7 +172,8 @@ class PressureCalculator:
             if sensor == "13C diamond 1st order":
                 if p_scale == "Schiferl et al. 1997":
                     return (nu - nu0) / 2.83, (nu_err) / 2.83
-            if sensor == "Cubic BN": 
+                
+            if sensor == "Cubic BN TO": 
                 if p_scale == "Datchi et al. 2004":
                     a = -9.3*10**-3
                     b = -1.54*10**-5
@@ -180,6 +188,11 @@ class PressureCalculator:
                     X = A**2 + 4*d*(nu - B)
                     dp = nu_err / np.sqrt(X)
                     return p, dp
+                if p_scale == "Kawamoto et al. 2004":
+                    a = 3.45
+                    a_err = 0.03
+                    p = (nu - nu0)/a 
+                    return p
                 
             if sensor == "Zircon B1g": 
                 if p_scale == "Schmidt et al. 2013":
@@ -196,6 +209,20 @@ class PressureCalculator:
     @staticmethod
     def get_corrected_lam0(sensor, t_scale, current_t, t0, lam0_at_t0):
         if sensor == "Ruby":
+
+            def calculate_debye_model(alpha, theta, temperature):
+                def integrand(x):
+                    if x > 700:  # Avoid overflow for large x
+                        return 0
+                    else:
+                        return x ** 3 / (np.exp(x) - 1)
+                
+                if temperature == 0:
+                    integral = 0
+                else:
+                    integral, _ = quad(integrand, 0, theta / temperature)
+                return alpha * (temperature / theta)**4 * integral  
+
             if t_scale == "Ragan et al. 1992":
                 def ragan_ruby_temp(temp):
                     wn = 14423 + 4.49 * 10 **-2 * temp -4.81 * 10**-4 * temp ** 2 +3.71 * 10**-7 * temp ** 3
@@ -211,7 +238,22 @@ class PressureCalculator:
                 
                 offset = datchi_ruby_temp(t0) - lam0_at_t0
                 return datchi_ruby_temp(current_t) - offset
+
+            elif t_scale == "Kobayashi et al. unpublished":
+                wn_at_t0 = 10 ** 7 / lam0_at_t0
+                alpha = -458.9
+                theta = 794.0
+                wn_at_current_t = wn_at_t0 + calculate_debye_model(alpha, theta, current_t) - calculate_debye_model(alpha, theta, t0)
+                return 10 ** 7 / wn_at_current_t
             
+            elif t_scale == "Yen and Nicol 1992":
+                wn_at_t0 = 10 ** 7 / lam0_at_t0
+                alpha = -419
+                theta = 760
+                wn_at_current_t = wn_at_t0 + calculate_debye_model(alpha, theta, current_t) - calculate_debye_model(alpha, theta, t0)
+                return 10 ** 7 / wn_at_current_t
+            
+
         if sensor == "Sm2+:SrB4O7": 
             if t_scale == "Datchi et al. 2007":
                 def datchi_borate_temp(temp):
@@ -234,4 +276,14 @@ class PressureCalculator:
                 calc_nu_at_t0 = takahashi_zircon_temp(t0)
                 offset = calc_nu_at_t0 - lam0_at_t0
                 return takahashi_zircon_temp(current_t) - offset
+        if sensor == "Cubic BN TO":
+            if t_scale == "Kawamoto et al. 2004":
+                def kawamoto_BN_temp(temp):
+                    a0 = 1060.6
+                    a1 = -0.010
+                    a2 = -1.42 * 10**-5
+                    return a0 + a1*temp + a2*temp**2
+                calc_nu_at_t0 = kawamoto_BN_temp(t0)
+                offset = calc_nu_at_t0 - lam0_at_t0
+                return kawamoto_BN_temp(current_t) - offset
         return lam0_at_t0
