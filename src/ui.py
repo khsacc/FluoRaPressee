@@ -2,7 +2,6 @@ import sys
 import os
 import json
 import time
-import csv
 from datetime import datetime
 import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
@@ -20,6 +19,7 @@ from src.analysis import DataAnalyzer
 from src.calibration_ui import CalibrationWindow
 from src.pressureCalc import PressureCalculator
 from src.pressureCalc_ui import PressureCalculatorWindow
+from src.file_io import DataFileIO
 # ----------------------------------------
 
 class CustomSpinBox(QSpinBox):
@@ -80,6 +80,8 @@ class SpectrometerGUI(QMainWindow):
 
         self.spec_ctrl = SpectrometerController(config=self.config, debug=self.debug)
         self.analyzer = DataAnalyzer()
+        self.file_io = DataFileIO()
+        self._last_save_dir = ""
 
         first_grating = self.config.get("grating", [{}])[0].get("grooves", 600)
         self.physical_grating = str(first_grating)
@@ -128,6 +130,7 @@ class SpectrometerGUI(QMainWindow):
         self.plot_widget.getViewBox().setMouseMode(pg.ViewBox.RectMode)
         
         self.plot_scatter = self.plot_widget.plot(pen=None, symbol='o', symbolSize=4, symbolBrush='w')
+        self.plot_line = self.plot_widget.plot(pen=pg.mkPen('w', width=1))
         self.fit_curve = self.plot_widget.plot(pen=pg.mkPen('y', width=2))
         self.fit_curve_sub1 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
         self.fit_curve_sub2 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
@@ -143,10 +146,19 @@ class SpectrometerGUI(QMainWindow):
         plot_layout.addLayout(self.plot_content_layout)
         
         plot_controls_layout = QHBoxLayout()
+        self.radio_plot_line = QRadioButton("Line")
+        self.radio_plot_scatter = QRadioButton("Scatter")
+        self.radio_plot_line.setChecked(True)
+        self._plot_style_group = QButtonGroup(self)
+        self._plot_style_group.addButton(self.radio_plot_line)
+        self._plot_style_group.addButton(self.radio_plot_scatter)
         self.chk_rescale_x = QCheckBox("Rescale X automatically")
         self.chk_rescale_y = QCheckBox("Rescale Y automatically")
         self.chk_rescale_x.setChecked(True)
         self.chk_rescale_y.setChecked(True)
+        plot_controls_layout.addWidget(QLabel("Plot style:"))
+        plot_controls_layout.addWidget(self.radio_plot_line)
+        plot_controls_layout.addWidget(self.radio_plot_scatter)
         plot_controls_layout.addStretch()
         plot_controls_layout.addWidget(self.chk_rescale_x)
         plot_controls_layout.addWidget(self.chk_rescale_y)
@@ -466,7 +478,10 @@ class SpectrometerGUI(QMainWindow):
         
         self.chk_rescale_x.toggled.connect(self.on_fit_settings_changed)
         self.chk_rescale_y.toggled.connect(self.on_fit_settings_changed)
-        
+
+        self.radio_plot_line.toggled.connect(self.on_fit_settings_changed)
+        self.radio_plot_scatter.toggled.connect(self.on_fit_settings_changed)
+
         self.btn_read_temp.clicked.connect(self.request_temperature_read)
 
         self.radio_fit_on.toggled.connect(self.toggle_fitting_panel)
@@ -826,18 +841,12 @@ class SpectrometerGUI(QMainWindow):
                 seq_end_time_dt = datetime.now()
                 summary_path = os.path.join(self.seq_dir, f"seq_summary_{self.seq_start_time_dt.strftime('%Y%m%d_%H%M%S')}.txt")
                 try:
-                    with open(summary_path, "w", encoding="utf-8", newline="") as f:
-                        f.write(f"Sequential Measurement Summary\n")
-                        f.write(f"Start Time: {self.seq_start_time_dt.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                        f.write(f"End Time: {seq_end_time_dt.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                        f.write(f"Exposure Time: {self.spin_acq_time.value()} s\n")
-                        f.write(f"Accumulations: {self.spin_accumulate.value()}\n")
-                        f.write(f"Skip Frames: {self.spin_skip_frames.value()}\n")
-                        f.write("-" * 30 + "\n")
-                        
-                        writer = csv.writer(f)
-                        writer.writerow(["Filename", "Saved Time"])
-                        writer.writerows(self.seq_log_data)
+                    self.file_io.save_sequential_summary(
+                        summary_path,
+                        self.seq_start_time_dt, seq_end_time_dt,
+                        self.spin_acq_time.value(), self.spin_accumulate.value(),
+                        self.spin_skip_frames.value(), self.seq_log_data
+                    )
                 except Exception as e:
                     print(f"Failed to write sequential summary: {e}")
 
@@ -968,71 +977,52 @@ class SpectrometerGUI(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "Load Configuration", "", "JSON Files (*.json)")
         if not file_path:
             return
-            
+
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                
-            spec_settings = data.get("spectrometer_settings", {})
-            calib_grating = str(spec_settings.get("grating_grooves_per_mm", "600"))
-            calib_unit = spec_settings.get("unit", "Wavelength")
-            calib_center = spec_settings.get("center_value", 694.0)
-            
-            if "center_wavelength_nm" in spec_settings:
-                calib_center = spec_settings["center_wavelength_nm"]
-                calib_unit = "Wavelength"
-                
-            det_settings = data.get("detector_settings", {})
-            det_mode = det_settings.get("mode", "1D Spectrum (Custom ROI)")
-            roi_start = det_settings.get("roi_start", 100)
-            roi_end = det_settings.get("roi_end", 140)
-            
-            c0 = data["calibration_coefficients"]["c0"]
-            c1 = data["calibration_coefficients"]["c1"]
-            c2 = data["calibration_coefficients"]["c2"]
-            
-            if "2D" in det_mode:
-                self.radio_2d.setChecked(True)
-            elif "Full" in det_mode:
-                self.radio_1d_full.setChecked(True)
-            else:
-                self.radio_1d_roi.setChecked(True)
-                
-            self.spin_vstart.blockSignals(True)
-            self.spin_vend.blockSignals(True)
-            self.spin_vstart.setValue(roi_start)
-            self.spin_vend.setValue(roi_end)
-            self.spin_vstart.blockSignals(False)
-            self.spin_vend.blockSignals(False)
-            self.apply_roi_settings()
-            
-            self.radio_spec_mode_raman.blockSignals(True)
-            self.radio_spec_mode_wl.blockSignals(True)
-            if calib_unit == "Raman shift":
-                self.radio_spec_mode_raman.setChecked(True)
-                self.lbl_centre.setText("Centre (cm⁻¹):")
-            else:
-                self.radio_spec_mode_wl.setChecked(True)
-                self.lbl_centre.setText("Centre (nm):")
-            self.radio_spec_mode_raman.blockSignals(False)
-            self.radio_spec_mode_wl.blockSignals(False)
-            
-            cb_idx = self.combo_grating.findText(calib_grating)
-            if cb_idx >= 0:
-                self.combo_grating.setCurrentIndex(cb_idx)
-                
-            self.spin_centre_wl.setValue(calib_center)
-            
-            self._loading_config = True
-            self._pending_calib_coeffs = (c0, c1, c2)
-            self._pending_calib_filename = os.path.basename(file_path)
-            
-            self.on_apply_spectrometer()
-            
+            cfg = self.file_io.load_calibration_config(file_path)
         except Exception as e:
             self._loading_config = False
             self._pending_calib_coeffs = None
             QMessageBox.warning(self, "Error", f"Failed to load configuration:\n{e}")
+            return
+
+        if "2D" in cfg["mode"]:
+            self.radio_2d.setChecked(True)
+        elif "Full" in cfg["mode"]:
+            self.radio_1d_full.setChecked(True)
+        else:
+            self.radio_1d_roi.setChecked(True)
+
+        self.spin_vstart.blockSignals(True)
+        self.spin_vend.blockSignals(True)
+        self.spin_vstart.setValue(cfg["roi_start"])
+        self.spin_vend.setValue(cfg["roi_end"])
+        self.spin_vstart.blockSignals(False)
+        self.spin_vend.blockSignals(False)
+        self.apply_roi_settings()
+
+        self.radio_spec_mode_raman.blockSignals(True)
+        self.radio_spec_mode_wl.blockSignals(True)
+        if cfg["unit"] == "Raman shift":
+            self.radio_spec_mode_raman.setChecked(True)
+            self.lbl_centre.setText("Centre (cm⁻¹):")
+        else:
+            self.radio_spec_mode_wl.setChecked(True)
+            self.lbl_centre.setText("Centre (nm):")
+        self.radio_spec_mode_raman.blockSignals(False)
+        self.radio_spec_mode_wl.blockSignals(False)
+
+        cb_idx = self.combo_grating.findText(cfg["grating"])
+        if cb_idx >= 0:
+            self.combo_grating.setCurrentIndex(cb_idx)
+
+        self.spin_centre_wl.setValue(cfg["center"])
+
+        self._loading_config = True
+        self._pending_calib_coeffs = (cfg["c0"], cfg["c1"], cfg["c2"])
+        self._pending_calib_filename = os.path.basename(file_path)
+
+        self.on_apply_spectrometer()
 
     def on_acq_bg_clicked(self):
         self._is_acquiring_bg = True
@@ -1054,52 +1044,29 @@ class SpectrometerGUI(QMainWindow):
         acq_time = self.spin_acq_time.value()
         accum = self.spin_accumulate.value()
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
         mode_str = "1D Spectrum (Custom ROI)" if self.radio_1d_roi.isChecked() else "1D Spectrum (Full Range Binning)"
-        
-        if self.radio_1d_roi.isChecked():
-            roi_str = f"_ROI_from_{self.spin_vstart.value()}_to_{self.spin_vend.value()}"
-        else:
-            roi_str = "_full"
-            
+        roi_str = f"_ROI_from_{self.spin_vstart.value()}_to_{self.spin_vend.value()}" if self.radio_1d_roi.isChecked() else "_full"
         default_filename = f"background_{date_str}{roi_str}.txt"
+        initial_path = os.path.join(self._last_save_dir, default_filename) if self._last_save_dir else default_filename
 
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Background Data", default_filename, "Text/JSON Files (*.txt *.json)")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Background Data", initial_path, "Text/JSON Files (*.txt *.json)")
         if not file_path:
             return
-
-        current_temp = self.label_current_temp.text()
-
-        bg_data = {
-            "detector_settings": {
-                "mode": mode_str,
-                "roi_start": self.spin_vstart.value(),
-                "roi_end": self.spin_vend.value()
-            },
-            "acquisition_time": f"{acq_time:.3f}",
-            "accumulations": accum,
-            "detector_temperature": current_temp,
-            "signal": self.raw_1d_data.tolist()
-        }
+        self._last_save_dir = os.path.dirname(file_path)
 
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(bg_data, f, indent=4)
+            bg_arr, bg_meta = self.file_io.save_background(
+                file_path, self.raw_1d_data,
+                acq_time, accum, mode_str,
+                self.spin_vstart.value(), self.spin_vend.value(),
+                self.label_current_temp.text()
+            )
             QMessageBox.information(self, "Success", "Background saved successfully.")
-            
-            self.loaded_bg_data = self.raw_1d_data.astype(np.float64).copy()
-            self.loaded_bg_metadata = {
-                "acquisition_time": float(acq_time),
-                "accumulations": accum,
-                "mode": mode_str,
-                "roi_start": self.spin_vstart.value(),
-                "roi_end": self.spin_vend.value()
-            }
-            
+            self.loaded_bg_data = bg_arr
+            self.loaded_bg_metadata = bg_meta
             self.lbl_loaded_bg.setText(f"Loaded: {os.path.basename(file_path)}")
             self.radio_bg_on.setChecked(True)
             self.on_fit_settings_changed()
-            
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save background:\n{e}")
 
@@ -1107,142 +1074,84 @@ class SpectrometerGUI(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "Load Background Data", "", "Text/JSON Files (*.txt *.json)")
         if file_path:
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if "signal" in data:
-                        self.loaded_bg_data = np.array(data["signal"], dtype=np.float64)
-                        
-                        acq_time = float(data.get("acquisition_time", 0.0))
-                        accum = int(data.get("accumulations", 1))
-                        det_set = data.get("detector_settings", {})
-                        mode_str = det_set.get("mode", "")
-                        roi_s = det_set.get("roi_start", 0)
-                        roi_e = det_set.get("roi_end", 0)
-                        
-                        self.loaded_bg_metadata = {
-                            "acquisition_time": acq_time,
-                            "accumulations": accum,
-                            "mode": mode_str,
-                            "roi_start": roi_s,
-                            "roi_end": roi_e
-                        }
-                        
-                        self.lbl_loaded_bg.setText(f"Loaded: {os.path.basename(file_path)}")
-                        self.radio_bg_on.setChecked(True)
-                        self.on_fit_settings_changed()
-                    else:
-                        QMessageBox.warning(self, "Error", "Invalid background file format.")
+                bg_arr, bg_meta = self.file_io.load_background(file_path)
+                self.loaded_bg_data = bg_arr
+                self.loaded_bg_metadata = bg_meta
+                self.lbl_loaded_bg.setText(f"Loaded: {os.path.basename(file_path)}")
+                self.radio_bg_on.setChecked(True)
+                self.on_fit_settings_changed()
+            except ValueError as e:
+                QMessageBox.warning(self, "Error", str(e))
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load background:\n{e}")
 
     def on_save_data_clicked(self):
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         default_filename = f"data_{date_str}.txt"
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Data", default_filename, "Text Files (*.txt);;All Files (*)")
+        initial_path = os.path.join(self._last_save_dir, default_filename) if self._last_save_dir else default_filename
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Data", initial_path, "Text Files (*.txt);;All Files (*)")
         if file_path:
+            self._last_save_dir = os.path.dirname(file_path)
             self._save_data_to_path(file_path, show_msg=True)
 
     def _save_data_to_path(self, file_path, show_msg=True):
         is_1d = self.stacked_widget.currentIndex() == 0
         if is_1d and self.latest_1d_data is None:
-            if show_msg: QMessageBox.warning(self, "Error", "No 1D data available to save.")
+            if show_msg:
+                QMessageBox.warning(self, "Error", "No 1D data available to save.")
             return False
         if not is_1d and self.latest_2d_data is None:
-            if show_msg: QMessageBox.warning(self, "Error", "No 2D data available to save.")
+            if show_msg:
+                QMessageBox.warning(self, "Error", "No 2D data available to save.")
             return False
-            
+
         try:
-            grating = self.combo_grating.currentText()
-            center_wl = self.spin_centre_wl.value()
-            acq_time = self.spin_acq_time.value()
-            accum = self.spin_accumulate.value()
-            
-            header = f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            header += f"Grating: {grating} grooves/mm\n"
-            
-            if self.radio_spec_mode_raman.isChecked():
-                ex_wl = self.spin_exc_wl.value()
-                header += f"Spectrometer Mode: Raman shift\n"
-                header += f"Excitation Wavelength: {ex_wl} nm\n"
-                header += f"Centre Raman shift: {center_wl} cm-1\n"
-            else:
-                header += f"Spectrometer Mode: Wavelength\n"
-                header += f"Centre Wavelength: {center_wl} nm\n"
-                
-            header += f"Acquisition Time: {acq_time} s\n"
-            header += f"Accumulations: {accum}\n"
+            metadata = {
+                "grating":      self.combo_grating.currentText(),
+                "center_wl":    self.spin_centre_wl.value(),
+                "acq_time":     self.spin_acq_time.value(),
+                "accum":        self.spin_accumulate.value(),
+                "calib_coeffs": self.calib_coeffs,
+                "roi_start":    self.spin_vstart.value(),
+                "roi_end":      self.spin_vend.value(),
+                "mode":         "2D" if self.radio_2d.isChecked() else "1D (Full)" if self.radio_1d_full.isChecked() else "1D (ROI)",
+                "spec_mode":    "Raman shift" if self.radio_spec_mode_raman.isChecked() else "Wavelength",
+                "exc_wl":       self.spin_exc_wl.value(),
+            }
 
-            if self.calib_coeffs is not None:
-                c0, c1, c2 = self.calib_coeffs
-                header += f"Calibration Coefficients (c0, c1, c2: y = c0 + c1x + c2x^2): {c0}, {c1}, {c2}\n"
-            else:
-                header += f"Calibration Coefficients: None\n"
-
-            header += f"ROI Start (Vertical Pixel): {self.spin_vstart.value()}\n"
-            header += f"ROI End (Vertical Pixel): {self.spin_vend.value()}\n"
-
-            mode = "2D" if self.radio_2d.isChecked() else "1D (Full)" if self.radio_1d_full.isChecked() else "1D (ROI)"
-            header += f"Measurement Mode: {mode}\n"
-
-            
             if is_1d:
                 x_data = self.get_x_axis(len(self.latest_1d_data))
-                y_disp = self.latest_1d_data
-                
-                bg_applied = False
+                raw_data = None
+                bg_data = None
                 if self.radio_bg_on.isChecked() and self.loaded_bg_data is not None:
                     if len(self.raw_1d_data) == len(self.loaded_bg_data):
-                        bg_applied = True
-                
-                x_label = "Raman_shift_cm-1" if self.radio_spec_mode_raman.isChecked() else "Wavelength_or_Pixel"
-                
-                if bg_applied:
-                    header += f"{x_label},Intensity_Subtracted,Intensity_Raw,Background"
-                    y_raw = self.raw_1d_data.astype(np.float64)
-                    y_bg = self.loaded_bg_data.astype(np.float64)
-                    if self.chk_flip_x.isChecked():
-                        y_raw = y_raw[::-1]
-                        y_bg = y_bg[::-1]
-                    data_to_save = np.column_stack((x_data, y_disp, y_raw, y_bg))
-                else:
-                    header += f"{x_label},Intensity"
-                    data_to_save = np.column_stack((x_data, y_disp))
-                    
-                np.savetxt(file_path, data_to_save, delimiter=",", header=header, comments="# ", fmt="%g")
-                
+                        raw_data = self.raw_1d_data.astype(np.float64)
+                        bg_data = self.loaded_bg_data.astype(np.float64)
+                        if self.chk_flip_x.isChecked():
+                            raw_data = raw_data[::-1]
+                            bg_data = bg_data[::-1]
+                self.file_io.save_spectrum_1d(file_path, x_data, self.latest_1d_data, metadata,
+                                              raw_data=raw_data, bg_data=bg_data)
+
                 if self.chk_save_fitting.isChecked() and self.radio_fit_on.isChecked() and self.latest_fit_res is not None:
                     fit_file_path = file_path.rsplit('.', 1)[0] + "_fitting_results.txt"
-                    res = self.latest_fit_res
-                    func = getattr(self, 'latest_fit_func', 'Unknown')
-                    
-                    if res.get('is_double'):
-                        fit_header = "Function,R2,Peak1_Pos,Peak1_Err,Peak1_Width,Peak1_WErr,Peak2_Pos,Peak2_Err,Peak2_Width,Peak2_WErr"
-                        vals = [
-                            func, f"{res.get('R2', 0):.6f}",
-                            f"{res.get('Peak1', 0):.6f}", f"{res.get('Peak1_Err', 0):.6f}",
-                            f"{res.get('Width1', 0):.6f}", f"{res.get('Width1_Err', 0):.6f}",
-                            f"{res.get('Peak2', 0):.6f}", f"{res.get('Peak2_Err', 0):.6f}",
-                            f"{res.get('Width2', 0):.6f}", f"{res.get('Width2_Err', 0):.6f}"
-                        ]
-                    else:
-                        fit_header = "Function,R2,Peak_Pos,Peak_Err,Peak_Width,Peak_WErr"
-                        vals = [
-                            func, f"{res.get('R2', 0):.6f}",
-                            f"{res.get('Peak', 0):.6f}", f"{res.get('Peak_Err', 0):.6f}",
-                            f"{res.get('Width', 0):.6f}", f"{res.get('Width_Err', 0):.6f}"
-                        ]
-                        
-                    
-                        
-                    fit_data_lines = [fit_header + "\n", ",".join(vals) + "\n"]
-                        
-                    with open(fit_file_path, "w", encoding="utf-8") as f:
-                        f.writelines(fit_data_lines)
-                        
+                    pressure_info = None
+                    pw = self.pressure_window
+                    if pw is not None and pw.isVisible() and pw.current_pressure is not None:
+                        pressure_info = {
+                            "pressure":     pw.current_pressure,
+                            "pressure_err": pw.current_pressure_err,
+                            "scale":        pw.combo_p_scale.currentText(),
+                            "sensor":       pw.combo_sensor.currentText(),
+                            "lam0":         pw.spin_lam0.value(),
+                            "lam0_unit":    pw.unit,
+                        }
+                    self.file_io.save_fitting_results(fit_file_path, self.latest_fit_res,
+                                                      getattr(self, 'latest_fit_func', 'Unknown'),
+                                                      pressure_info=pressure_info)
             else:
-                header += "2D Image Data"
-                np.savetxt(file_path, self.latest_2d_data, delimiter=",", header=header, comments="# ", fmt="%g")
-                
+                self.file_io.save_spectrum_2d(file_path, self.latest_2d_data, metadata)
+
             if show_msg:
                 QMessageBox.information(self, "Success", f"Data saved successfully to:\n{file_path}")
             return True
@@ -1281,8 +1190,18 @@ class SpectrometerGUI(QMainWindow):
     def toggle_fitting_panel(self):
         is_on = self.radio_fit_on.isChecked()
         self.fitting_panel.setVisible(is_on)
-        
         self.chk_save_fitting.setEnabled(is_on)
+
+        # Auto-switch default plot style when fitting mode changes
+        self.radio_plot_scatter.blockSignals(True)
+        self.radio_plot_line.blockSignals(True)
+        if is_on:
+            self.radio_plot_scatter.setChecked(True)
+        else:
+            self.radio_plot_line.setChecked(True)
+        self.radio_plot_scatter.blockSignals(False)
+        self.radio_plot_line.blockSignals(False)
+
         if not is_on:
             self.chk_save_fitting.setChecked(False)
             self.fit_curve.clear()
@@ -1541,7 +1460,12 @@ class SpectrometerGUI(QMainWindow):
             self.plot_widget.getViewBox().setDefaultPadding(0)
             self.plot_widget.setClipToView(True)
             
-            self.plot_scatter.setData(x_data, disp_data)
+            if self.radio_plot_scatter.isChecked():
+                self.plot_scatter.setData(x_data, disp_data)
+                self.plot_line.setData([], [])
+            else:
+                self.plot_line.setData(x_data, disp_data)
+                self.plot_scatter.setData([], [])
             
             if self.chk_rescale_x.isChecked():
                 self.plot_widget.getViewBox().enableAutoRange(axis=pg.ViewBox.XAxis)
@@ -1615,7 +1539,7 @@ class SpectrometerGUI(QMainWindow):
                     
                     if self.pressure_window is not None and self.pressure_window.isVisible():
                         self.pressure_window.set_current_peak(w_peak1, w_err1)
-                        text += f"<br><br><span>CalculatedPressure:<br>{self.pressure_window.current_pressure:.3f} ± {self.pressure_window.current_pressure_err:.3f} {self.pressure_window.unit}</span>"
+                        text += f"<br><br><span>Calculated Pressure:<br>{self.pressure_window.current_pressure:.3f} ± {self.pressure_window.current_pressure_err:.3f} GPa</span>"
                     
 
                         
@@ -1755,9 +1679,18 @@ class SpectrometerGUI(QMainWindow):
         except: pass
 
     def closeEvent(self, event):
-        self.thread.stop_thread()
-        self.spec_ctrl.close()
-        event.accept()
+        reply = QMessageBox.question(
+            self, "Confirm Exit",
+            "Closing this window will terminate the cooler of the camera. Are you sure you want to close FluoraPressée?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.thread.stop_thread()
+            self.spec_ctrl.close()
+            event.accept()
+        else:
+            event.ignore()
 
 def print_software_and_author_info(): 
     print(
