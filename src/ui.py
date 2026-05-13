@@ -1310,10 +1310,23 @@ class SpectrometerGUI(QMainWindow):
         self.spin_cooler_temp.setEnabled(False) 
         self.thread.update_temperature(val)
 
+    def _set_spectrometer_controls_enabled(self, enabled):
+        self.combo_grating.setEnabled(enabled)
+        self.radio_spec_mode_wl.setEnabled(enabled)
+        self.radio_spec_mode_raman.setEnabled(enabled)
+        self.spin_centre_wl.setEnabled(enabled)
+        self.spin_exc_wl.setEnabled(enabled and self.radio_spec_mode_raman.isChecked())
+        self.btn_calib_neon.setEnabled(enabled)
+        self.btn_load_calib.setEnabled(enabled)
+        if enabled:
+            self.check_spectrometer_changes()
+        else:
+            self.btn_apply_spec.setEnabled(False)
+
     def on_apply_spectrometer(self):
         grating_index = self.combo_grating.currentIndex() + 1
         val = self.spin_centre_wl.value()
-        
+
         if self.radio_spec_mode_raman.isChecked():
             ex_wl = self.spin_exc_wl.value()
             if ex_wl > 0:
@@ -1325,16 +1338,8 @@ class SpectrometerGUI(QMainWindow):
                 target_wl = val
         else:
             target_wl = val
-        
-        self.centralWidget().setEnabled(False)
-        self.moving_dialog = QDialog(self)
-        self.moving_dialog.setWindowTitle("Please Wait")
-        self.moving_dialog.setModal(True)
-        self.moving_dialog.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint)
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Grating is moving...\nPlease wait until the operation is completed."))
-        self.moving_dialog.setLayout(layout)
-        self.moving_dialog.show()
+
+        self._set_spectrometer_controls_enabled(False)
 
         self.spec_move_thread = SpectrometerMoveThread(self.spec_ctrl, grating_index, target_wl)
         self.spec_move_thread.finished_signal.connect(self.on_spectrometer_moved)
@@ -1374,9 +1379,8 @@ class SpectrometerGUI(QMainWindow):
         
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
             self.update_display(is_new_data=False)
-            
-        self.moving_dialog.accept()
-        self.centralWidget().setEnabled(True)
+
+        self._set_spectrometer_controls_enabled(True)
 
     def request_temperature_read(self):
         self.label_current_temp.setText("Reading...")
