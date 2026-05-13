@@ -194,7 +194,7 @@ class PressureCalculatorWindow(QDialog):
         if mode == "nm":
             self.combo_sensor.addItems(["Ruby", "Sm2+:SrB4O7"])
         else:
-            self.combo_sensor.addItems(["13C diamond 1st order", "Cubic BN", "Zircon B1g"])
+            self.combo_sensor.addItems(["13C diamond 1st order", "Cubic BN TO", "Zircon B1g"])
         self.combo_sensor.blockSignals(False)
         self.on_sensor_changed()
 
@@ -216,7 +216,7 @@ class PressureCalculatorWindow(QDialog):
         elif sensor == "13C diamond 1st order":
             self.combo_p_scale.addItems(["Schiferl et al. 1997", "Mysen and Yamashita 2010"])
             self.combo_t_scale.addItems(["Schiferl et al. 1997", "Mysen and Yamashita 2010"])
-        elif sensor == "Cubic BN":
+        elif sensor == "Cubic BN TO":
             self.combo_p_scale.addItems(["Datchi et al. 2004"])
         elif sensor == "Zircon B1g":
             self.combo_p_scale.addItems(["Schmidt et al. 2013", "Takahashi et al. 2024"])

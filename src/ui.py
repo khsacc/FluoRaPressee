@@ -986,6 +986,18 @@ class SpectrometerGUI(QMainWindow):
             QMessageBox.warning(self, "Error", f"Failed to load configuration:\n{e}")
             return
 
+        saved_exc_wl = cfg.get("exc_wl")
+        if saved_exc_wl is not None:
+            current_exc_wl = self.spin_exc_wl.value()
+            if abs(saved_exc_wl - current_exc_wl) > 0.01:
+                QMessageBox.warning(
+                    self, "Excitation Wavelength Mismatch",
+                    f"The calibration file was created with an excitation wavelength of "
+                    f"{saved_exc_wl:.3f} nm, but the current setting is {current_exc_wl:.3f} nm.\n\n"
+                    f"Raman shift values on the x-axis will be incorrect unless you update "
+                    f"the excitation wavelength to match."
+                )
+
         if "2D" in cfg["mode"]:
             self.radio_2d.setChecked(True)
         elif "Full" in cfg["mode"]:
@@ -1003,7 +1015,7 @@ class SpectrometerGUI(QMainWindow):
 
         self.radio_spec_mode_raman.blockSignals(True)
         self.radio_spec_mode_wl.blockSignals(True)
-        if cfg["unit"] == "Raman shift":
+        if cfg["display_mode"] == "Raman shift":
             self.radio_spec_mode_raman.setChecked(True)
             self.lbl_centre.setText("Centre (cm⁻¹):")
         else:
@@ -1016,7 +1028,17 @@ class SpectrometerGUI(QMainWindow):
         if cb_idx >= 0:
             self.combo_grating.setCurrentIndex(cb_idx)
 
-        self.spin_centre_wl.setValue(cfg["center"])
+        # cfg["center"] is always in nm; convert to Raman shift if needed for the spin box
+        center_nm = cfg["center"]
+        if cfg["display_mode"] == "Raman shift":
+            ex_wl = self.spin_exc_wl.value()
+            if ex_wl > 0 and center_nm > 0:
+                center_for_spinbox = 1e7 / ex_wl - 1e7 / center_nm
+            else:
+                center_for_spinbox = 0.0
+        else:
+            center_for_spinbox = center_nm
+        self.spin_centre_wl.setValue(center_for_spinbox)
 
         self._loading_config = True
         self._pending_calib_coeffs = (cfg["c0"], cfg["c1"], cfg["c2"])

@@ -1,7 +1,9 @@
 import numpy as np
 from scipy.integrate import quad
+from typing import Tuple, Optional, Dict
 
 class PressureCalculator:
+    """高圧下の圧力計算を行うクラス。複数のセンサーと圧力スケールに対応"""
     # センサーごとの初期値（ゼロ圧力ピーク）
     INITIAL_VALUES = {
         "Ruby": 694.300,
@@ -36,7 +38,17 @@ class PressureCalculator:
     }
 
     @staticmethod
-    def is_temp_in_range(sensor, t_scale, temp):
+    def is_temp_in_range(sensor: str, t_scale: str, temp: float) -> Tuple[bool, Tuple]:
+        """温度がセンサーの有効範囲内にあるか確認
+        
+        Args:
+            sensor: センサー名
+            t_scale: 温度スケール
+            temp: 温度値
+            
+        Returns:
+            (有効性, (最小値, 最大値)) のタプル
+        """
 
         # 親（センサー）が存在するか
         if sensor not in PressureCalculator.TEMP_VALID_RANGES:
@@ -53,7 +65,8 @@ class PressureCalculator:
 
 
     @staticmethod
-    def calculate(sensor, p_scale, lam, lam0, lam0_at_t0, lam_err=0.0, current_t=298.15, t0=298.15): # Raman shiftの場合、波数形式で入ってくるが、形式上lamというパラメータで統一して扱っている。波長に変換されてはいない。
+    def calculate(sensor: str, p_scale: str, lam: float, lam0: float, lam0_at_t0: float, 
+                  lam_err: float = 0.0, current_t: float = 298.15, t0: float = 298.15) -> Tuple[Optional[float], Optional[float]]:
         try:
             # --- Ruby Scales ---
             if sensor == "Ruby":
@@ -112,7 +125,7 @@ class PressureCalculator:
                     A=1884
                     m = 5.5
                     dlam=lam - lam0
-                    p=A(dlam/ lam0) * (1+m*dlam/ lam0)
+                    p = A * (dlam / lam0) * (1 + m * dlam / lam0)
 
                     x = dlam / lam0
                     dp = abs(A / lam0 * (1 + 2*m*x)) * lam_err
@@ -183,31 +196,52 @@ class PressureCalculator:
                     d = -0.0103
                     A  = c0 + c1 * current_t + c2 * current_t**2
                     B = nu0_at_t0 + a*current_t + b*current_t**2
-                    p = - 1/(2*d) ( A + np.sqrt(A**2 + 4*d (nu - B) ) )
+                    p = -1/(2*d) * (A + np.sqrt(A**2 + 4*d*(nu - B)))
 
                     X = A**2 + 4*d*(nu - B)
                     dp = nu_err / np.sqrt(X)
                     return p, dp
                 if p_scale == "Kawamoto et al. 2004":
                     a = 3.45
-                    a_err = 0.03
-                    p = (nu - nu0)/a 
-                    return p
+                    p = (nu - nu0)/a
+                    return p, 0.0
                 
-            if sensor == "Zircon B1g": 
+            if sensor == "Zircon B1g":
                 if p_scale == "Schmidt et al. 2013":
-                    return  (nu-nu0)/5.69, nu_err / 5.69 
-                
-                elif sensor == "Takahashi et al. 2024":
-                    return (nu-nu0)/5.48, nu_err / 5.48 
+                    return (nu-nu0)/5.69, nu_err / 5.69
+
+                elif p_scale == "Takahashi et al. 2024":
+                    return (nu-nu0)/5.48, nu_err / 5.48
                 
 
             return None, None
-        except:
+        except ZeroDivisionError as e:
+            print(f"ZeroDivisionError in pressure calculation ({sensor}, {p_scale}): {e}")
+            return None, None
+        except ValueError as e:
+            print(f"ValueError in pressure calculation ({sensor}, {p_scale}): {e}")
+            return None, None
+        except KeyError as e:
+            print(f"KeyError in pressure calculation - missing parameter: {e}")
+            return None, None
+        except Exception as e:
+            print(f"Unexpected error in pressure calculation ({sensor}, {p_scale}): {e}")
             return None, None
 
     @staticmethod
-    def get_corrected_lam0(sensor, t_scale, current_t, t0, lam0_at_t0):
+    def get_corrected_lam0(sensor: str, t_scale: str, current_t: float, t0: float, lam0_at_t0: float) -> float:
+        """温度補正されたゼロ圧力ピーク位置を計算
+        
+        Args:
+            sensor: センサー名
+            t_scale: 温度スケール
+            current_t: 現在の温度
+            t0: 基準温度
+            lam0_at_t0: 基準温度でのゼロ圧力ピーク位置
+            
+        Returns:
+            補正されたゼロ圧力ピーク位置
+        """
         if sensor == "Ruby":
 
             def calculate_debye_model(alpha, theta, temperature):

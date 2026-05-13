@@ -1,11 +1,26 @@
 import numpy as np
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, OptimizeWarning
 from scipy.signal import find_peaks
+from typing import Tuple, Dict, Optional
+import warnings
 
 class DataAnalyzer:
-    """リアルタイムスペクトル解析・圧力計算クラス"""
+    """リアルタイムスペクトル解析・フィッティング処理を行うクラス"""
     
+    # フィッティングのための定数
+    MIN_FIT_POINTS = 10
+    FWHM_FRACTION = 0.02  # X軸範囲のこの割合をFWHM初期値とする
+    FWHM_MIN = 0.0001
+    PEAK_DISTANCE = 5  # find_peaks で用いるピーク間の最小距離（ピクセル）
+    PEAK_PROMINENCE_FACTOR = 0.1  # 振幅のこの割合をプロミネンス閾値とする
+    PEAK_SPACING_FACTOR = 0.1  # ダブルピーク初期値の間隔係数
+    SECOND_PEAK_AMP_FACTOR = 0.5  # 第2ピークの振幅推定係数
+    PSEUDO_VOIGT_ETA_INIT = 0.5  # Pseudo Voigt の混合比初期値
+    PSEUDO_VOIGT_ETA_MIN = 0.0
+    PSEUDO_VOIGT_ETA_MAX = 1.0
+
     def __init__(self):
+        """DataAnalyzer を初期化する"""
         pass
 
     # ==========================================
@@ -37,8 +52,20 @@ class DataAnalyzer:
     # ==========================================
     # --- フィッティング処理 ---
     # ==========================================
-    def fit_spectrum(self, x_data, y_data, func_type="Gauss", fit_start=None, fit_end=None):
-        """スペクトルのピークフィッティングを行う（指定されたX軸の範囲内で実行）"""
+    def fit_spectrum(self, x_data: np.ndarray, y_data: np.ndarray, func_type: str = "Gauss", 
+                     fit_start: Optional[float] = None, fit_end: Optional[float] = None) -> Tuple:
+        """スペクトルのピークフィッティングを行う（指定されたX軸の範囲内で実行）
+        
+        Args:
+            x_data: X 軸データ
+            y_data: Y 軸データ
+            func_type: フィッティング関数型 ("Gauss", "Lorentz", "Pseudo Voigt" など)
+            fit_start: フィッティング範囲の開始値
+            fit_end: フィッティング範囲の終了値
+            
+        Returns:
+            (x_fit, y_fit_curve, res) のタプル。フィッティング失敗時は (None, None, None)
+        """
         
         # 範囲によるマスクの作成
         if fit_start is not None and fit_end is not None:
@@ -51,15 +78,15 @@ class DataAnalyzer:
         x_fit = x_data[mask]
         y_fit = y_data[mask]
 
-        if len(x_fit) < 10:
+        if len(x_fit) < self.MIN_FIT_POINTS:
             return None, None, None
 
         amp_guess = np.max(y_fit) - np.min(y_fit)
         offset_guess = np.min(y_fit)
         x_range = np.max(x_fit) - np.min(x_fit)
         
-        # FWHMの初期値はX軸のスケールに依存するため、範囲の2%程度と推測する
-        fwhm_guess = x_range * 0.02
+        # FWHMの初期値はX軸のスケールに依存するため、範囲の設定割合程度と推測する
+        fwhm_guess = x_range * self.FWHM_FRACTION
         if fwhm_guess <= 0: fwhm_guess = 1.0
         
         res = {}
@@ -69,7 +96,8 @@ class DataAnalyzer:
             # --- ダブルピーク関数 ---
             # ==========================================
             if "Double" in func_type:
-                peaks, _ = find_peaks(y_fit, distance=5, prominence=amp_guess * 0.1)
+                peaks, _ = find_peaks(y_fit, distance=self.PEAK_DISTANCE, 
+                                     prominence=amp_guess * self.PEAK_PROMINENCE_FACTOR)
                 
                 if len(peaks) >= 2:
                     top_peaks = sorted(peaks, key=lambda p: y_fit[p], reverse=True)[:2]
@@ -80,21 +108,21 @@ class DataAnalyzer:
                 else:
                     max_idx = int(np.argmax(y_fit))
                     p1_x = x_fit[max_idx]
-                    p2_x = p1_x + (x_range * 0.1)
+                    p2_x = p1_x + (x_range * self.PEAK_SPACING_FACTOR)
                     a1_guess = amp_guess
-                    a2_guess = amp_guess * 0.5
+                    a2_guess = amp_guess * self.SECOND_PEAK_AMP_FACTOR
 
                 if func_type in ["Double Gauss", "Double Lorentz"]:
                     p0 = [a1_guess, p1_x, fwhm_guess, a2_guess, p2_x, fwhm_guess, offset_guess]
                     bounds = (
-                        [0, min(x_fit), 0.0001, 0, min(x_fit), 0.0001, -np.inf],
+                        [0, min(x_fit), self.FWHM_MIN, 0, min(x_fit), self.FWHM_MIN, -np.inf],
                         [np.inf, max(x_fit), x_range, np.inf, max(x_fit), x_range, np.inf]
                     )
                 elif func_type == "Double pseudo Voigt":
-                    p0 = [a1_guess, p1_x, fwhm_guess, 0.5, a2_guess, p2_x, fwhm_guess, 0.5, offset_guess]
+                    p0 = [a1_guess, p1_x, fwhm_guess, self.PSEUDO_VOIGT_ETA_INIT, a2_guess, p2_x, fwhm_guess, self.PSEUDO_VOIGT_ETA_INIT, offset_guess]
                     bounds = (
-                        [0, min(x_fit), 0.0001, 0.0, 0, min(x_fit), 0.0001, 0.0, -np.inf],
-                        [np.inf, max(x_fit), x_range, 1.0, np.inf, max(x_fit), x_range, 1.0, np.inf]
+                        [0, min(x_fit), self.FWHM_MIN, self.PSEUDO_VOIGT_ETA_MIN, 0, min(x_fit), self.FWHM_MIN, self.PSEUDO_VOIGT_ETA_MIN, -np.inf],
+                        [np.inf, max(x_fit), x_range, self.PSEUDO_VOIGT_ETA_MAX, np.inf, max(x_fit), x_range, self.PSEUDO_VOIGT_ETA_MAX, np.inf]
                     )
 
                 if func_type == "Double Gauss":
@@ -191,6 +219,15 @@ class DataAnalyzer:
 
             return x_fit, y_fit_curve, res
 
+        except OptimizeWarning as w:
+            warnings.warn(f"Optimization warning in fit_spectrum ({func_type}): {w}")
+            return None, None, None
+        except RuntimeError as e:
+            print(f"RuntimeError in fitting ({func_type}): {e}")
+            return None, None, None
+        except ValueError as e:
+            print(f"ValueError in fitting ({func_type}): {e}")
+            return None, None, None
         except Exception as e:
-            print(f"Fitting error ({func_type}): {e}")
+            print(f"Unexpected error in fitting ({func_type}): {e}")
             return None, None, None

@@ -346,7 +346,16 @@ class CalibrationWindow(QDialog):
     def create_value_widget_for_row(self, row):
         if self.radio_neon_yes.isChecked():
             val_widget = QComboBox()
-            val_widget.addItems(["692.94673", "702.40504", "703.24131"])
+            if self.radio_unit_raman.isChecked():
+                laser_wl = 532.0
+                mw = self.parent()
+                if mw and hasattr(mw, 'spin_exc_wl'):
+                    laser_wl = mw.spin_exc_wl.value()
+                neon_nm = [692.94673, 702.40504, 703.24131]
+                items = [f"{1e7/laser_wl - 1e7/nm:.2f}" for nm in neon_nm]
+                val_widget.addItems(items)
+            else:
+                val_widget.addItems(["692.94673", "702.40504", "703.24131"])
         else:
             val_widget = CustomDoubleSpinBox()
             val_widget.setRange(-10000, 20000)
@@ -371,13 +380,25 @@ class CalibrationWindow(QDialog):
 
     def calibrate(self):
         pixels, ref_values = [], []
+        is_raman = self.radio_unit_raman.isChecked()
+        laser_wl = 532.0
+        if is_raman:
+            mw = self.parent()
+            if mw and hasattr(mw, 'spin_exc_wl'):
+                laser_wl = mw.spin_exc_wl.value()
+
         for row_data in self.row_widgets:
             if row_data["check"].isChecked() and row_data["input"] is not None:
                 px = row_data["px"]
                 input_widget = row_data["input"]
-                wl = float(input_widget.currentText()) if isinstance(input_widget, QComboBox) else input_widget.value()
+                val = float(input_widget.currentText()) if isinstance(input_widget, QComboBox) else input_widget.value()
+                # Always convert to nm so the polynomial is always pixel → nm
+                if is_raman and laser_wl > 0:
+                    denom = 1e7 / laser_wl - val
+                    if denom > 0:
+                        val = 1e7 / denom
                 pixels.append(px)
-                ref_values.append(wl)
+                ref_values.append(val)
         if len(pixels) < 2:
             self.lbl_calib_result.setText("Please check at least 2 peaks.")
             self.btn_save_apply.setEnabled(False)
@@ -393,9 +414,13 @@ class CalibrationWindow(QDialog):
         main_window = self.parent()
         if main_window is None: return
         grating = main_window.combo_grating.currentText() if hasattr(main_window, 'combo_grating') else "Unknown"
-        center_wl = main_window.spin_centre_wl.value() if hasattr(main_window, 'spin_centre_wl') else 0.0
+        # Always save the physical center wavelength in nm, regardless of display mode
+        center_wl = main_window.physical_center_wl if hasattr(main_window, 'physical_center_wl') else (
+            main_window.spin_centre_wl.value() if hasattr(main_window, 'spin_centre_wl') else 0.0)
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         unit_sym = "nm" if self.radio_unit_wl.isChecked() else "cm-1"
+        calibration_unit = "Wavelength" if self.radio_unit_wl.isChecked() else "Raman shift"
+        display_mode = "Raman shift" if (hasattr(main_window, 'radio_spec_mode_raman') and main_window.radio_spec_mode_raman.isChecked()) else "Wavelength"
         if main_window.radio_2d.isChecked():
             mode = "2D Image"
         else:
@@ -408,6 +433,9 @@ class CalibrationWindow(QDialog):
             "spectrometer_settings": {
                 "grating_grooves_per_mm": grating,
                 "center_wavelength_nm": center_wl,
+                "calibration_unit": calibration_unit,
+                "display_mode": display_mode,
+                "excitation_wavelength_nm": main_window.spin_exc_wl.value() if hasattr(main_window, 'spin_exc_wl') else None,
             },
             "detector_settings": {
                 "mode": mode,

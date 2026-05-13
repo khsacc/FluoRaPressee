@@ -1,6 +1,8 @@
 import time
 import numpy as np
+from threading import Lock
 from PyQt5.QtCore import QThread, pyqtSignal
+from scipy.optimize import OptimizeWarning
 
 # ダミーモード時はエラーを回避するためtry-exceptで囲む
 try:
@@ -9,6 +11,7 @@ except ImportError:
     Andor = None
 
 class CameraThreadAndor(QThread):
+    """Andor カメラの制御と画像取得を行うスレッド"""
     data_ready = pyqtSignal(str, np.ndarray)
     init_finished = pyqtSignal()
     temperature_ready = pyqtSignal(float)
@@ -16,15 +19,24 @@ class CameraThreadAndor(QThread):
     exposure_set_finished = pyqtSignal()
     temperature_set_finished = pyqtSignal()
 
+    # カメラ仕様の定数
+    DEFAULT_DETECTOR_WIDTH = 1024
+    DEFAULT_DETECTOR_HEIGHT = 127
+    DEFAULT_TEMP = -65
+    DEFAULT_EXPOSURE = 0.1
+    TEMP_TOLERANCE = 0.5  # デバッグモード時の温度ゆらぎ(C)
+    SLEEP_INTERVAL = 0.05  # スレッドループの休止間隔(s)
+    
     def __init__(self, debug=False):
         super().__init__()
         self.debug = debug
         self.thread_active = True
         self.is_measuring = False
         self.cam = None
+        self._lock = Lock()  # スレッド安全性のためのロック
         
-        self.det_width = 1024 
-        self.det_height = 127 
+        self.det_width = self.DEFAULT_DETECTOR_WIDTH
+        self.det_height = self.DEFAULT_DETECTOR_HEIGHT
 
         self.roi_mode = "1d_roi"
         self.roi_vstart = 45
@@ -36,18 +48,25 @@ class CameraThreadAndor(QThread):
         self.new_temperature = None
         
         # デバッグ用の仮想設定値
-        self.mock_exposure = 0.1
-        self.mock_temp = -65
+        self.mock_exposure = self.DEFAULT_EXPOSURE
+        self.mock_temp = self.DEFAULT_TEMP
 
     def run(self):
         try:
             if self.debug:
                 print("[DEBUG MODE] Activating dummy camera...")
-                self.det_width, self.det_height = 1024, 127
+                self.det_width, self.det_height = self.DEFAULT_DETECTOR_WIDTH, self.DEFAULT_DETECTOR_HEIGHT
                 self.init_finished.emit()
             else:
+                if Andor is None:
+                    raise RuntimeError("Andor SDK not installed. Install pylablib to use hardware camera.")
                 print("Connecting to camera and initializing cooler...")
-                self.cam = Andor.AndorSDK2Camera()
+                try:
+                    self.cam = Andor.AndorSDK2Camera()
+                    self.det_width, self.det_height = self.cam.get_detector_size()
+                except Exception as e:
+                    print(f"Failed to initialize Andor camera: {e}")
+                    raise
                 self.det_width, self.det_height = self.cam.get_detector_size()
                 print(f"Connected to Andor camera. Detector size: {self.det_width}x{self.det_height}")
                 self.cam.set_temperature(-65)
@@ -87,12 +106,17 @@ class CameraThreadAndor(QThread):
                 if self.request_temp:
                     if self.debug:
                         # デバッグ時は指定温度にゆらぎを持たせて返す
-                        self.temperature_ready.emit(self.mock_temp + np.random.uniform(-0.5, 0.5))
+                        self.temperature_ready.emit(self.mock_temp + np.random.uniform(-self.TEMP_TOLERANCE, self.TEMP_TOLERANCE))
                     else:
                         try:
-                            temp = self.cam.get_temperature()
-                            self.temperature_ready.emit(temp)
+                            if self.cam is None:
+                                print("Warning: Camera not initialized, returning default temp")
+                                self.temperature_ready.emit(self.DEFAULT_TEMP)
+                            else:
+                                temp = self.cam.get_temperature()
+                                self.temperature_ready.emit(temp)
                         except Exception as e:
+                            print(f"Error reading temperature: {e}")
                             self.temperature_ready.emit(-999.0)
                     self.request_temp = False
 
@@ -133,7 +157,7 @@ class CameraThreadAndor(QThread):
                             self.data_ready.emit("1d", spectrum)
                 else:
                     was_measuring = False
-                    time.sleep(0.05)
+                    time.sleep(self.SLEEP_INTERVAL)
                 
         except Exception as e:
             print(f"An error occurred in the camera thread: {e}")
@@ -142,16 +166,23 @@ class CameraThreadAndor(QThread):
                 self.cam.close()
                 self.cam = None
 
-    def read_temperature(self):
-        self.request_temp = True
+    def read_temperature(self) -> None:
+        """温度読み込みをリクエスト（スレッドセーフ）"""
+        with self._lock:
+            self.request_temp = True
 
-    def update_exposure(self, exp_time):
-        self.new_exposure = exp_time
+    def update_exposure(self, exp_time: float) -> None:
+        """露光時間を更新（スレッドセーフ）"""
+        with self._lock:
+            self.new_exposure = exp_time
 
-    def update_temperature(self, temp):
-        self.new_temperature = temp
+    def update_temperature(self, temp: float) -> None:
+        """目標温度を更新（スレッドセーフ）"""
+        with self._lock:
+            self.new_temperature = temp
 
-    def _apply_camera_settings(self):
+    def _apply_camera_settings(self) -> None:
+        """カメラ設定を適用（ロック必須）"""
         if self.cam is None: return
         if self.roi_mode == "2d":
             self.cam.set_roi(0, self.det_width, 0, self.det_height, hbin=1, vbin=1)
@@ -162,22 +193,31 @@ class CameraThreadAndor(QThread):
             if v_size > 0:
                 self.cam.set_roi(0, self.det_width, self.roi_vstart, self.roi_vend, hbin=1, vbin=v_size)
 
-    def update_roi_settings(self, mode, vstart=0, vend=256):
-        self.roi_mode = mode
-        self.roi_vstart = vstart
-        self.roi_vend = vend
-        self.settings_changed = True
+    def update_roi_settings(self, mode: str, vstart: int = 0, vend: int = 256) -> None:
+        """ROI設定を更新（スレッドセーフ）
+        
+        Args:
+            mode: ROIモード ("1d_roi", "1d_full", "2d")
+            vstart: 開始ピクセル
+            vend: 終了ピクセル
+        """
+        with self._lock:
+            self.roi_mode = mode
+            self.roi_vstart = vstart
+            self.roi_vend = vend
+            self.settings_changed = True
     
-    def get_temperature(self):
+    def get_temperature(self) -> float:
         """現在の目標温度（または最後に取得した温度）を返す"""
-        return self.mock_temp if self.debug else (self.new_temperature if self.new_temperature is not None else -60.0)
+        with self._lock:
+            return self.mock_temp if self.debug else (self.new_temperature if self.new_temperature is not None else -60.0)
 
     @property
     def camera(self):
         """calibration_ui から self.camera_thread.camera.acquire_single_image() と呼ばれるためのプロキシ"""
         return self
 
-    def acquire_single_image(self, acq_time=None):
+    def acquire_single_image(self, acq_time: float = None) -> np.ndarray:
         """Calibration UI等のために、スレッドをブロックして1枚だけ同期的に撮影する（疑似処理）"""
         if acq_time is not None:
             self.update_exposure(acq_time)

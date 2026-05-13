@@ -155,7 +155,9 @@ class DataFileIO:
     def load_calibration_config(self, file_path):
         """
         Load calibration configuration from a JSON file.
-        Returns a dict with keys: grating, unit, center, mode, roi_start, roi_end, c0, c1, c2.
+        Returns a dict with keys:
+          grating, calibration_unit, display_mode, center, exc_wl,
+          mode, roi_start, roi_end, c0, c1, c2.
         Raises Exception on parse failure.
         """
         with open(file_path, "r", encoding="utf-8") as f:
@@ -165,19 +167,30 @@ class DataFileIO:
         det   = data.get("detector_settings", {})
         calib = data["calibration_coefficients"]
 
-        unit   = spec.get("unit", "Wavelength")
-        center = spec.get("center_value", 694.0)
-        if "center_wavelength_nm" in spec:
-            center = spec["center_wavelength_nm"]
-            unit   = "Wavelength"
+        center = spec.get("center_wavelength_nm", spec.get("center_value", 694.0))
+
+        # calibration_unit: unit used for the reference values during calibration.
+        # Falls back through the old "display_unit" key, then the even older "unit" key.
+        calibration_unit = spec.get(
+            "calibration_unit", spec.get("display_unit", spec.get("unit", "Wavelength"))
+        )
+
+        # display_mode: what the main-window mode was when the file was saved.
+        # Older files don't have this key; fall back to calibration_unit so behaviour
+        # is unchanged for files created before this field was introduced.
+        display_mode = spec.get("display_mode", calibration_unit)
+
+        exc_wl = spec.get("excitation_wavelength_nm", None)
 
         return {
-            "grating":   str(spec.get("grating_grooves_per_mm", "600")),
-            "unit":      unit,
-            "center":    center,
-            "mode":      det.get("mode", "1D Spectrum (Custom ROI)"),
-            "roi_start": det.get("roi_start", 100),
-            "roi_end":   det.get("roi_end", 140),
+            "grating":          str(spec.get("grating_grooves_per_mm", "600")),
+            "calibration_unit": calibration_unit,
+            "display_mode":     display_mode,
+            "center":           center,
+            "exc_wl":           exc_wl,
+            "mode":             det.get("mode", "1D Spectrum (Custom ROI)"),
+            "roi_start":        det.get("roi_start", 100),
+            "roi_end":          det.get("roi_end", 140),
             "c0": calib["c0"],
             "c1": calib["c1"],
             "c2": calib["c2"],
