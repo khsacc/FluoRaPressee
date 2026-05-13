@@ -49,7 +49,11 @@ class DataFileIO:
                          raw_data=None, bg_data=None):
         """Save 1D spectrum. If raw_data and bg_data are given, saves 4 columns."""
         header = self._build_header(metadata)
-        x_label = "Raman_shift_cm-1" if metadata.get("spec_mode") == "Raman shift" else "Wavelength_or_Pixel"
+        calib_present = metadata.get("calib_coeffs") is not None
+        if metadata.get("spec_mode") == "Raman shift" and calib_present:
+            x_label = "Raman_shift_cm-1"
+        else:
+            x_label = "Wavelength_or_Pixel"
 
         if raw_data is not None and bg_data is not None:
             header += f"{x_label},Intensity_Subtracted,Intensity_Raw,Background"

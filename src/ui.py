@@ -671,6 +671,21 @@ class SpectrometerGUI(QMainWindow):
                 self.btn_start_seq.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
 
     def on_spec_mode_changed(self):
+        # Prevent mode switching while spectrometer is moving to avoid state synchronization issues
+        if hasattr(self, 'spec_move_thread') and self.spec_move_thread.isRunning():
+            # Revert to previous mode
+            self.radio_spec_mode_raman.blockSignals(True)
+            self.radio_spec_mode_wl.blockSignals(True)
+            if self.radio_spec_mode_raman.isChecked():
+                self.radio_spec_mode_raman.setChecked(False)
+                self.radio_spec_mode_wl.setChecked(True)
+            else:
+                self.radio_spec_mode_wl.setChecked(False)
+                self.radio_spec_mode_raman.setChecked(True)
+            self.radio_spec_mode_raman.blockSignals(False)
+            self.radio_spec_mode_wl.blockSignals(False)
+            return
+        
         is_raman = self.radio_spec_mode_raman.isChecked()
         self.spin_exc_wl.setEnabled(is_raman)
         
@@ -722,11 +737,22 @@ class SpectrometerGUI(QMainWindow):
             ex_wl = self.spin_exc_wl.value()
             if ex_wl > 0:
                 try:
-                    target_wl = 1e7 / (1e7 / ex_wl - val)
-                except ZeroDivisionError:
-                    target_wl = val
+                    # Check for invalid Raman shift value (when Raman shift >= excitation wavenumber)
+                    denom = 1e7 / ex_wl - val
+                    if denom <= 0:
+                        # Invalid state: Raman shift is too large
+                        self.btn_apply_spec.setEnabled(False)
+                        return
+                    target_wl = 1e7 / denom
+                except (ZeroDivisionError, ValueError):
+                    # If Raman shift calculation fails, disable apply button
+                    self.btn_apply_spec.setEnabled(False)
+                    return
             else:
-                target_wl = val
+                # Invalid state: ex_wl should never be <= 0 in Raman mode
+                # Cannot calculate target wavelength from Raman shift
+                self.btn_apply_spec.setEnabled(False)
+                return
         else:
             target_wl = val
             
@@ -1143,6 +1169,8 @@ class SpectrometerGUI(QMainWindow):
 
             if is_1d:
                 x_data = self.get_x_axis(len(self.latest_1d_data))
+                if self.chk_flip_x.isChecked() and self.calib_coeffs is not None:
+                    x_data = x_data[::-1]
                 raw_data = None
                 bg_data = None
                 if self.radio_bg_on.isChecked() and self.loaded_bg_data is not None:
@@ -1205,6 +1233,11 @@ class SpectrometerGUI(QMainWindow):
                 if ex_wl > 0:
                     with np.errstate(divide='ignore', invalid='ignore'):
                         rs = 1e7 / ex_wl - 1e7 / wl
+                    # Check for NaN/inf values which indicate invalid calibration
+                    if np.any(np.isnan(rs)) or np.any(np.isinf(rs)):
+                        print("Warning: Invalid Raman shift values detected (NaN/inf from calibration)")
+                        # Fallback to wavelength if Raman shift calculation produces invalid values
+                        return wl
                     return rs
             return wl
         return x
@@ -1459,7 +1492,9 @@ class SpectrometerGUI(QMainWindow):
     def update_display(self, is_new_data=False, mode="1d"):
         if mode == "1d":
             if getattr(self, 'raw_1d_data', None) is None: return
-            
+
+            self.update_plot_labels()
+
             disp_data = self.raw_1d_data.astype(np.float64).copy()
             
             if self.radio_bg_on.isChecked() and self.loaded_bg_data is not None:
@@ -1473,7 +1508,9 @@ class SpectrometerGUI(QMainWindow):
             self.stacked_widget.setCurrentIndex(0)
             
             x_data = self.get_x_axis(len(disp_data))
-            
+            if self.chk_flip_x.isChecked() and self.calib_coeffs is not None:
+                x_data = x_data[::-1]
+
             min_x = np.min(x_data)
             max_x = np.max(x_data)
             
@@ -1667,6 +1704,8 @@ class SpectrometerGUI(QMainWindow):
                     x_pixel = int(np.round(x_val))
                     if self.calib_coeffs is not None:
                         x_arr = self.get_x_axis(len(self.latest_1d_data))
+                        if self.chk_flip_x.isChecked():
+                            x_arr = x_arr[::-1]
                         disp_idx = np.argmin(np.abs(x_arr - x_val))
                     else:
                         disp_idx = x_pixel
