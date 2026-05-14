@@ -365,7 +365,7 @@ class CalibrationWindow(QDialog):
             self.row_widgets[row]["input"] = val_widget
 
     def on_use_toggled(self, state, row):
-        if state == Qt.CheckState.Checked.value:
+        if state == Qt.CheckState.Checked:
             self.create_value_widget_for_row(row)
         else:
             self.table.removeCellWidget(row, 2)
