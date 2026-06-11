@@ -2,12 +2,12 @@ import json
 import os
 from datetime import datetime
 import numpy as np
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QTableWidget, QTableWidgetItem,
-                             QCheckBox, QComboBox, QHeaderView, QWidget, 
+                             QCheckBox, QComboBox, QHeaderView, QWidget,
                              QAbstractSpinBox, QDoubleSpinBox, QSplitter,
                              QScrollArea, QRadioButton, QFileDialog, QMessageBox, QSlider,
-                             QListView) # QListView を追加
+                             QListView, QButtonGroup)
 from PyQt5.QtCore import Qt
 import pyqtgraph as pg
 
@@ -103,6 +103,8 @@ class CalibrationWindow(QDialog):
         controls_layout = QVBoxLayout()
         
         self.btn_acquire = QPushButton("Acquire a spectrum")
+        self.btn_acquire.setAutoDefault(False)
+        self.btn_acquire.setDefault(False)
         self.btn_acquire.clicked.connect(self.acquire_spectrum)
         self.btn_acquire.setStyleSheet("font-weight: bold; padding: 5px;")
         
@@ -130,6 +132,8 @@ class CalibrationWindow(QDialog):
         
         find_peaks_layout = QHBoxLayout()
         self.btn_find_peaks = QPushButton("Find peaks")
+        self.btn_find_peaks.setAutoDefault(False)
+        self.btn_find_peaks.setDefault(False)
         self.btn_find_peaks.clicked.connect(self.find_peaks)
         self.btn_find_peaks.setStyleSheet("padding: 5px;")
         
@@ -160,6 +164,8 @@ class CalibrationWindow(QDialog):
         
         helper_layout.addWidget(self.combo_reference)
         self.btn_show_helper = QPushButton("Show")
+        self.btn_show_helper.setAutoDefault(False)
+        self.btn_show_helper.setDefault(False)
         self.btn_show_helper.clicked.connect(self.show_reference_helper)
         helper_layout.addWidget(self.btn_show_helper)
         
@@ -174,12 +180,22 @@ class CalibrationWindow(QDialog):
         self.radio_neon_no.toggled.connect(self.update_table_value_widgets)
         neon_layout.addWidget(self.radio_neon_yes)
         neon_layout.addWidget(self.radio_neon_no)
+
+        self.unit_button_group = QButtonGroup(self)
+        self.unit_button_group.addButton(self.radio_unit_wl)
+        self.unit_button_group.addButton(self.radio_unit_raman)
+
+        self.neon_button_group = QButtonGroup(self)
+        self.neon_button_group.addButton(self.radio_neon_yes)
+        self.neon_button_group.addButton(self.radio_neon_no)
         
         self.table = QTableWidget(0, 3)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setAlternatingRowColors(True)
         
         self.btn_calibrate = QPushButton("Calibrate")
+        self.btn_calibrate.setAutoDefault(False)
+        self.btn_calibrate.setDefault(False)
         self.btn_calibrate.clicked.connect(self.calibrate)
         self.btn_calibrate.setStyleSheet("font-weight: bold; color: white; background-color: #2196F3; padding: 8px; border: none;")
         
@@ -187,7 +203,9 @@ class CalibrationWindow(QDialog):
         self.lbl_calib_result.setStyleSheet("font-family: Consolas; background-color: #EEEEEE; padding: 10px; border: 1px solid #CCC; color: #000000;")
         
         self.btn_save_apply = QPushButton("Save and apply")
-        self.btn_save_apply.setEnabled(False) 
+        self.btn_save_apply.setAutoDefault(False)
+        self.btn_save_apply.setDefault(False)
+        self.btn_save_apply.setEnabled(False)
         self.btn_save_apply.clicked.connect(self.save_and_apply)
         
         controls_layout.addWidget(self.btn_acquire)
@@ -339,7 +357,7 @@ class CalibrationWindow(QDialog):
             small_plot.setFixedSize(180, 180)
             small_plot.setBackground('w')
             small_plot.plot(p_data["x_fit"], p_data["y_data"], pen=None, symbol='o', symbolSize=3, symbolBrush='b')
-            small_plot.plot(p_data["x_fit"], p_data["y_curve"], pen=pg.mkPen('r', width=2))
+            small_plot.plot(p_data["x_curve"], p_data["y_curve"], pen=pg.mkPen('r', width=2))
             self.bottom_layout.addWidget(small_plot)
         self.bottom_layout.addStretch()
 
@@ -381,22 +399,12 @@ class CalibrationWindow(QDialog):
     def calibrate(self):
         pixels, ref_values = [], []
         is_raman = self.radio_unit_raman.isChecked()
-        laser_wl = 532.0
-        if is_raman:
-            mw = self.parent()
-            if mw and hasattr(mw, 'spin_exc_wl'):
-                laser_wl = mw.spin_exc_wl.value()
 
         for row_data in self.row_widgets:
             if row_data["check"].isChecked() and row_data["input"] is not None:
                 px = row_data["px"]
                 input_widget = row_data["input"]
                 val = float(input_widget.currentText()) if isinstance(input_widget, QComboBox) else input_widget.value()
-                # Always convert to nm so the polynomial is always pixel → nm
-                if is_raman and laser_wl > 0:
-                    denom = 1e7 / laser_wl - val
-                    if denom > 0:
-                        val = 1e7 / denom
                 pixels.append(px)
                 ref_values.append(val)
         if len(pixels) < 2:
@@ -406,8 +414,30 @@ class CalibrationWindow(QDialog):
         coeffs = self.calib_core.calibrate(pixels, ref_values)
         if coeffs:
             self.calib_coeffs = (coeffs["c0"], coeffs["c1"], coeffs["c2"])
-            self.lbl_calib_result.setText(f"y = c0 + c1*x + c2*x^2\nc0 = {coeffs['c0']:.6e}\nc1 = {coeffs['c1']:.6e}\nc2 = {coeffs['c2']:.6e}")
+            unit_str = "cm⁻¹" if is_raman else "nm"
+            self.lbl_calib_result.setText(
+                f"y = c0 + c1*x + c2*x^2  (pixel → {unit_str})\n"
+                f"c0 = {coeffs['c0']:.6e}\nc1 = {coeffs['c1']:.6e}\nc2 = {coeffs['c2']:.6e}"
+            )
             self.btn_save_apply.setEnabled(True)
+
+    def _restore_main_window_settings(self):
+        main_window = self.parent()
+        if not main_window or not self.camera_thread:
+            return
+        if hasattr(main_window, 'spin_acq_time'):
+            self.camera_thread.update_exposure(main_window.spin_acq_time.value())
+        if hasattr(main_window, 'current_accum_count'):
+            main_window.current_accum_count = 0
+        if hasattr(main_window, 'accumulated_data'):
+            main_window.accumulated_data = None
+
+    def done(self, result):
+        self._restore_main_window_settings()
+        super().done(result)
+
+    def closeEvent(self, event):
+        super().closeEvent(event)
 
     def save_and_apply(self):
         if self.calib_coeffs is None: return
@@ -418,14 +448,20 @@ class CalibrationWindow(QDialog):
         center_wl = main_window.physical_center_wl if hasattr(main_window, 'physical_center_wl') else (
             main_window.spin_centre_wl.value() if hasattr(main_window, 'spin_centre_wl') else 0.0)
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        unit_sym = "nm" if self.radio_unit_wl.isChecked() else "cm-1"
-        calibration_unit = "Wavelength" if self.radio_unit_wl.isChecked() else "Raman shift"
+        is_raman_unit = self.radio_unit_raman.isChecked()
+        unit_sym = "nm" if not is_raman_unit else "cm-1"
+        calibration_unit = "Wavelength" if not is_raman_unit else "Raman shift"
+        if is_raman_unit:
+            laser_wl = main_window.spin_exc_wl.value() if hasattr(main_window, 'spin_exc_wl') else 532.0
+            center_display = self.nm_to_raman(center_wl, laser_wl)
+        else:
+            center_display = center_wl
         display_mode = "Raman shift" if (hasattr(main_window, 'radio_spec_mode_raman') and main_window.radio_spec_mode_raman.isChecked()) else "Wavelength"
         if main_window.radio_2d.isChecked():
             mode = "2D Image"
         else:
             mode = "1D Spectrum (Custom ROI)" if main_window.radio_1d_roi.isChecked() else "1D Spectrum (Full Range Binning)"
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Config", f"config_{grating}_{center_wl}{unit_sym}_{date_str}.json", "JSON (*.json)")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Config", f"config_{grating}_{center_display:.1f}{unit_sym}_{date_str}.json", "JSON (*.json)")
         if not file_path: return
         c0, c1, c2 = self.calib_coeffs
         data = {
@@ -448,7 +484,16 @@ class CalibrationWindow(QDialog):
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=4)
             if hasattr(main_window, 'apply_calibration'):
-                main_window.apply_calibration(self.calib_coeffs, os.path.basename(file_path))
+                is_raman_calib = self.radio_unit_raman.isChecked()
+                calib_laser_wl = (main_window.spin_exc_wl.value()
+                                  if (is_raman_calib and hasattr(main_window, 'spin_exc_wl'))
+                                  else None)
+                main_window.apply_calibration(
+                    self.calib_coeffs,
+                    os.path.basename(file_path),
+                    calib_unit="Raman shift" if is_raman_calib else "Wavelength",
+                    calib_laser_wl=calib_laser_wl
+                )
             self.accept()
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))

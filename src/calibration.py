@@ -59,11 +59,13 @@ class CalibrationCore:
             
             try:
                 popt, _ = curve_fit(self.gaussian, x_fit, y_fit, p0=p0, bounds=bounds)
-                y_curve = self.gaussian(x_fit, *popt)
+                x_curve = np.linspace(x_fit[0], x_fit[-1], len(x_fit) * 10)
+                y_curve = self.gaussian(x_curve, *popt)
                 fitted_peaks.append({
                     "center": popt[1],
                     "x_fit": x_fit,
                     "y_data": y_fit,
+                    "x_curve": x_curve,
                     "y_curve": y_curve
                 })
             except (RuntimeError, ValueError) as e:
@@ -73,6 +75,7 @@ class CalibrationCore:
                     "center": float(p),
                     "x_fit": x_fit,
                     "y_data": y_fit,
+                    "x_curve": x_fit,
                     "y_curve": y_fit
                 })
                 
