@@ -55,6 +55,8 @@ class SpectrometerGUI(QMainWindow):
         self.latest_2d_data = None
         
         self.calib_coeffs = None
+        self.calib_unit = 'Wavelength'   # 'Wavelength' (pixel→nm) or 'Raman shift' (pixel→cm⁻¹)
+        self.calib_laser_wl = None       # excitation wavelength (nm) used when calib_unit=='Raman shift'
         self.calib_file_name = "None"
         self.current_w_peak1 = None
         
@@ -671,19 +673,10 @@ class SpectrometerGUI(QMainWindow):
                 self.btn_start_seq.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
 
     def on_spec_mode_changed(self):
-        # Prevent mode switching while spectrometer is moving to avoid state synchronization issues
+        # The centralWidget is fully disabled while the spectrometer moves
+        # (_show_spectrometer_moving_dialog calls centralWidget().setEnabled(False)),
+        # so this handler should not fire during movement. Return as a safety guard.
         if hasattr(self, 'spec_move_thread') and self.spec_move_thread.isRunning():
-            # Revert to previous mode
-            self.radio_spec_mode_raman.blockSignals(True)
-            self.radio_spec_mode_wl.blockSignals(True)
-            if self.radio_spec_mode_raman.isChecked():
-                self.radio_spec_mode_raman.setChecked(False)
-                self.radio_spec_mode_wl.setChecked(True)
-            else:
-                self.radio_spec_mode_wl.setChecked(False)
-                self.radio_spec_mode_raman.setChecked(True)
-            self.radio_spec_mode_raman.blockSignals(False)
-            self.radio_spec_mode_wl.blockSignals(False)
             return
         
         is_raman = self.radio_spec_mode_raman.isChecked()
@@ -845,12 +838,35 @@ class SpectrometerGUI(QMainWindow):
             
             
             try:
+                unit = "cm-1" if self.radio_spec_mode_raman.isChecked() else "nm"
+                has_pressure_col = (self.pressure_window is not None and self.pressure_window.isVisible())
+
                 with open(self.seq_fitting_summary_path, "w", encoding="utf-8") as f:
                     f.write(f"# Fitting Function: {func}\n")
                     f.write(f"# Fitting Range: {fit_start} to {fit_end}\n")
-                    
-                        
-                        
+
+                    if is_double:
+                        header_cols = [
+                            "Filename", "Timestamp",
+                            f"Peak1 ({unit})", f"Peak1_Err ({unit})",
+                            f"Width1 ({unit})", f"Width1_Err ({unit})",
+                            f"Peak2 ({unit})", f"Peak2_Err ({unit})",
+                            f"Width2 ({unit})", f"Width2_Err ({unit})",
+                            "R2"
+                        ]
+                    else:
+                        header_cols = [
+                            "Filename", "Timestamp",
+                            f"Peak ({unit})", f"Peak_Err ({unit})",
+                            f"Width ({unit})", f"Width_Err ({unit})",
+                            "R2"
+                        ]
+
+                    if has_pressure_col:
+                        header_cols.extend(["Pressure (GPa)", "Pressure_Err (GPa)"])
+
+                    f.write(",".join(header_cols) + "\n")
+
             except Exception as e:
                 print(f"Failed to create summary file: {e}")
                 self.seq_fitting_summary_path = None
@@ -990,8 +1006,10 @@ class SpectrometerGUI(QMainWindow):
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
             self.update_display(is_new_data=False)
 
-    def apply_calibration(self, coeffs, filename):
+    def apply_calibration(self, coeffs, filename, calib_unit='Wavelength', calib_laser_wl=None):
         self.calib_coeffs = coeffs
+        self.calib_unit = calib_unit
+        self.calib_laser_wl = calib_laser_wl
         self.calib_file_name = filename
         self.lbl_loaded_calib.setText(f"Loaded: {filename}")
         self.update_plot_labels()
@@ -1012,17 +1030,22 @@ class SpectrometerGUI(QMainWindow):
             QMessageBox.warning(self, "Error", f"Failed to load configuration:\n{e}")
             return
 
-        saved_exc_wl = cfg.get("exc_wl")
-        if saved_exc_wl is not None:
+        # For Raman shift calibrations the excitation wavelength is embedded in the
+        # polynomial coefficients; a mismatch means every x-axis value will be wrong.
+        if cfg.get("calibration_unit") == "Raman shift":
+            saved_exc_wl = cfg.get("exc_wl")
+            if saved_exc_wl is None:
+                QMessageBox.critical(self, "Invalid File",
+                    "This calibration file does not contain an excitation wavelength.\n"
+                    "Cannot load a Raman shift calibration without it.")
+                return
             current_exc_wl = self.spin_exc_wl.value()
-            if abs(saved_exc_wl - current_exc_wl) > 0.01:
-                QMessageBox.warning(
-                    self, "Excitation Wavelength Mismatch",
-                    f"The calibration file was created with an excitation wavelength of "
-                    f"{saved_exc_wl:.3f} nm, but the current setting is {current_exc_wl:.3f} nm.\n\n"
-                    f"Raman shift values on the x-axis will be incorrect unless you update "
-                    f"the excitation wavelength to match."
-                )
+            if abs(saved_exc_wl - current_exc_wl) > 1e-6:
+                QMessageBox.critical(self, "Excitation Wavelength Mismatch",
+                    f"This calibration was created with an excitation wavelength of "
+                    f"{saved_exc_wl:.6f} nm, but the current setting is {current_exc_wl:.6f} nm.\n\n"
+                    f"Please set the excitation wavelength to exactly {saved_exc_wl:.6f} nm before loading.")
+                return
 
         if "2D" in cfg["mode"]:
             self.radio_2d.setChecked(True)
@@ -1069,6 +1092,10 @@ class SpectrometerGUI(QMainWindow):
         self._loading_config = True
         self._pending_calib_coeffs = (cfg["c0"], cfg["c1"], cfg["c2"])
         self._pending_calib_filename = os.path.basename(file_path)
+        self._pending_calib_unit = cfg.get("calibration_unit", "Wavelength")
+        self._pending_calib_laser_wl = (cfg.get("exc_wl")
+                                        if cfg.get("calibration_unit") == "Raman shift"
+                                        else None)
 
         self.on_apply_spectrometer()
 
@@ -1227,19 +1254,34 @@ class SpectrometerGUI(QMainWindow):
         x = np.arange(num_pixels)
         if self.calib_coeffs is not None:
             c0, c1, c2 = self.calib_coeffs
-            wl = c0 + c1 * x + c2 * x**2
-            if self.radio_spec_mode_raman.isChecked():
-                ex_wl = self.spin_exc_wl.value()
-                if ex_wl > 0:
+            poly = c0 + c1 * x + c2 * x**2  # units: nm or cm⁻¹ depending on calib_unit
+
+            calib_is_raman = getattr(self, 'calib_unit', 'Wavelength') == 'Raman shift'
+            display_is_raman = self.radio_spec_mode_raman.isChecked()
+
+            if calib_is_raman == display_is_raman:
+                return poly  # same units, no conversion needed
+
+            laser_wl = getattr(self, 'calib_laser_wl', None) or self.spin_exc_wl.value()
+
+            if not calib_is_raman and display_is_raman:
+                # poly is nm → convert to Raman shift (cm⁻¹)
+                # Raman shift of 0 is physically valid (laser line); negative is anti-Stokes.
+                # Only nan/inf (from poly ≤ 0, i.e. invalid nm) need masking.
+                if laser_wl > 0:
                     with np.errstate(divide='ignore', invalid='ignore'):
-                        rs = 1e7 / ex_wl - 1e7 / wl
-                    # Check for NaN/inf values which indicate invalid calibration
-                    if np.any(np.isnan(rs)) or np.any(np.isinf(rs)):
-                        print("Warning: Invalid Raman shift values detected (NaN/inf from calibration)")
-                        # Fallback to wavelength if Raman shift calculation produces invalid values
-                        return wl
-                    return rs
-            return wl
+                        rs = 1e7 / laser_wl - 1e7 / poly
+                    return np.where(np.isfinite(rs), rs, np.nan)
+                return poly
+            else:
+                # poly is Raman shift (cm⁻¹) → convert to nm
+                # wavelength must be positive; nan for out-of-range pixels
+                if laser_wl > 0:
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        denom = 1e7 / laser_wl - poly
+                        wl = np.where(denom != 0, 1e7 / denom, np.nan)
+                    return np.where(wl > 0, wl, np.nan)
+                return poly
         return x
 
     def toggle_fitting_panel(self):
@@ -1323,6 +1365,30 @@ class SpectrometerGUI(QMainWindow):
         else:
             self.btn_apply_spec.setEnabled(False)
 
+    def _show_spectrometer_moving_dialog(self):
+        if getattr(self, 'spec_move_dialog', None) is not None:
+            return
+        self.centralWidget().setEnabled(False)
+        self.spec_move_dialog = QDialog(self)
+        self.spec_move_dialog.setWindowTitle("Spectrometer is moving")
+        self.spec_move_dialog.setModal(True)
+        self.spec_move_dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint)
+        layout = QVBoxLayout(self.spec_move_dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.addWidget(QLabel("Spectrometer is moving. Please wait..."))
+        self.spec_move_dialog.setLayout(layout)
+        self.spec_move_dialog.setFixedSize(320, 100)
+        self.spec_move_dialog.show()
+        self.spec_move_dialog.raise_()
+        self.spec_move_dialog.activateWindow()
+
+    def _close_spectrometer_moving_dialog(self):
+        dialog = getattr(self, 'spec_move_dialog', None)
+        if dialog is not None:
+            dialog.accept()
+            self.spec_move_dialog = None
+        self.centralWidget().setEnabled(True)
+
     def on_apply_spectrometer(self):
         grating_index = self.combo_grating.currentIndex() + 1
         val = self.spin_centre_wl.value()
@@ -1340,6 +1406,7 @@ class SpectrometerGUI(QMainWindow):
             target_wl = val
 
         self._set_spectrometer_controls_enabled(False)
+        self._show_spectrometer_moving_dialog()
 
         self.spec_move_thread = SpectrometerMoveThread(self.spec_ctrl, grating_index, target_wl)
         self.spec_move_thread.finished_signal.connect(self.on_spectrometer_moved)
@@ -1358,12 +1425,21 @@ class SpectrometerGUI(QMainWindow):
         
         if getattr(self, '_loading_config', False):
             if hasattr(self, '_pending_calib_coeffs') and self._pending_calib_coeffs is not None:
-                self.apply_calibration(self._pending_calib_coeffs, self._pending_calib_filename)
+                self.apply_calibration(
+                    self._pending_calib_coeffs,
+                    self._pending_calib_filename,
+                    calib_unit=getattr(self, '_pending_calib_unit', 'Wavelength'),
+                    calib_laser_wl=getattr(self, '_pending_calib_laser_wl', None)
+                )
                 self._pending_calib_coeffs = None
                 self._pending_calib_filename = None
+                self._pending_calib_unit = None
+                self._pending_calib_laser_wl = None
             self._loading_config = False
         else:
             self.calib_coeffs = None
+            self.calib_unit = 'Wavelength'
+            self.calib_laser_wl = None
             self.calib_file_name = "None"
             self.lbl_loaded_calib.setText("Loaded: None")
             self.update_plot_labels()
@@ -1380,6 +1456,7 @@ class SpectrometerGUI(QMainWindow):
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
             self.update_display(is_new_data=False)
 
+        self._close_spectrometer_moving_dialog()
         self._set_spectrometer_controls_enabled(True)
 
     def request_temperature_read(self):
@@ -1649,20 +1726,20 @@ class SpectrometerGUI(QMainWindow):
             if self.current_skip_count >= self.spin_skip_frames.value():
                 now_dt = datetime.now()
                 date_str = now_dt.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                timestamp_str = now_dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
                 filename = f"seq_{self.seq_count:05d}_{date_str}.txt"
                 file_path = os.path.join(self.seq_dir, filename)
-                
+
                 success = self._save_data_to_path(file_path, show_msg=False)
                 if success:
                     self.seq_log_data.append([filename, now_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]])
-                    
+
                     if self.radio_fit_on.isChecked() and getattr(self, 'seq_fitting_summary_path', None):
                         is_double = "Double" in self.combo_fit_func.currentText()
-                        
-                        
+
                         res = self.latest_fit_res
-                        cols = [filename, date_str]
-                        
+                        cols = [filename, timestamp_str]
+
                         if res is None:
                             cols.extend(["NaN"] * (9 if is_double else 5))
                         else:
@@ -1680,7 +1757,17 @@ class SpectrometerGUI(QMainWindow):
                                     f"{res.get('Width', np.nan):.6f}", f"{res.get('Width_Err', np.nan):.6f}",
                                     f"{res.get('R2', np.nan):.6f}"
                                 ])
-                        
+
+                        pw = self.pressure_window
+                        if pw is not None and pw.isVisible():
+                            if pw.current_pressure is not None:
+                                cols.extend([
+                                    f"{pw.current_pressure:.6f}",
+                                    f"{pw.current_pressure_err:.6f}"
+                                ])
+                            else:
+                                cols.extend(["NaN", "NaN"])
+
                         try:
                             with open(self.seq_fitting_summary_path, "a", encoding="utf-8") as f:
                                 f.write(",".join(cols) + "\n")
@@ -1706,7 +1793,7 @@ class SpectrometerGUI(QMainWindow):
                     x_val = mouse_point.x()
                     
                     x_pixel = int(np.round(x_val))
-                    if self.calib_coeffs is not None:
+                    if self.calib_coeffs is not None and self.latest_1d_data is not None:
                         x_arr = self.get_x_axis(len(self.latest_1d_data))
                         if self.chk_flip_x.isChecked():
                             x_arr = x_arr[::-1]
