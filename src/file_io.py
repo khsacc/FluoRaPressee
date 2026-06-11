@@ -200,6 +200,71 @@ class DataFileIO:
             "c2": calib["c2"],
         }
 
+    def create_fitting_seq_summary(self, file_path, func, fit_start, fit_end,
+                                   is_double, unit, has_pressure):
+        """Create the fitting sequential summary CSV with comment lines and a header row."""
+        if is_double:
+            header_cols = [
+                "Filename", "Timestamp",
+                f"Peak1 ({unit})", f"Peak1_Err ({unit})",
+                f"Width1 ({unit})", f"Width1_Err ({unit})",
+                f"Peak2 ({unit})", f"Peak2_Err ({unit})",
+                f"Width2 ({unit})", f"Width2_Err ({unit})",
+                "R2",
+            ]
+        else:
+            header_cols = [
+                "Filename", "Timestamp",
+                f"Peak ({unit})", f"Peak_Err ({unit})",
+                f"Width ({unit})", f"Width_Err ({unit})",
+                "R2",
+            ]
+        if has_pressure:
+            header_cols.extend(["Pressure (GPa)", "Pressure_Err (GPa)"])
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(f"# Fitting Function: {func}\n")
+            f.write(f"# Fitting Range: {fit_start} to {fit_end}\n")
+            f.write(",".join(header_cols) + "\n")
+
+    def append_fitting_seq_row(self, file_path, filename, timestamp_str,
+                               res, is_double, pressure_info=None):
+        """Append one data row to the fitting sequential summary CSV.
+
+        pressure_info (optional) dict keys: pressure, pressure_err (float, GPa).
+        Pass None when the pressure calculator is not active.
+        """
+        cols = [filename, timestamp_str]
+
+        if res is None:
+            cols.extend(["NaN"] * (9 if is_double else 5))
+        else:
+            if is_double:
+                cols.extend([
+                    f"{res.get('Peak1', np.nan):.6f}", f"{res.get('Peak1_Err', np.nan):.6f}",
+                    f"{res.get('Width1', np.nan):.6f}", f"{res.get('Width1_Err', np.nan):.6f}",
+                    f"{res.get('Peak2', np.nan):.6f}", f"{res.get('Peak2_Err', np.nan):.6f}",
+                    f"{res.get('Width2', np.nan):.6f}", f"{res.get('Width2_Err', np.nan):.6f}",
+                    f"{res.get('R2', np.nan):.6f}",
+                ])
+            else:
+                cols.extend([
+                    f"{res.get('Peak', np.nan):.6f}", f"{res.get('Peak_Err', np.nan):.6f}",
+                    f"{res.get('Width', np.nan):.6f}", f"{res.get('Width_Err', np.nan):.6f}",
+                    f"{res.get('R2', np.nan):.6f}",
+                ])
+
+        if pressure_info is not None:
+            p  = pressure_info.get("pressure")
+            pe = pressure_info.get("pressure_err")
+            if p is not None:
+                cols.extend([f"{p:.6f}", f"{pe:.6f}"])
+            else:
+                cols.extend(["NaN", "NaN"])
+
+        with open(file_path, "a", encoding="utf-8") as f:
+            f.write(",".join(cols) + "\n")
+
     def save_sequential_summary(self, summary_path, start_dt, end_dt,
                                 acq_time, accum, skip_frames, log_data):
         """Write the sequential-measurement summary file."""

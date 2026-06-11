@@ -839,34 +839,11 @@ class SpectrometerGUI(QMainWindow):
             
             try:
                 unit = "cm-1" if self.radio_spec_mode_raman.isChecked() else "nm"
-                has_pressure_col = (self.pressure_window is not None and self.pressure_window.isVisible())
-
-                with open(self.seq_fitting_summary_path, "w", encoding="utf-8") as f:
-                    f.write(f"# Fitting Function: {func}\n")
-                    f.write(f"# Fitting Range: {fit_start} to {fit_end}\n")
-
-                    if is_double:
-                        header_cols = [
-                            "Filename", "Timestamp",
-                            f"Peak1 ({unit})", f"Peak1_Err ({unit})",
-                            f"Width1 ({unit})", f"Width1_Err ({unit})",
-                            f"Peak2 ({unit})", f"Peak2_Err ({unit})",
-                            f"Width2 ({unit})", f"Width2_Err ({unit})",
-                            "R2"
-                        ]
-                    else:
-                        header_cols = [
-                            "Filename", "Timestamp",
-                            f"Peak ({unit})", f"Peak_Err ({unit})",
-                            f"Width ({unit})", f"Width_Err ({unit})",
-                            "R2"
-                        ]
-
-                    if has_pressure_col:
-                        header_cols.extend(["Pressure (GPa)", "Pressure_Err (GPa)"])
-
-                    f.write(",".join(header_cols) + "\n")
-
+                has_pressure = (self.pressure_window is not None and self.pressure_window.isVisible())
+                self.file_io.create_fitting_seq_summary(
+                    self.seq_fitting_summary_path, func, fit_start, fit_end,
+                    is_double, unit, has_pressure
+                )
             except Exception as e:
                 print(f"Failed to create summary file: {e}")
                 self.seq_fitting_summary_path = None
@@ -1736,41 +1713,18 @@ class SpectrometerGUI(QMainWindow):
 
                     if self.radio_fit_on.isChecked() and getattr(self, 'seq_fitting_summary_path', None):
                         is_double = "Double" in self.combo_fit_func.currentText()
-
-                        res = self.latest_fit_res
-                        cols = [filename, timestamp_str]
-
-                        if res is None:
-                            cols.extend(["NaN"] * (9 if is_double else 5))
-                        else:
-                            if is_double:
-                                cols.extend([
-                                    f"{res.get('Peak1', np.nan):.6f}", f"{res.get('Peak1_Err', np.nan):.6f}",
-                                    f"{res.get('Width1', np.nan):.6f}", f"{res.get('Width1_Err', np.nan):.6f}",
-                                    f"{res.get('Peak2', np.nan):.6f}", f"{res.get('Peak2_Err', np.nan):.6f}",
-                                    f"{res.get('Width2', np.nan):.6f}", f"{res.get('Width2_Err', np.nan):.6f}",
-                                    f"{res.get('R2', np.nan):.6f}"
-                                ])
-                            else:
-                                cols.extend([
-                                    f"{res.get('Peak', np.nan):.6f}", f"{res.get('Peak_Err', np.nan):.6f}",
-                                    f"{res.get('Width', np.nan):.6f}", f"{res.get('Width_Err', np.nan):.6f}",
-                                    f"{res.get('R2', np.nan):.6f}"
-                                ])
-
                         pw = self.pressure_window
+                        pressure_info = None
                         if pw is not None and pw.isVisible():
-                            if pw.current_pressure is not None:
-                                cols.extend([
-                                    f"{pw.current_pressure:.6f}",
-                                    f"{pw.current_pressure_err:.6f}"
-                                ])
-                            else:
-                                cols.extend(["NaN", "NaN"])
-
+                            pressure_info = {
+                                "pressure":     pw.current_pressure,
+                                "pressure_err": pw.current_pressure_err,
+                            }
                         try:
-                            with open(self.seq_fitting_summary_path, "a", encoding="utf-8") as f:
-                                f.write(",".join(cols) + "\n")
+                            self.file_io.append_fitting_seq_row(
+                                self.seq_fitting_summary_path, filename, timestamp_str,
+                                self.latest_fit_res, is_double, pressure_info
+                            )
                         except Exception as e:
                             print(f"Failed to write summary: {e}")
 
