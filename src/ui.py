@@ -48,6 +48,7 @@ class SpectrometerGUI(QMainWindow):
         self.resize(1400, 900)
 
         self.config = self.load_spectrometer_config()
+        _cache = self._load_local_cache()
 
         self.raw_1d_data = None 
         self.raw_2d_data = None
@@ -71,7 +72,7 @@ class SpectrometerGUI(QMainWindow):
         self.current_accum_count = 0
         self.accumulated_data = None
 
-        self.seq_dir = ""
+        self.seq_dir = _cache.get("last_seq_dir", "")
         self.is_sequential_running = False
         self.seq_count = 0
         self.current_skip_count = 0
@@ -83,7 +84,7 @@ class SpectrometerGUI(QMainWindow):
         self.spec_ctrl = SpectrometerController(config=self.config, debug=self.debug)
         self.analyzer = DataAnalyzer()
         self.file_io = DataFileIO()
-        self._last_save_dir = ""
+        self._last_save_dir = _cache.get("last_save_dir", "")
 
         first_grating = self.config.get("grating", [{}])[0].get("grooves", 600)
         self.physical_grating = str(first_grating)
@@ -512,6 +513,15 @@ class SpectrometerGUI(QMainWindow):
         self.seq_timer.timeout.connect(self.update_seq_progress)
         
         self.update_plot_labels()
+
+        if self.seq_dir and os.path.isdir(self.seq_dir):
+            display_path = self.seq_dir if len(self.seq_dir) < 25 else "..." + self.seq_dir[-22:]
+            self.lbl_seq_dir.setText(f"Dir: {display_path}")
+            self.btn_start_seq.setEnabled(True)
+            self.btn_start_seq.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        else:
+            self.seq_dir = ""
+
         self.radio_spec_mode_wl.toggled.connect(self.sync_pressure_calculator_mode)
         self.radio_spec_mode_raman.toggled.connect(self.sync_pressure_calculator_mode)
         
@@ -577,6 +587,26 @@ class SpectrometerGUI(QMainWindow):
                 json.dump(self.config, f, indent=4)
         except Exception as e:
             print(f"Failed to save config: {e}")
+
+    def _load_local_cache(self):
+        try:
+            with open("local_cache.json", "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_local_cache(self, key, value):
+        try:
+            try:
+                with open("local_cache.json", "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+            data[key] = value
+            with open("local_cache.json", "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"Failed to save local cache: {e}")
 
     def on_roi_spin_changed(self):
         self.apply_roi_settings()
@@ -663,9 +693,11 @@ class SpectrometerGUI(QMainWindow):
             self.apply_roi_settings()
 
     def on_choose_seq_dir(self):
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory for Sequential Data")
+        start_dir = self.seq_dir if self.seq_dir and os.path.isdir(self.seq_dir) else ""
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory for Sequential Data", start_dir)
         if dir_path:
             self.seq_dir = dir_path
+            self._save_local_cache("last_seq_dir", dir_path)
             display_path = dir_path if len(dir_path) < 25 else "..." + dir_path[-22:]
             self.lbl_seq_dir.setText(f"Dir: {display_path}")
             if not self.is_sequential_running:
@@ -1105,6 +1137,7 @@ class SpectrometerGUI(QMainWindow):
         if not file_path:
             return
         self._last_save_dir = os.path.dirname(file_path)
+        self._save_local_cache("last_save_dir", self._last_save_dir)
 
         try:
             bg_arr, bg_meta = self.file_io.save_background(
@@ -1144,6 +1177,7 @@ class SpectrometerGUI(QMainWindow):
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Data", initial_path, "Text Files (*.txt);;All Files (*)")
         if file_path:
             self._last_save_dir = os.path.dirname(file_path)
+            self._save_local_cache("last_save_dir", self._last_save_dir)
             self._save_data_to_path(file_path, show_msg=True)
 
     def _save_data_to_path(self, file_path, show_msg=True):
