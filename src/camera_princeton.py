@@ -2,6 +2,7 @@
 import sys
 import time
 import numpy as np
+from threading import Lock
 from PyQt5.QtCore import QThread, pyqtSignal
 
 # PVCamのDLLパス (32bit環境では通常System32に入りますが、独自の場所にある場合は書き換えてください)
@@ -43,6 +44,7 @@ class CameraThreadPI(QThread):
         self.thread_active = True
         self.is_measuring = False
         self.cam = None
+        self._lock = Lock()
         
         self.det_width = 1024 
         self.det_height = 1024 
@@ -57,7 +59,8 @@ class CameraThreadPI(QThread):
         self.new_temperature = None
         
         self.mock_exposure = 0.1
-        self.mock_temp = -70 
+        self.mock_temp = -70
+        self.current_exposure = 0.1
 
     def run(self):
         try:
@@ -85,32 +88,43 @@ class CameraThreadPI(QThread):
                 self.init_finished.emit()
             
             was_measuring = False
-            
+            _consec_errors = 0
+
             while self.thread_active:
-                if self.new_exposure is not None:
+                with self._lock:
+                    new_exposure = self.new_exposure
+                    new_temperature = self.new_temperature
+                    request_temp = self.request_temp
+                    is_measuring = self.is_measuring
+                    settings_changed = self.settings_changed
+
+                if new_exposure is not None:
                     if self.debug:
-                        self.mock_exposure = self.new_exposure
+                        self.mock_exposure = new_exposure
                     else:
                         try:
-                            self.cam.set_exposure(self.new_exposure)
+                            self.cam.set_exposure(new_exposure)
                         except Exception as e:
                             print(f"Failed to set exposure: {e}")
-                    self.new_exposure = None
+                    self.current_exposure = new_exposure
+                    with self._lock:
+                        self.new_exposure = None
                     self.exposure_set_finished.emit()
 
-                if self.new_temperature is not None:
+                if new_temperature is not None:
                     if self.debug:
-                        self.mock_temp = self.new_temperature
+                        self.mock_temp = new_temperature
                     else:
                         try:
                             # PVCamの仕様に合わせ、必要に応じて値を100倍（-70.0 -> -7000）にします
-                            self.cam.set_attribute_value("setpoint", int(float(self.new_temperature) * 100))
+                            self.cam.set_attribute_value("setpoint", int(float(new_temperature) * 100))
                         except Exception as e:
                             print(f"Failed to set temperature: {e}")
-                    self.new_temperature = None
+                    with self._lock:
+                        self.new_temperature = None
                     self.temperature_set_finished.emit()
 
-                if self.request_temp:
+                if request_temp:
                     if self.debug:
                         self.temperature_ready.emit(self.mock_temp + np.random.uniform(-0.5, 0.5))
                     else:
@@ -119,43 +133,63 @@ class CameraThreadPI(QThread):
                             temp_raw = self.cam.get_attribute_value("cur_temp")
                             self.temperature_ready.emit(temp_raw / 100.0)
                         except Exception as e:
+                            print(f"Failed to read temperature: {e}")
                             self.temperature_ready.emit(-999.0)
-                    self.request_temp = False
+                    with self._lock:
+                        self.request_temp = False
 
-                if self.is_measuring:
+                if is_measuring:
                     if not was_measuring:
                         was_measuring = True
 
-                    if self.settings_changed:
+                    if settings_changed:
+                        # Clear flag before applying so a new update arriving during
+                        # _apply_camera_settings() is not silently dropped.
+                        with self._lock:
+                            self.settings_changed = False
                         if not self.debug:
                             self._apply_camera_settings()
-                        self.settings_changed = False
 
-                    if self.debug:
-                        x = np.arange(self.det_width)
-                        y1 = 500 * np.exp(-((x - 700)**2) / (2 * 4**2))
-                        y2 = 250 * np.exp(-((x - 675)**2) / (2 * 4**2))
-                        base = 100 + np.random.normal(0, 10, self.det_width)
-                        spectrum = y1 + y2 + base
-                        
-                        if self.roi_mode == "2d":
-                            data = np.tile(spectrum, (self.det_height, 1))
-                            self.data_ready.emit("2d", data)
-                        else:
-                            self.data_ready.emit("1d", spectrum)
-                        time.sleep(self.mock_exposure) 
-                    else:
-                        # 撮影
-                        data = self.cam.snap()
-                        if self.roi_mode == "2d":
-                            self.data_ready.emit("2d", data)
-                        else:
-                            if data.ndim == 2:
-                                spectrum = np.sum(data, axis=0)
+                    try:
+                        if self.debug:
+                            x = np.arange(self.det_width)
+                            y1 = 500 * np.exp(-((x - 700)**2) / (2 * 4**2))
+                            y2 = 250 * np.exp(-((x - 675)**2) / (2 * 4**2))
+                            base = 100 + np.random.normal(0, 10, self.det_width)
+                            spectrum = y1 + y2 + base
+
+                            if self.roi_mode == "2d":
+                                data = np.tile(spectrum, (self.det_height, 1))
+                                self.data_ready.emit("2d", data)
                             else:
-                                spectrum = data
-                            self.data_ready.emit("1d", spectrum)
+                                self.data_ready.emit("1d", spectrum)
+                            time.sleep(self.mock_exposure)
+                        else:
+                            snap_timeout = self.current_exposure + 10
+                            data = self.cam.snap(timeout=snap_timeout)
+                            if data is None:
+                                time.sleep(0.05)
+                                continue
+                            if self.roi_mode == "2d":
+                                self.data_ready.emit("2d", data)
+                            else:
+                                if data.ndim == 2:
+                                    spectrum = np.sum(data, axis=0)
+                                else:
+                                    spectrum = data
+                                self.data_ready.emit("1d", spectrum)
+                        _consec_errors = 0
+                    except Exception as e:
+                        print(f"Failed to acquire camera data: {e}")
+                        _consec_errors += 1
+                        if _consec_errors >= 5:
+                            print("Stopping acquisition after 5 consecutive camera errors.")
+                            with self._lock:
+                                self.is_measuring = False
+                            _consec_errors = 0
+                        time.sleep(0.05)
                 else:
+                    _consec_errors = 0
                     was_measuring = False
                     time.sleep(0.05)
                 
@@ -167,13 +201,16 @@ class CameraThreadPI(QThread):
                 self.cam = None
 
     def read_temperature(self):
-        self.request_temp = True
+        with self._lock:
+            self.request_temp = True
 
     def update_exposure(self, exp_time):
-        self.new_exposure = exp_time
+        with self._lock:
+            self.new_exposure = exp_time
 
     def update_temperature(self, temp):
-        self.new_temperature = temp
+        with self._lock:
+            self.new_temperature = temp
 
     def _apply_camera_settings(self):
         if self.cam is None: return
@@ -191,13 +228,15 @@ class CameraThreadPI(QThread):
             print(f"Failed to apply ROI settings: {e}")
 
     def update_roi_settings(self, mode, vstart=0, vend=256):
-        self.roi_mode = mode
-        self.roi_vstart = vstart
-        self.roi_vend = vend
-        self.settings_changed = True
+        with self._lock:
+            self.roi_mode = mode
+            self.roi_vstart = vstart
+            self.roi_vend = vend
+            self.settings_changed = True
     
     def get_temperature(self):
-        return self.mock_temp if self.debug else (self.new_temperature if self.new_temperature is not None else -70.0)
+        with self._lock:
+            return self.mock_temp if self.debug else (self.new_temperature if self.new_temperature is not None else -70.0)
 
     @property
     def camera(self):
@@ -225,19 +264,22 @@ class CameraThreadPI(QThread):
             if self.settings_changed:
                 self._apply_camera_settings()
                 self.settings_changed = False
-                
+
             try:
-                data = self.cam.snap()
+                snap_timeout = self.current_exposure + 10
+                data = self.cam.snap(timeout=snap_timeout)
                 return data
             except Exception as e:
                 print(f"Failed to acquire single image: {e}")
                 return None
 
     def start_measuring(self):
-        self.is_measuring = True
+        with self._lock:
+            self.is_measuring = True
 
     def stop_measuring(self):
-        self.is_measuring = False
+        with self._lock:
+            self.is_measuring = False
 
     def stop_thread(self):
         self.thread_active = False

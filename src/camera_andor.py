@@ -50,6 +50,7 @@ class CameraThreadAndor(QThread):
         # デバッグ用の仮想設定値
         self.mock_exposure = self.DEFAULT_EXPOSURE
         self.mock_temp = self.DEFAULT_TEMP
+        self.current_exposure = self.DEFAULT_EXPOSURE
 
     def run(self):
         try:
@@ -75,37 +76,47 @@ class CameraThreadAndor(QThread):
                 self.init_finished.emit()
             
             was_measuring = False
-            
+            _consec_errors = 0
+
             while self.thread_active:
-                if self.new_exposure is not None:
+                with self._lock:
+                    new_exposure = self.new_exposure
+                    new_temperature = self.new_temperature
+                    request_temp = self.request_temp
+                    is_measuring = self.is_measuring
+                    settings_changed = self.settings_changed
+
+                if new_exposure is not None:
                     if self.debug:
-                        self.mock_exposure = self.new_exposure
+                        self.mock_exposure = new_exposure
                         print(f"[DEBUG] Exposure set to {self.mock_exposure} s")
                     else:
                         try:
-                            self.cam.set_exposure(self.new_exposure)
-                            print(f"Exposure set to {self.new_exposure} s")
+                            self.cam.set_exposure(new_exposure)
+                            print(f"Exposure set to {new_exposure} s")
                         except Exception as e:
                             print(f"Failed to set exposure: {e}")
-                    self.new_exposure = None
+                    self.current_exposure = new_exposure
+                    with self._lock:
+                        self.new_exposure = None
                     self.exposure_set_finished.emit()
 
-                if self.new_temperature is not None:
+                if new_temperature is not None:
                     if self.debug:
-                        self.mock_temp = self.new_temperature
+                        self.mock_temp = new_temperature
                         print(f"[DEBUG] Target temperature set to {self.mock_temp} C")
                     else:
                         try:
-                            self.cam.set_temperature(self.new_temperature)
-                            print(f"Target temperature set to {self.new_temperature} C")
+                            self.cam.set_temperature(new_temperature)
+                            print(f"Target temperature set to {new_temperature} C")
                         except Exception as e:
                             print(f"Failed to set temperature: {e}")
-                    self.new_temperature = None
+                    with self._lock:
+                        self.new_temperature = None
                     self.temperature_set_finished.emit()
 
-                if self.request_temp:
+                if request_temp:
                     if self.debug:
-                        # デバッグ時は指定温度にゆらぎを持たせて返す
                         self.temperature_ready.emit(self.mock_temp + np.random.uniform(-self.TEMP_TOLERANCE, self.TEMP_TOLERANCE))
                     else:
                         try:
@@ -118,44 +129,64 @@ class CameraThreadAndor(QThread):
                         except Exception as e:
                             print(f"Error reading temperature: {e}")
                             self.temperature_ready.emit(-999.0)
-                    self.request_temp = False
+                    with self._lock:
+                        self.request_temp = False
 
-                if self.is_measuring:
+                if is_measuring:
                     if not was_measuring:
                         was_measuring = True
 
-                    if self.settings_changed:
+                    if settings_changed:
+                        # Clear flag before applying so a new update arriving during
+                        # _apply_camera_settings() is not silently dropped.
+                        with self._lock:
+                            self.settings_changed = False
                         if not self.debug:
                             self._apply_camera_settings()
-                        self.settings_changed = False
 
-                    if self.debug:
-                        # === デバッグ用ダミーデータ生成 ===
-                        x = np.arange(self.det_width)
-                        # ルビーのR1, R2線を模したダブルピーク + 背景ノイズ
-                        y1 = 500 * np.exp(-((x - 700)**2) / (2 * 4**2))
-                        y2 = 250 * np.exp(-((x - 675)**2) / (2 * 4**2))
-                        base = 100 + np.random.normal(0, 10, self.det_width)
-                        spectrum = y1 + y2 + base
-                        
-                        if self.roi_mode == "2d":
-                            data = np.tile(spectrum, (self.det_height, 1))
-                            self.data_ready.emit("2d", data)
-                        else:
-                            self.data_ready.emit("1d", spectrum)
-                            
-                        time.sleep(self.mock_exposure) # 露光時間分待機
-                    else:
-                        data = self.cam.snap()
-                        if self.roi_mode == "2d":
-                            self.data_ready.emit("2d", data)
-                        else:
-                            if data.ndim == 2:
-                                spectrum = np.sum(data, axis=0)
+                    try:
+                        if self.debug:
+                            # === デバッグ用ダミーデータ生成 ===
+                            x = np.arange(self.det_width)
+                            # ルビーのR1, R2線を模したダブルピーク + 背景ノイズ
+                            y1 = 500 * np.exp(-((x - 700)**2) / (2 * 4**2))
+                            y2 = 250 * np.exp(-((x - 675)**2) / (2 * 4**2))
+                            base = 100 + np.random.normal(0, 10, self.det_width)
+                            spectrum = y1 + y2 + base
+
+                            if self.roi_mode == "2d":
+                                data = np.tile(spectrum, (self.det_height, 1))
+                                self.data_ready.emit("2d", data)
                             else:
-                                spectrum = data
-                            self.data_ready.emit("1d", spectrum)
+                                self.data_ready.emit("1d", spectrum)
+
+                            time.sleep(self.mock_exposure)
+                        else:
+                            snap_timeout = self.current_exposure + 10
+                            data = self.cam.snap(timeout=snap_timeout)
+                            if data is None:
+                                time.sleep(self.SLEEP_INTERVAL)
+                                continue
+                            if self.roi_mode == "2d":
+                                self.data_ready.emit("2d", data)
+                            else:
+                                if data.ndim == 2:
+                                    spectrum = np.sum(data, axis=0)
+                                else:
+                                    spectrum = data
+                                self.data_ready.emit("1d", spectrum)
+                        _consec_errors = 0
+                    except Exception as e:
+                        print(f"Failed to acquire camera data: {e}")
+                        _consec_errors += 1
+                        if _consec_errors >= 5:
+                            print("Stopping acquisition after 5 consecutive camera errors.")
+                            with self._lock:
+                                self.is_measuring = False
+                            _consec_errors = 0
+                        time.sleep(self.SLEEP_INTERVAL)
                 else:
+                    _consec_errors = 0
                     was_measuring = False
                     time.sleep(self.SLEEP_INTERVAL)
                 
@@ -240,19 +271,22 @@ class CameraThreadAndor(QThread):
             if self.settings_changed:
                 self._apply_camera_settings()
                 self.settings_changed = False
-                
+
             try:
-                data = self.cam.snap()
+                snap_timeout = self.current_exposure + 10
+                data = self.cam.snap(timeout=snap_timeout)
                 return data
             except Exception as e:
                 print(f"Failed to acquire single image: {e}")
                 return None
 
     def start_measuring(self):
-        self.is_measuring = True
+        with self._lock:
+            self.is_measuring = True
 
     def stop_measuring(self):
-        self.is_measuring = False
+        with self._lock:
+            self.is_measuring = False
 
     def stop_thread(self):
         self.thread_active = False
