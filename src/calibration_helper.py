@@ -1,6 +1,6 @@
 import numpy as np
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel
-from PyQt6.QtCore import Qt
+from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel
+from PyQt5.QtCore import Qt
 import pyqtgraph as pg
 
 class ReferenceHelperWindow(QDialog):

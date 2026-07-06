@@ -38,7 +38,7 @@ A Python-based GUI application designed to control Andor cameras (detectors) and
   * Andor SDK must be installed on the system.
 
 ### Dependencies
-* PyQt6
+* PyQt5
 * pyqtgraph
 * numpy
 * scipy
@@ -48,7 +48,7 @@ A Python-based GUI application designed to control Andor cameras (detectors) and
 1. Open Command Prompt or PowerShell.
 2. Install the required Python packages:
 
-    pip install PyQt6 pyqtgraph numpy scipy
+    pip install PyQt5 pyqtgraph numpy scipy
 
 3. Ensure the Andor SDK is properly installed.
 4. Navigate to the project directory and run the script.

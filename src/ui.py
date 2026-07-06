@@ -2,24 +2,24 @@ import sys
 import os
 import json
 import time
-import csv
 from datetime import datetime
 import numpy as np
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
                              QHBoxLayout, QWidget, QLabel, QRadioButton, QGroupBox, 
                              QSpinBox, QDoubleSpinBox, QStackedWidget, QComboBox, 
                              QScrollArea, QFileDialog, QButtonGroup, QGridLayout,
                              QDialog, QTextEdit, QAbstractSpinBox, QInputDialog, QCheckBox, QMessageBox)
-from PyQt6.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer
 import pyqtgraph as pg
 
 # ---- 分割したモジュールのインポート ----
-from camera import CameraThread
-from spectrometer import SpectrometerController, SpectrometerMoveThread
-from analysis import DataAnalyzer
-from calibration_ui import CalibrationWindow
-from pressureCalc import PressureCalculator
-from pressureCalc_ui import PressureCalculatorWindow
+from src.camera import CameraThread
+from src.spectrometer import SpectrometerController, SpectrometerMoveThread
+from src.analysis import DataAnalyzer
+from src.calibration_ui import CalibrationWindow
+from src.pressureCalc import PressureCalculator
+from src.pressureCalc_ui import PressureCalculatorWindow
+from src.file_io import DataFileIO
 # ----------------------------------------
 
 class CustomSpinBox(QSpinBox):
@@ -47,27 +47,8 @@ class SpectrometerGUI(QMainWindow):
         self.setWindowTitle("FluoraPressée: Spectrometer Live View" + (" [DEBUG MODE]" if self.debug else ""))
         self.resize(1400, 900)
 
-        self.sensor_data = {
-            "Ruby": {
-                "scales": ["Piermarini et al. 1975", "Mao et al. hydro 1986", "Shen et al. 2020"],
-                "t_scales": ["Ragan 1992", "Datchi et al. 2007 Linear"],
-                "req_double": True,
-                "lam0_default": 694.2300
-            },
-            "Sm2+:SrB4O7": {
-                "scales": ["Datchi et al. 1997"],
-                "t_scales": ["Datchi et al. 1997"],
-                "req_double": False,
-                "lam0_default": 685.4100
-            }
-        }
-        self.t_scale_limits = {
-            "Ragan 1992": (15, 600),
-            "Datchi et al. 2007 Linear": (300, 600),
-            "Datchi et al. 1997": (300, 900)
-        }
-
         self.config = self.load_spectrometer_config()
+        _cache = self._load_local_cache()
 
         self.raw_1d_data = None 
         self.raw_2d_data = None
@@ -75,6 +56,8 @@ class SpectrometerGUI(QMainWindow):
         self.latest_2d_data = None
         
         self.calib_coeffs = None
+        self.calib_unit = 'Wavelength'   # 'Wavelength' (pixel→nm) or 'Raman shift' (pixel→cm⁻¹)
+        self.calib_laser_wl = None       # excitation wavelength (nm) used when calib_unit=='Raman shift'
         self.calib_file_name = "None"
         self.current_w_peak1 = None
         
@@ -89,7 +72,7 @@ class SpectrometerGUI(QMainWindow):
         self.current_accum_count = 0
         self.accumulated_data = None
 
-        self.seq_dir = ""
+        self.seq_dir = _cache.get("last_seq_dir", "")
         self.is_sequential_running = False
         self.seq_count = 0
         self.current_skip_count = 0
@@ -98,8 +81,10 @@ class SpectrometerGUI(QMainWindow):
         self._seq_fit_failed = False
         self.seq_fitting_summary_path = None
 
-        self.spec_ctrl = SpectrometerController(debug=self.debug)
+        self.spec_ctrl = SpectrometerController(config=self.config, debug=self.debug)
         self.analyzer = DataAnalyzer()
+        self.file_io = DataFileIO()
+        self._last_save_dir = _cache.get("last_save_dir", "")
 
         first_grating = self.config.get("grating", [{}])[0].get("grooves", 600)
         self.physical_grating = str(first_grating)
@@ -148,6 +133,7 @@ class SpectrometerGUI(QMainWindow):
         self.plot_widget.getViewBox().setMouseMode(pg.ViewBox.RectMode)
         
         self.plot_scatter = self.plot_widget.plot(pen=None, symbol='o', symbolSize=4, symbolBrush='w')
+        self.plot_line = self.plot_widget.plot(pen=pg.mkPen('w', width=1))
         self.fit_curve = self.plot_widget.plot(pen=pg.mkPen('y', width=2))
         self.fit_curve_sub1 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
         self.fit_curve_sub2 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
@@ -163,10 +149,19 @@ class SpectrometerGUI(QMainWindow):
         plot_layout.addLayout(self.plot_content_layout)
         
         plot_controls_layout = QHBoxLayout()
+        self.radio_plot_line = QRadioButton("Line")
+        self.radio_plot_scatter = QRadioButton("Scatter")
+        self.radio_plot_line.setChecked(True)
+        self._plot_style_group = QButtonGroup(self)
+        self._plot_style_group.addButton(self.radio_plot_line)
+        self._plot_style_group.addButton(self.radio_plot_scatter)
         self.chk_rescale_x = QCheckBox("Rescale X automatically")
         self.chk_rescale_y = QCheckBox("Rescale Y automatically")
         self.chk_rescale_x.setChecked(True)
         self.chk_rescale_y.setChecked(True)
+        plot_controls_layout.addWidget(QLabel("Plot style:"))
+        plot_controls_layout.addWidget(self.radio_plot_line)
+        plot_controls_layout.addWidget(self.radio_plot_scatter)
         plot_controls_layout.addStretch()
         plot_controls_layout.addWidget(self.chk_rescale_x)
         plot_controls_layout.addWidget(self.chk_rescale_y)
@@ -486,7 +481,10 @@ class SpectrometerGUI(QMainWindow):
         
         self.chk_rescale_x.toggled.connect(self.on_fit_settings_changed)
         self.chk_rescale_y.toggled.connect(self.on_fit_settings_changed)
-        
+
+        self.radio_plot_line.toggled.connect(self.on_fit_settings_changed)
+        self.radio_plot_scatter.toggled.connect(self.on_fit_settings_changed)
+
         self.btn_read_temp.clicked.connect(self.request_temperature_read)
 
         self.radio_fit_on.toggled.connect(self.toggle_fitting_panel)
@@ -515,6 +513,15 @@ class SpectrometerGUI(QMainWindow):
         self.seq_timer.timeout.connect(self.update_seq_progress)
         
         self.update_plot_labels()
+
+        if self.seq_dir and os.path.isdir(self.seq_dir):
+            display_path = self.seq_dir if len(self.seq_dir) < 25 else "..." + self.seq_dir[-22:]
+            self.lbl_seq_dir.setText(f"Dir: {display_path}")
+            self.btn_start_seq.setEnabled(True)
+            self.btn_start_seq.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        else:
+            self.seq_dir = ""
+
         self.radio_spec_mode_wl.toggled.connect(self.sync_pressure_calculator_mode)
         self.radio_spec_mode_raman.toggled.connect(self.sync_pressure_calculator_mode)
         
@@ -557,7 +564,7 @@ class SpectrometerGUI(QMainWindow):
         self.init_dialog.setLayout(layout)
         self.init_dialog.show()
 
-        self.thread = CameraThread(debug=self.debug)
+        self.thread = CameraThread(config=self.config, debug=self.debug)
         self.thread.data_ready.connect(self.on_data_ready)
         self.thread.init_finished.connect(self.on_camera_initialized)
         self.thread.temperature_ready.connect(self.on_temperature_read)
@@ -580,6 +587,26 @@ class SpectrometerGUI(QMainWindow):
                 json.dump(self.config, f, indent=4)
         except Exception as e:
             print(f"Failed to save config: {e}")
+
+    def _load_local_cache(self):
+        try:
+            with open("local_cache.json", "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_local_cache(self, key, value):
+        try:
+            try:
+                with open("local_cache.json", "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                data = {}
+            data[key] = value
+            with open("local_cache.json", "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"Failed to save local cache: {e}")
 
     def on_roi_spin_changed(self):
         self.apply_roi_settings()
@@ -666,9 +693,11 @@ class SpectrometerGUI(QMainWindow):
             self.apply_roi_settings()
 
     def on_choose_seq_dir(self):
-        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory for Sequential Data")
+        start_dir = self.seq_dir if self.seq_dir and os.path.isdir(self.seq_dir) else ""
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Directory for Sequential Data", start_dir)
         if dir_path:
             self.seq_dir = dir_path
+            self._save_local_cache("last_seq_dir", dir_path)
             display_path = dir_path if len(dir_path) < 25 else "..." + dir_path[-22:]
             self.lbl_seq_dir.setText(f"Dir: {display_path}")
             if not self.is_sequential_running:
@@ -676,6 +705,12 @@ class SpectrometerGUI(QMainWindow):
                 self.btn_start_seq.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
 
     def on_spec_mode_changed(self):
+        # The centralWidget is fully disabled while the spectrometer moves
+        # (_show_spectrometer_moving_dialog calls centralWidget().setEnabled(False)),
+        # so this handler should not fire during movement. Return as a safety guard.
+        if hasattr(self, 'spec_move_thread') and self.spec_move_thread.isRunning():
+            return
+        
         is_raman = self.radio_spec_mode_raman.isChecked()
         self.spin_exc_wl.setEnabled(is_raman)
         
@@ -727,11 +762,22 @@ class SpectrometerGUI(QMainWindow):
             ex_wl = self.spin_exc_wl.value()
             if ex_wl > 0:
                 try:
-                    target_wl = 1e7 / (1e7 / ex_wl - val)
-                except ZeroDivisionError:
-                    target_wl = val
+                    # Check for invalid Raman shift value (when Raman shift >= excitation wavenumber)
+                    denom = 1e7 / ex_wl - val
+                    if denom <= 0:
+                        # Invalid state: Raman shift is too large
+                        self.btn_apply_spec.setEnabled(False)
+                        return
+                    target_wl = 1e7 / denom
+                except (ZeroDivisionError, ValueError):
+                    # If Raman shift calculation fails, disable apply button
+                    self.btn_apply_spec.setEnabled(False)
+                    return
             else:
-                target_wl = val
+                # Invalid state: ex_wl should never be <= 0 in Raman mode
+                # Cannot calculate target wavelength from Raman shift
+                self.btn_apply_spec.setEnabled(False)
+                return
         else:
             target_wl = val
             
@@ -824,12 +870,12 @@ class SpectrometerGUI(QMainWindow):
             
             
             try:
-                with open(self.seq_fitting_summary_path, "w", encoding="utf-8") as f:
-                    f.write(f"# Fitting Function: {func}\n")
-                    f.write(f"# Fitting Range: {fit_start} to {fit_end}\n")
-                    
-                        
-                        
+                unit = "cm-1" if self.radio_spec_mode_raman.isChecked() else "nm"
+                has_pressure = (self.pressure_window is not None and self.pressure_window.isVisible())
+                self.file_io.create_fitting_seq_summary(
+                    self.seq_fitting_summary_path, func, fit_start, fit_end,
+                    is_double, unit, has_pressure
+                )
             except Exception as e:
                 print(f"Failed to create summary file: {e}")
                 self.seq_fitting_summary_path = None
@@ -846,18 +892,12 @@ class SpectrometerGUI(QMainWindow):
                 seq_end_time_dt = datetime.now()
                 summary_path = os.path.join(self.seq_dir, f"seq_summary_{self.seq_start_time_dt.strftime('%Y%m%d_%H%M%S')}.txt")
                 try:
-                    with open(summary_path, "w", encoding="utf-8", newline="") as f:
-                        f.write(f"Sequential Measurement Summary\n")
-                        f.write(f"Start Time: {self.seq_start_time_dt.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                        f.write(f"End Time: {seq_end_time_dt.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                        f.write(f"Exposure Time: {self.spin_acq_time.value()} s\n")
-                        f.write(f"Accumulations: {self.spin_accumulate.value()}\n")
-                        f.write(f"Skip Frames: {self.spin_skip_frames.value()}\n")
-                        f.write("-" * 30 + "\n")
-                        
-                        writer = csv.writer(f)
-                        writer.writerow(["Filename", "Saved Time"])
-                        writer.writerows(self.seq_log_data)
+                    self.file_io.save_sequential_summary(
+                        summary_path,
+                        self.seq_start_time_dt, seq_end_time_dt,
+                        self.spin_acq_time.value(), self.spin_accumulate.value(),
+                        self.spin_skip_frames.value(), self.seq_log_data
+                    )
                 except Exception as e:
                     print(f"Failed to write sequential summary: {e}")
 
@@ -920,6 +960,8 @@ class SpectrometerGUI(QMainWindow):
     def load_spectrometer_config(self):
         config_path = "spectrometerConfig.json"
         default_config = {
+            "model": "Andor",
+            "com_port": "COM3",
             "grating": [
                 {
                     "index": 1,
@@ -973,8 +1015,10 @@ class SpectrometerGUI(QMainWindow):
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
             self.update_display(is_new_data=False)
 
-    def apply_calibration(self, coeffs, filename):
+    def apply_calibration(self, coeffs, filename, calib_unit='Wavelength', calib_laser_wl=None):
         self.calib_coeffs = coeffs
+        self.calib_unit = calib_unit
+        self.calib_laser_wl = calib_laser_wl
         self.calib_file_name = filename
         self.lbl_loaded_calib.setText(f"Loaded: {filename}")
         self.update_plot_labels()
@@ -986,71 +1030,83 @@ class SpectrometerGUI(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "Load Configuration", "", "JSON Files (*.json)")
         if not file_path:
             return
-            
+
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                
-            spec_settings = data.get("spectrometer_settings", {})
-            calib_grating = str(spec_settings.get("grating_grooves_per_mm", "600"))
-            calib_unit = spec_settings.get("unit", "Wavelength")
-            calib_center = spec_settings.get("center_value", 694.0)
-            
-            if "center_wavelength_nm" in spec_settings:
-                calib_center = spec_settings["center_wavelength_nm"]
-                calib_unit = "Wavelength"
-                
-            det_settings = data.get("detector_settings", {})
-            det_mode = det_settings.get("mode", "1D Spectrum (Custom ROI)")
-            roi_start = det_settings.get("roi_start", 100)
-            roi_end = det_settings.get("roi_end", 140)
-            
-            c0 = data["calibration_coefficients"]["c0"]
-            c1 = data["calibration_coefficients"]["c1"]
-            c2 = data["calibration_coefficients"]["c2"]
-            
-            if "2D" in det_mode:
-                self.radio_2d.setChecked(True)
-            elif "Full" in det_mode:
-                self.radio_1d_full.setChecked(True)
-            else:
-                self.radio_1d_roi.setChecked(True)
-                
-            self.spin_vstart.blockSignals(True)
-            self.spin_vend.blockSignals(True)
-            self.spin_vstart.setValue(roi_start)
-            self.spin_vend.setValue(roi_end)
-            self.spin_vstart.blockSignals(False)
-            self.spin_vend.blockSignals(False)
-            self.apply_roi_settings()
-            
-            self.radio_spec_mode_raman.blockSignals(True)
-            self.radio_spec_mode_wl.blockSignals(True)
-            if calib_unit == "Raman shift":
-                self.radio_spec_mode_raman.setChecked(True)
-                self.lbl_centre.setText("Centre (cm⁻¹):")
-            else:
-                self.radio_spec_mode_wl.setChecked(True)
-                self.lbl_centre.setText("Centre (nm):")
-            self.radio_spec_mode_raman.blockSignals(False)
-            self.radio_spec_mode_wl.blockSignals(False)
-            
-            cb_idx = self.combo_grating.findText(calib_grating)
-            if cb_idx >= 0:
-                self.combo_grating.setCurrentIndex(cb_idx)
-                
-            self.spin_centre_wl.setValue(calib_center)
-            
-            self._loading_config = True
-            self._pending_calib_coeffs = (c0, c1, c2)
-            self._pending_calib_filename = os.path.basename(file_path)
-            
-            self.on_apply_spectrometer()
-            
+            cfg = self.file_io.load_calibration_config(file_path)
         except Exception as e:
             self._loading_config = False
             self._pending_calib_coeffs = None
             QMessageBox.warning(self, "Error", f"Failed to load configuration:\n{e}")
+            return
+
+        # For Raman shift calibrations the excitation wavelength is embedded in the
+        # polynomial coefficients; a mismatch means every x-axis value will be wrong.
+        if cfg.get("calibration_unit") == "Raman shift":
+            saved_exc_wl = cfg.get("exc_wl")
+            if saved_exc_wl is None:
+                QMessageBox.critical(self, "Invalid File",
+                    "This calibration file does not contain an excitation wavelength.\n"
+                    "Cannot load a Raman shift calibration without it.")
+                return
+            current_exc_wl = self.spin_exc_wl.value()
+            if abs(saved_exc_wl - current_exc_wl) > 1e-6:
+                QMessageBox.critical(self, "Excitation Wavelength Mismatch",
+                    f"This calibration was created with an excitation wavelength of "
+                    f"{saved_exc_wl:.6f} nm, but the current setting is {current_exc_wl:.6f} nm.\n\n"
+                    f"Please set the excitation wavelength to exactly {saved_exc_wl:.6f} nm before loading.")
+                return
+
+        if "2D" in cfg["mode"]:
+            self.radio_2d.setChecked(True)
+        elif "Full" in cfg["mode"]:
+            self.radio_1d_full.setChecked(True)
+        else:
+            self.radio_1d_roi.setChecked(True)
+
+        self.spin_vstart.blockSignals(True)
+        self.spin_vend.blockSignals(True)
+        self.spin_vstart.setValue(cfg["roi_start"])
+        self.spin_vend.setValue(cfg["roi_end"])
+        self.spin_vstart.blockSignals(False)
+        self.spin_vend.blockSignals(False)
+        self.apply_roi_settings()
+
+        self.radio_spec_mode_raman.blockSignals(True)
+        self.radio_spec_mode_wl.blockSignals(True)
+        if cfg["display_mode"] == "Raman shift":
+            self.radio_spec_mode_raman.setChecked(True)
+            self.lbl_centre.setText("Centre (cm⁻¹):")
+        else:
+            self.radio_spec_mode_wl.setChecked(True)
+            self.lbl_centre.setText("Centre (nm):")
+        self.radio_spec_mode_raman.blockSignals(False)
+        self.radio_spec_mode_wl.blockSignals(False)
+
+        cb_idx = self.combo_grating.findText(cfg["grating"])
+        if cb_idx >= 0:
+            self.combo_grating.setCurrentIndex(cb_idx)
+
+        # cfg["center"] is always in nm; convert to Raman shift if needed for the spin box
+        center_nm = cfg["center"]
+        if cfg["display_mode"] == "Raman shift":
+            ex_wl = self.spin_exc_wl.value()
+            if ex_wl > 0 and center_nm > 0:
+                center_for_spinbox = 1e7 / ex_wl - 1e7 / center_nm
+            else:
+                center_for_spinbox = 0.0
+        else:
+            center_for_spinbox = center_nm
+        self.spin_centre_wl.setValue(center_for_spinbox)
+
+        self._loading_config = True
+        self._pending_calib_coeffs = (cfg["c0"], cfg["c1"], cfg["c2"])
+        self._pending_calib_filename = os.path.basename(file_path)
+        self._pending_calib_unit = cfg.get("calibration_unit", "Wavelength")
+        self._pending_calib_laser_wl = (cfg.get("exc_wl")
+                                        if cfg.get("calibration_unit") == "Raman shift"
+                                        else None)
+
+        self.on_apply_spectrometer()
 
     def on_acq_bg_clicked(self):
         self._is_acquiring_bg = True
@@ -1072,52 +1128,30 @@ class SpectrometerGUI(QMainWindow):
         acq_time = self.spin_acq_time.value()
         accum = self.spin_accumulate.value()
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
         mode_str = "1D Spectrum (Custom ROI)" if self.radio_1d_roi.isChecked() else "1D Spectrum (Full Range Binning)"
-        
-        if self.radio_1d_roi.isChecked():
-            roi_str = f"_ROI_from_{self.spin_vstart.value()}_to_{self.spin_vend.value()}"
-        else:
-            roi_str = "_full"
-            
+        roi_str = f"_ROI_from_{self.spin_vstart.value()}_to_{self.spin_vend.value()}" if self.radio_1d_roi.isChecked() else "_full"
         default_filename = f"background_{date_str}{roi_str}.txt"
+        initial_path = os.path.join(self._last_save_dir, default_filename) if self._last_save_dir else default_filename
 
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Background Data", default_filename, "Text/JSON Files (*.txt *.json)")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Background Data", initial_path, "Text/JSON Files (*.txt *.json)")
         if not file_path:
             return
-
-        current_temp = self.label_current_temp.text()
-
-        bg_data = {
-            "detector_settings": {
-                "mode": mode_str,
-                "roi_start": self.spin_vstart.value(),
-                "roi_end": self.spin_vend.value()
-            },
-            "acquisition_time": f"{acq_time:.3f}",
-            "accumulations": accum,
-            "detector_temperature": current_temp,
-            "signal": self.raw_1d_data.tolist()
-        }
+        self._last_save_dir = os.path.dirname(file_path)
+        self._save_local_cache("last_save_dir", self._last_save_dir)
 
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(bg_data, f, indent=4)
+            bg_arr, bg_meta = self.file_io.save_background(
+                file_path, self.raw_1d_data,
+                acq_time, accum, mode_str,
+                self.spin_vstart.value(), self.spin_vend.value(),
+                self.label_current_temp.text()
+            )
             QMessageBox.information(self, "Success", "Background saved successfully.")
-            
-            self.loaded_bg_data = self.raw_1d_data.astype(np.float64).copy()
-            self.loaded_bg_metadata = {
-                "acquisition_time": float(acq_time),
-                "accumulations": accum,
-                "mode": mode_str,
-                "roi_start": self.spin_vstart.value(),
-                "roi_end": self.spin_vend.value()
-            }
-            
+            self.loaded_bg_data = bg_arr
+            self.loaded_bg_metadata = bg_meta
             self.lbl_loaded_bg.setText(f"Loaded: {os.path.basename(file_path)}")
             self.radio_bg_on.setChecked(True)
             self.on_fit_settings_changed()
-            
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save background:\n{e}")
 
@@ -1125,144 +1159,87 @@ class SpectrometerGUI(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "Load Background Data", "", "Text/JSON Files (*.txt *.json)")
         if file_path:
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if "signal" in data:
-                        self.loaded_bg_data = np.array(data["signal"], dtype=np.float64)
-                        
-                        acq_time = float(data.get("acquisition_time", 0.0))
-                        accum = int(data.get("accumulations", 1))
-                        det_set = data.get("detector_settings", {})
-                        mode_str = det_set.get("mode", "")
-                        roi_s = det_set.get("roi_start", 0)
-                        roi_e = det_set.get("roi_end", 0)
-                        
-                        self.loaded_bg_metadata = {
-                            "acquisition_time": acq_time,
-                            "accumulations": accum,
-                            "mode": mode_str,
-                            "roi_start": roi_s,
-                            "roi_end": roi_e
-                        }
-                        
-                        self.lbl_loaded_bg.setText(f"Loaded: {os.path.basename(file_path)}")
-                        self.radio_bg_on.setChecked(True)
-                        self.on_fit_settings_changed()
-                    else:
-                        QMessageBox.warning(self, "Error", "Invalid background file format.")
+                bg_arr, bg_meta = self.file_io.load_background(file_path)
+                self.loaded_bg_data = bg_arr
+                self.loaded_bg_metadata = bg_meta
+                self.lbl_loaded_bg.setText(f"Loaded: {os.path.basename(file_path)}")
+                self.radio_bg_on.setChecked(True)
+                self.on_fit_settings_changed()
+            except ValueError as e:
+                QMessageBox.warning(self, "Error", str(e))
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load background:\n{e}")
 
     def on_save_data_clicked(self):
         date_str = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         default_filename = f"data_{date_str}.txt"
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Data", default_filename, "Text Files (*.txt);;All Files (*)")
+        initial_path = os.path.join(self._last_save_dir, default_filename) if self._last_save_dir else default_filename
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Data", initial_path, "Text Files (*.txt);;All Files (*)")
         if file_path:
+            self._last_save_dir = os.path.dirname(file_path)
+            self._save_local_cache("last_save_dir", self._last_save_dir)
             self._save_data_to_path(file_path, show_msg=True)
 
     def _save_data_to_path(self, file_path, show_msg=True):
         is_1d = self.stacked_widget.currentIndex() == 0
         if is_1d and self.latest_1d_data is None:
-            if show_msg: QMessageBox.warning(self, "Error", "No 1D data available to save.")
+            if show_msg:
+                QMessageBox.warning(self, "Error", "No 1D data available to save.")
             return False
         if not is_1d and self.latest_2d_data is None:
-            if show_msg: QMessageBox.warning(self, "Error", "No 2D data available to save.")
+            if show_msg:
+                QMessageBox.warning(self, "Error", "No 2D data available to save.")
             return False
-            
+
         try:
-            spec_model = getattr(self.spec_ctrl, 'model_name', 'Unknown Spectrometer')
-            cam_model = getattr(self.thread, 'model_name', 'Unknown Camera')
-            grating = self.combo_grating.currentText()
-            center_wl = self.spin_centre_wl.value()
-            acq_time = self.spin_acq_time.value()
-            accum = self.spin_accumulate.value()
-            
-            header = f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            header += f"Grating: {grating} grooves/mm\n"
-            
-            if self.radio_spec_mode_raman.isChecked():
-                ex_wl = self.spin_exc_wl.value()
-                header += f"Spectrometer Mode: Raman shift\n"
-                header += f"Excitation Wavelength: {ex_wl} nm\n"
-                header += f"Centre Raman shift: {center_wl} cm-1\n"
-            else:
-                header += f"Spectrometer Mode: Wavelength\n"
-                header += f"Centre Wavelength: {center_wl} nm\n"
-                
-            header += f"Acquisition Time: {acq_time} s\n"
-            header += f"Accumulations: {accum}\n"
+            metadata = {
+                "grating":      self.combo_grating.currentText(),
+                "center_wl":    self.spin_centre_wl.value(),
+                "acq_time":     self.spin_acq_time.value(),
+                "accum":        self.spin_accumulate.value(),
+                "calib_coeffs": self.calib_coeffs,
+                "roi_start":    self.spin_vstart.value(),
+                "roi_end":      self.spin_vend.value(),
+                "mode":         "2D" if self.radio_2d.isChecked() else "1D (Full)" if self.radio_1d_full.isChecked() else "1D (ROI)",
+                "spec_mode":    "Raman shift" if self.radio_spec_mode_raman.isChecked() else "Wavelength",
+                "exc_wl":       self.spin_exc_wl.value(),
+            }
 
-            if self.calib_coeffs is not None:
-                c0, c1, c2 = self.calib_coeffs
-                header += f"Calibration Coefficients (c0, c1, c2: y = c0 + c1x + c2x^2): {c0}, {c1}, {c2}\n"
-            else:
-                header += f"Calibration Coefficients: None\n"
-
-            header += f"ROI Start (Vertical Pixel): {self.spin_vstart.value()}\n"
-            header += f"ROI End (Vertical Pixel): {self.spin_vend.value()}\n"
-
-            mode = "2D" if self.radio_2d.isChecked() else "1D (Full)" if self.radio_1d_full.isChecked() else "1D (ROI)"
-            header += f"Measurement Mode: {mode}\n"
-
-            
             if is_1d:
                 x_data = self.get_x_axis(len(self.latest_1d_data))
-                y_disp = self.latest_1d_data
-                
-                bg_applied = False
+                if self.chk_flip_x.isChecked() and self.calib_coeffs is not None:
+                    x_data = x_data[::-1]
+                raw_data = None
+                bg_data = None
                 if self.radio_bg_on.isChecked() and self.loaded_bg_data is not None:
                     if len(self.raw_1d_data) == len(self.loaded_bg_data):
-                        bg_applied = True
-                
-                x_label = "Raman_shift_cm-1" if self.radio_spec_mode_raman.isChecked() else "Wavelength_or_Pixel"
-                
-                if bg_applied:
-                    header += f"{x_label},Intensity_Subtracted,Intensity_Raw,Background"
-                    y_raw = self.raw_1d_data.astype(np.float64)
-                    y_bg = self.loaded_bg_data.astype(np.float64)
-                    if self.chk_flip_x.isChecked():
-                        y_raw = y_raw[::-1]
-                        y_bg = y_bg[::-1]
-                    data_to_save = np.column_stack((x_data, y_disp, y_raw, y_bg))
-                else:
-                    header += f"{x_label},Intensity"
-                    data_to_save = np.column_stack((x_data, y_disp))
-                    
-                np.savetxt(file_path, data_to_save, delimiter=",", header=header, comments="# ", fmt="%g")
-                
+                        raw_data = self.raw_1d_data.astype(np.float64)
+                        bg_data = self.loaded_bg_data.astype(np.float64)
+                        if self.chk_flip_x.isChecked():
+                            raw_data = raw_data[::-1]
+                            bg_data = bg_data[::-1]
+                self.file_io.save_spectrum_1d(file_path, x_data, self.latest_1d_data, metadata,
+                                              raw_data=raw_data, bg_data=bg_data)
+
                 if self.chk_save_fitting.isChecked() and self.radio_fit_on.isChecked() and self.latest_fit_res is not None:
                     fit_file_path = file_path.rsplit('.', 1)[0] + "_fitting_results.txt"
-                    res = self.latest_fit_res
-                    func = getattr(self, 'latest_fit_func', 'Unknown')
-                    
-                    if res.get('is_double'):
-                        fit_header = "Function,R2,Peak1_Pos,Peak1_Err,Peak1_Width,Peak1_WErr,Peak2_Pos,Peak2_Err,Peak2_Width,Peak2_WErr"
-                        vals = [
-                            func, f"{res.get('R2', 0):.6f}",
-                            f"{res.get('Peak1', 0):.6f}", f"{res.get('Peak1_Err', 0):.6f}",
-                            f"{res.get('Width1', 0):.6f}", f"{res.get('Width1_Err', 0):.6f}",
-                            f"{res.get('Peak2', 0):.6f}", f"{res.get('Peak2_Err', 0):.6f}",
-                            f"{res.get('Width2', 0):.6f}", f"{res.get('Width2_Err', 0):.6f}"
-                        ]
-                    else:
-                        fit_header = "Function,R2,Peak_Pos,Peak_Err,Peak_Width,Peak_WErr"
-                        vals = [
-                            func, f"{res.get('R2', 0):.6f}",
-                            f"{res.get('Peak', 0):.6f}", f"{res.get('Peak_Err', 0):.6f}",
-                            f"{res.get('Width', 0):.6f}", f"{res.get('Width_Err', 0):.6f}"
-                        ]
-                        
-                    
-                        
-                    fit_data_lines = [fit_header + "\n", ",".join(vals) + "\n"]
-                        
-                    with open(fit_file_path, "w", encoding="utf-8") as f:
-                        f.writelines(fit_data_lines)
-                        
+                    pressure_info = None
+                    pw = self.pressure_window
+                    if pw is not None and pw.isVisible() and pw.current_pressure is not None:
+                        pressure_info = {
+                            "pressure":     pw.current_pressure,
+                            "pressure_err": pw.current_pressure_err,
+                            "scale":        pw.combo_p_scale.currentText(),
+                            "sensor":       pw.combo_sensor.currentText(),
+                            "lam0":         pw.spin_lam0.value(),
+                            "lam0_unit":    pw.unit,
+                        }
+                    self.file_io.save_fitting_results(fit_file_path, self.latest_fit_res,
+                                                      getattr(self, 'latest_fit_func', 'Unknown'),
+                                                      pressure_info=pressure_info)
             else:
-                header += "2D Image Data"
-                np.savetxt(file_path, self.latest_2d_data, delimiter=",", header=header, comments="# ", fmt="%g")
-                
+                self.file_io.save_spectrum_2d(file_path, self.latest_2d_data, metadata)
+
             if show_msg:
                 QMessageBox.information(self, "Success", f"Data saved successfully to:\n{file_path}")
             return True
@@ -1288,21 +1265,51 @@ class SpectrometerGUI(QMainWindow):
         x = np.arange(num_pixels)
         if self.calib_coeffs is not None:
             c0, c1, c2 = self.calib_coeffs
-            wl = c0 + c1 * x + c2 * x**2
-            if self.radio_spec_mode_raman.isChecked():
-                ex_wl = self.spin_exc_wl.value()
-                if ex_wl > 0:
+            poly = c0 + c1 * x + c2 * x**2  # units: nm or cm⁻¹ depending on calib_unit
+
+            calib_is_raman = getattr(self, 'calib_unit', 'Wavelength') == 'Raman shift'
+            display_is_raman = self.radio_spec_mode_raman.isChecked()
+
+            if calib_is_raman == display_is_raman:
+                return poly  # same units, no conversion needed
+
+            laser_wl = getattr(self, 'calib_laser_wl', None) or self.spin_exc_wl.value()
+
+            if not calib_is_raman and display_is_raman:
+                # poly is nm → convert to Raman shift (cm⁻¹)
+                # Raman shift of 0 is physically valid (laser line); negative is anti-Stokes.
+                # Only nan/inf (from poly ≤ 0, i.e. invalid nm) need masking.
+                if laser_wl > 0:
                     with np.errstate(divide='ignore', invalid='ignore'):
-                        rs = 1e7 / ex_wl - 1e7 / wl
-                    return rs
-            return wl
+                        rs = 1e7 / laser_wl - 1e7 / poly
+                    return np.where(np.isfinite(rs), rs, np.nan)
+                return poly
+            else:
+                # poly is Raman shift (cm⁻¹) → convert to nm
+                # wavelength must be positive; nan for out-of-range pixels
+                if laser_wl > 0:
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        denom = 1e7 / laser_wl - poly
+                        wl = np.where(denom != 0, 1e7 / denom, np.nan)
+                    return np.where(wl > 0, wl, np.nan)
+                return poly
         return x
 
     def toggle_fitting_panel(self):
         is_on = self.radio_fit_on.isChecked()
         self.fitting_panel.setVisible(is_on)
-        
         self.chk_save_fitting.setEnabled(is_on)
+
+        # Auto-switch default plot style when fitting mode changes
+        self.radio_plot_scatter.blockSignals(True)
+        self.radio_plot_line.blockSignals(True)
+        if is_on:
+            self.radio_plot_scatter.setChecked(True)
+        else:
+            self.radio_plot_line.setChecked(True)
+        self.radio_plot_scatter.blockSignals(False)
+        self.radio_plot_line.blockSignals(False)
+
         if not is_on:
             self.chk_save_fitting.setChecked(False)
             self.fit_curve.clear()
@@ -1356,10 +1363,47 @@ class SpectrometerGUI(QMainWindow):
         self.spin_cooler_temp.setEnabled(False) 
         self.thread.update_temperature(val)
 
+    def _set_spectrometer_controls_enabled(self, enabled):
+        self.combo_grating.setEnabled(enabled)
+        self.radio_spec_mode_wl.setEnabled(enabled)
+        self.radio_spec_mode_raman.setEnabled(enabled)
+        self.spin_centre_wl.setEnabled(enabled)
+        self.spin_exc_wl.setEnabled(enabled and self.radio_spec_mode_raman.isChecked())
+        self.btn_calib_neon.setEnabled(enabled)
+        self.btn_load_calib.setEnabled(enabled)
+        if enabled:
+            self.check_spectrometer_changes()
+        else:
+            self.btn_apply_spec.setEnabled(False)
+
+    def _show_spectrometer_moving_dialog(self):
+        if getattr(self, 'spec_move_dialog', None) is not None:
+            return
+        self.centralWidget().setEnabled(False)
+        self.spec_move_dialog = QDialog(self)
+        self.spec_move_dialog.setWindowTitle("Spectrometer is moving")
+        self.spec_move_dialog.setModal(True)
+        self.spec_move_dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint)
+        layout = QVBoxLayout(self.spec_move_dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.addWidget(QLabel("Spectrometer is moving. Please wait..."))
+        self.spec_move_dialog.setLayout(layout)
+        self.spec_move_dialog.setFixedSize(320, 100)
+        self.spec_move_dialog.show()
+        self.spec_move_dialog.raise_()
+        self.spec_move_dialog.activateWindow()
+
+    def _close_spectrometer_moving_dialog(self):
+        dialog = getattr(self, 'spec_move_dialog', None)
+        if dialog is not None:
+            dialog.accept()
+            self.spec_move_dialog = None
+        self.centralWidget().setEnabled(True)
+
     def on_apply_spectrometer(self):
         grating_index = self.combo_grating.currentIndex() + 1
         val = self.spin_centre_wl.value()
-        
+
         if self.radio_spec_mode_raman.isChecked():
             ex_wl = self.spin_exc_wl.value()
             if ex_wl > 0:
@@ -1371,16 +1415,9 @@ class SpectrometerGUI(QMainWindow):
                 target_wl = val
         else:
             target_wl = val
-        
-        self.centralWidget().setEnabled(False)
-        self.moving_dialog = QDialog(self)
-        self.moving_dialog.setWindowTitle("Please Wait")
-        self.moving_dialog.setModal(True)
-        self.moving_dialog.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint)
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Grating is moving...\nPlease wait until the operation is completed."))
-        self.moving_dialog.setLayout(layout)
-        self.moving_dialog.show()
+
+        self._set_spectrometer_controls_enabled(False)
+        self._show_spectrometer_moving_dialog()
 
         self.spec_move_thread = SpectrometerMoveThread(self.spec_ctrl, grating_index, target_wl)
         self.spec_move_thread.finished_signal.connect(self.on_spectrometer_moved)
@@ -1399,12 +1436,21 @@ class SpectrometerGUI(QMainWindow):
         
         if getattr(self, '_loading_config', False):
             if hasattr(self, '_pending_calib_coeffs') and self._pending_calib_coeffs is not None:
-                self.apply_calibration(self._pending_calib_coeffs, self._pending_calib_filename)
+                self.apply_calibration(
+                    self._pending_calib_coeffs,
+                    self._pending_calib_filename,
+                    calib_unit=getattr(self, '_pending_calib_unit', 'Wavelength'),
+                    calib_laser_wl=getattr(self, '_pending_calib_laser_wl', None)
+                )
                 self._pending_calib_coeffs = None
                 self._pending_calib_filename = None
+                self._pending_calib_unit = None
+                self._pending_calib_laser_wl = None
             self._loading_config = False
         else:
             self.calib_coeffs = None
+            self.calib_unit = 'Wavelength'
+            self.calib_laser_wl = None
             self.calib_file_name = "None"
             self.lbl_loaded_calib.setText("Loaded: None")
             self.update_plot_labels()
@@ -1420,9 +1466,9 @@ class SpectrometerGUI(QMainWindow):
         
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
             self.update_display(is_new_data=False)
-            
-        self.moving_dialog.accept()
-        self.centralWidget().setEnabled(True)
+
+        self._close_spectrometer_moving_dialog()
+        self._set_spectrometer_controls_enabled(True)
 
     def request_temperature_read(self):
         self.label_current_temp.setText("Reading...")
@@ -1538,7 +1584,9 @@ class SpectrometerGUI(QMainWindow):
     def update_display(self, is_new_data=False, mode="1d"):
         if mode == "1d":
             if getattr(self, 'raw_1d_data', None) is None: return
-            
+
+            self.update_plot_labels()
+
             disp_data = self.raw_1d_data.astype(np.float64).copy()
             
             if self.radio_bg_on.isChecked() and self.loaded_bg_data is not None:
@@ -1552,12 +1600,23 @@ class SpectrometerGUI(QMainWindow):
             self.stacked_widget.setCurrentIndex(0)
             
             x_data = self.get_x_axis(len(disp_data))
-            
+            if self.chk_flip_x.isChecked() and self.calib_coeffs is not None:
+                x_data = x_data[::-1]
+
             min_x = np.min(x_data)
             max_x = np.max(x_data)
-            self.plot_widget.getViewBox().setLimits(xMin=min_x, xMax=max_x)
             
-            self.plot_scatter.setData(x_data, disp_data)
+            # Plot design
+            self.plot_widget.getViewBox().setLimits(xMin=min_x, xMax=max_x)
+            self.plot_widget.getViewBox().setDefaultPadding(0)
+            self.plot_widget.setClipToView(True)
+            
+            if self.radio_plot_scatter.isChecked():
+                self.plot_scatter.setData(x_data, disp_data)
+                self.plot_line.setData([], [])
+            else:
+                self.plot_line.setData(x_data, disp_data)
+                self.plot_scatter.setData([], [])
             
             if self.chk_rescale_x.isChecked():
                 self.plot_widget.getViewBox().enableAutoRange(axis=pg.ViewBox.XAxis)
@@ -1603,7 +1662,7 @@ class SpectrometerGUI(QMainWindow):
                         self.fit_curve_sub1.clear()
                         self.fit_curve_sub2.clear()
                     
-                    text = f"<span style='color: white;'><b>Function:</b> {func}<br><br>"
+                    text = f"<span><b>Function:</b> {func}<br><br>"
                     
                     self.latest_fit_res = res.copy()
                     self.latest_fit_func = func
@@ -1624,12 +1683,15 @@ class SpectrometerGUI(QMainWindow):
                         text += f" Width: {res['Width']:.3f} ± {res['Width_Err']:.3f}<br><br>"
 
                     text += f"<b>R-value:</b><br> {res['R2']:.4f}</span>"
+
                     
                     is_double_fit = res.get("is_double")
                     
                     
                     if self.pressure_window is not None and self.pressure_window.isVisible():
                         self.pressure_window.set_current_peak(w_peak1, w_err1)
+                        text += f"<br><br><span>Calculated Pressure:<br>{self.pressure_window.current_pressure:.3f} ± {self.pressure_window.current_pressure_err:.3f} GPa</span>"
+                    
 
                         
                         
@@ -1643,7 +1705,7 @@ class SpectrometerGUI(QMainWindow):
                     self.current_w_peak1 = None
                     self.latest_fit_res = None
                     self.latest_fit_func = None
-                    self.fitting_text.setHtml("<span style='color: white;'>Fitting failed or out of range.</span>")
+                    self.fitting_text.setHtml("<span>Fitting failed or out of range.</span>")
                     
                     if getattr(self, 'is_sequential_running', False):
                         self._seq_fit_failed = True
@@ -1657,7 +1719,7 @@ class SpectrometerGUI(QMainWindow):
                 self.latest_fit_res = None
                 self.latest_fit_func = None
                 if self.radio_fit_on.isChecked():
-                     self.fitting_text.setHtml("<span style='color: white;'>Fitting failed. Paused for skipped frames.</span>")
+                     self.fitting_text.setHtml("<span>Fitting failed. Paused for skipped frames.</span>")
                 else:
                      self.fitting_text.setHtml("")
 
@@ -1675,41 +1737,28 @@ class SpectrometerGUI(QMainWindow):
             if self.current_skip_count >= self.spin_skip_frames.value():
                 now_dt = datetime.now()
                 date_str = now_dt.strftime("%Y%m%d_%H%M%S_%f")[:-3]
+                timestamp_str = now_dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
                 filename = f"seq_{self.seq_count:05d}_{date_str}.txt"
                 file_path = os.path.join(self.seq_dir, filename)
-                
+
                 success = self._save_data_to_path(file_path, show_msg=False)
                 if success:
                     self.seq_log_data.append([filename, now_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]])
-                    
+
                     if self.radio_fit_on.isChecked() and getattr(self, 'seq_fitting_summary_path', None):
                         is_double = "Double" in self.combo_fit_func.currentText()
-                        
-                        
-                        res = self.latest_fit_res
-                        cols = [filename, date_str]
-                        
-                        if res is None:
-                            cols.extend(["NaN"] * (9 if is_double else 5))
-                        else:
-                            if is_double:
-                                cols.extend([
-                                    f"{res.get('Peak1', np.nan):.6f}", f"{res.get('Peak1_Err', np.nan):.6f}",
-                                    f"{res.get('Width1', np.nan):.6f}", f"{res.get('Width1_Err', np.nan):.6f}",
-                                    f"{res.get('Peak2', np.nan):.6f}", f"{res.get('Peak2_Err', np.nan):.6f}",
-                                    f"{res.get('Width2', np.nan):.6f}", f"{res.get('Width2_Err', np.nan):.6f}",
-                                    f"{res.get('R2', np.nan):.6f}"
-                                ])
-                            else:
-                                cols.extend([
-                                    f"{res.get('Peak', np.nan):.6f}", f"{res.get('Peak_Err', np.nan):.6f}",
-                                    f"{res.get('Width', np.nan):.6f}", f"{res.get('Width_Err', np.nan):.6f}",
-                                    f"{res.get('R2', np.nan):.6f}"
-                                ])
-                        
+                        pw = self.pressure_window
+                        pressure_info = None
+                        if pw is not None and pw.isVisible():
+                            pressure_info = {
+                                "pressure":     pw.current_pressure,
+                                "pressure_err": pw.current_pressure_err,
+                            }
                         try:
-                            with open(self.seq_fitting_summary_path, "a", encoding="utf-8") as f:
-                                f.write(",".join(cols) + "\n")
+                            self.file_io.append_fitting_seq_row(
+                                self.seq_fitting_summary_path, filename, timestamp_str,
+                                self.latest_fit_res, is_double, pressure_info
+                            )
                         except Exception as e:
                             print(f"Failed to write summary: {e}")
 
@@ -1732,8 +1781,10 @@ class SpectrometerGUI(QMainWindow):
                     x_val = mouse_point.x()
                     
                     x_pixel = int(np.round(x_val))
-                    if self.calib_coeffs is not None:
+                    if self.calib_coeffs is not None and self.latest_1d_data is not None:
                         x_arr = self.get_x_axis(len(self.latest_1d_data))
+                        if self.chk_flip_x.isChecked():
+                            x_arr = x_arr[::-1]
                         disp_idx = np.argmin(np.abs(x_arr - x_val))
                     else:
                         disp_idx = x_pixel
@@ -1768,16 +1819,25 @@ class SpectrometerGUI(QMainWindow):
         except: pass
 
     def closeEvent(self, event):
-        self.thread.stop_thread()
-        self.spec_ctrl.close()
-        event.accept()
+        reply = QMessageBox.question(
+            self, "Confirm Exit",
+            "Closing this window will terminate the cooler of the camera. Are you sure you want to close FluoraPressée?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self.thread.stop_thread()
+            self.spec_ctrl.close()
+            event.accept()
+        else:
+            event.ignore()
 
 def print_software_and_author_info(): 
     print(
-        "\n========================================\n========================================\n"\
-        "Andor Spectrometer Control & Analysis\nHiroki Kobayashi (The University of Tokyo), 2026\n"\
+        "\n================================================================================\n================================================================================\n"\
+        "FluoraPressée: Spectrometer Control & Analysis for high-pressure experiments\nHiroki Kobayashi (The University of Tokyo), 2026\n"\
         "https://github.com/khsacc/AndorPy\n"\
-        "========================================\n========================================\n"
+        "================================================================================\n================================================================================\n"
     )
 
 def check_and_create_config():

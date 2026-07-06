@@ -87,7 +87,7 @@ Andor製のカメラ（検出器）および分光器を制御し、スペクト
 1. コマンドプロンプトまたはPowerShellを開きます。
 2. 必要なPythonパッケージをインストールします。
     ```bash
-    pip install PyQt6 pyqtgraph numpy scipy pylablib
+    pip install PyQt5 pyqtgraph numpy scipy pylablib
     ```
 3. Andor SDKが正しくインストールされていることを確認します。
 4. ディレクトリに、``spectrometerConfig.json``を作成し、以下の例を参考にしながら、``ShamrockCIF.dll``ファイルのパス、回折格子の情報および検出器の情報を記録します。``spectrometerConfig.json``を更新したのち、再度起動すれば、新しい内容が反映されます。

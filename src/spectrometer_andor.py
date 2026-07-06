@@ -2,9 +2,9 @@ import ctypes
 import time
 import json  
 import os    
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt5.QtCore import QThread, pyqtSignal
 
-class SpectrometerController:
+class SpectrometerControllerAndor:
     """Andor Kymera / Shamrock Spectrometer Controller"""
     
     SHAMROCK_SUCCESS = 20202
