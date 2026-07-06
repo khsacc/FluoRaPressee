@@ -203,8 +203,10 @@ class PressureCalculator:
                     return p, dp
                 if p_scale == "Kawamoto et al. 2004":
                     a = 3.45
-                    p = (nu - nu0)/a
-                    return p, 0.0
+                    a_err = 0.03
+                    p = (nu - nu0) / a
+                    dp = np.sqrt((nu_err / a)**2 + ((nu - nu0) / a**2 * a_err)**2)
+                    return p, dp
                 
             if sensor == "Zircon B1g":
                 if p_scale == "Schmidt et al. 2013":
