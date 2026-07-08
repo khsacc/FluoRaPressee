@@ -431,7 +431,22 @@ class CalibrationWindow(QDialog):
         if hasattr(main_window, 'accumulated_data'):
             main_window.accumulated_data = None
 
+    def _disconnect_camera_thread(self):
+        """Stop any in-flight acquisition started by this dialog and detach our
+        data_ready slot so the (possibly not-yet-garbage-collected) dialog can't
+        keep reacting to frames after it has closed."""
+        if not self.camera_thread:
+            return
+        if self.is_acquiring:
+            self.camera_thread.stop_measuring()
+            self.is_acquiring = False
+        try:
+            self.camera_thread.data_ready.disconnect(self.on_data_ready)
+        except TypeError:
+            pass  # already disconnected
+
     def done(self, result):
+        self._disconnect_camera_thread()
         self._restore_main_window_settings()
         super().done(result)
 
