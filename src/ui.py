@@ -1690,7 +1690,12 @@ class SpectrometerGUI(QMainWindow):
                     
                     if self.pressure_window is not None and self.pressure_window.isVisible():
                         self.pressure_window.set_current_peak(w_peak1, w_err1)
-                        text += f"<br><br><span>Calculated Pressure:<br>{self.pressure_window.current_pressure:.3f} ± {self.pressure_window.current_pressure_err:.3f} GPa</span>"
+                        p = self.pressure_window.current_pressure
+                        p_err = self.pressure_window.current_pressure_err
+                        if p is not None and p_err is not None:
+                            text += f"<br><br><span>Calculated Pressure:<br>{p:.3f} ± {p_err:.3f} GPa</span>"
+                        else:
+                            text += "<br><br><span>Calculated Pressure:<br>Calc Error</span>"
                     
 
                         
