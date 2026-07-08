@@ -1848,6 +1848,8 @@ def print_software_and_author_info():
 def check_and_create_config():
     config_path = "spectrometerConfig.json"
     default_config = {
+        "model": "Andor",
+        "com_port": "COM3",
         "grating": [
             {
                 "index": 1,

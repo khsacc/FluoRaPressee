@@ -13,7 +13,7 @@ class SpectrometerControllerPI:
         self.is_initialized = False
         self.spec = None
 
-        self.com_port = self.config["com_port"]
+        self.com_port = (self.config or {}).get("com_port", "COM3")
 
     def initialize(self):
         if self.debug:
