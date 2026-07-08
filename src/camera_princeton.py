@@ -1,12 +1,30 @@
 ﻿import os
 import sys
 import time
+import json
 import numpy as np
 from threading import Lock
 from PyQt5.QtCore import QThread, pyqtSignal
 
-# PVCamのDLLパス (32bit環境では通常System32に入りますが、独自の場所にある場合は書き換えてください)
-dll_path = "C:\\Windows\\System32" 
+def _get_pvcam_dll_path():
+    """PVCamのDLLパスを取得する。
+
+    spectrometerConfig.json に "pvcam_dll_path" キーがあればそれを使う。
+    無ければ従来通り System32 (32bit環境での標準的な配置場所) をデフォルトとする。
+    """
+    default_path = "C:\\Windows\\System32"
+    config_path = "spectrometerConfig.json"
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            return config.get("pvcam_dll_path", default_path)
+        except Exception as e:
+            print(f"Failed to read config file: {e}. Using default PVCam DLL path.")
+    return default_path
+
+# PVCamのDLLパス (独自の場所にある場合は spectrometerConfig.json の "pvcam_dll_path" で上書き可能)
+dll_path = _get_pvcam_dll_path()
 
 if hasattr(os, 'add_dll_directory'):
     try:
