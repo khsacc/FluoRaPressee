@@ -1,14 +1,12 @@
-import sys
 import os
-import json
 import time
 from datetime import datetime
 import numpy as np
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QPushButton, QVBoxLayout, 
-                             QHBoxLayout, QWidget, QLabel, QRadioButton, QGroupBox, 
-                             QSpinBox, QDoubleSpinBox, QStackedWidget, QComboBox, 
+from PyQt5.QtWidgets import (QMainWindow, QPushButton, QVBoxLayout,
+                             QHBoxLayout, QWidget, QLabel, QRadioButton, QGroupBox,
+                             QStackedWidget,
                              QScrollArea, QFileDialog, QButtonGroup, QGridLayout,
-                             QDialog, QTextEdit, QAbstractSpinBox, QInputDialog, QCheckBox, QMessageBox)
+                             QDialog, QTextEdit, QCheckBox, QMessageBox)
 from PyQt5.QtCore import Qt, QTimer
 import pyqtgraph as pg
 
@@ -20,27 +18,11 @@ from src.calibration_ui import CalibrationWindow
 from src.pressureCalc import PressureCalculator
 from src.pressureCalc_ui import PressureCalculatorWindow
 from src.file_io import DataFileIO
+from src.ui_widgets import CustomSpinBox, CustomDoubleSpinBox, CustomComboBox
+from src.ui_mixins.config_mixin import ConfigMixin
 # ----------------------------------------
 
-class CustomSpinBox(QSpinBox):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-    def wheelEvent(self, event):
-        event.ignore()
-
-class CustomDoubleSpinBox(QDoubleSpinBox):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-    def wheelEvent(self, event):
-        event.ignore()
-
-class CustomComboBox(QComboBox):
-    def wheelEvent(self, event):
-        event.ignore()
-
-class SpectrometerGUI(QMainWindow):
+class SpectrometerGUI(QMainWindow, ConfigMixin):
     def __init__(self, debug=False):
         super().__init__()
         self.debug = debug
@@ -574,40 +556,6 @@ class SpectrometerGUI(QMainWindow):
         
         self.thread.start()
 
-    def get_roi_for_grating(self, grating_str):
-        for g in self.config.get("grating", []):
-            if str(g.get("grooves")) == str(grating_str):
-                r = g.get("defaultROI", {})
-                return r.get("from", 100), r.get("to", 140)
-        return 100, 140
-
-    def save_config_to_file(self):
-        try:
-            with open("spectrometerConfig.json", "w", encoding="utf-8") as f:
-                json.dump(self.config, f, indent=4)
-        except Exception as e:
-            print(f"Failed to save config: {e}")
-
-    def _load_local_cache(self):
-        try:
-            with open("local_cache.json", "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-
-    def _save_local_cache(self, key, value):
-        try:
-            try:
-                with open("local_cache.json", "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                data = {}
-            data[key] = value
-            with open("local_cache.json", "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4)
-        except Exception as e:
-            print(f"Failed to save local cache: {e}")
-
     def on_roi_spin_changed(self):
         self.apply_roi_settings()
         
@@ -946,58 +894,6 @@ class SpectrometerGUI(QMainWindow):
             self.pressure_window.raise_()
             self.pressure_window.activateWindow()
             
-
-    def load_spectrometer_config(self):
-        config_path = "spectrometerConfig.json"
-        default_config = {
-            "model": "Andor",
-            "com_port": "COM3",
-            "grating": [
-                {
-                    "index": 1,
-                    "grooves": 600,
-                    "defaultROI": {"from": 100, "to": 140}
-                },
-                {
-                    "index": 2,
-                    "grooves": 1200,
-                    "defaultROI": {"from": 100, "to": 140}
-                },
-                {
-                    "index": 3,
-                    "grooves": 1800,
-                    "defaultROI": {"from": 100, "to": 140}
-                }
-            ],
-            "flip_x": False
-        }
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                print("spectrometerConfig.json read:", json.dumps(data, indent=2))
-                
-                if "grating" in data and len(data["grating"]) > 0 and isinstance(data["grating"][0], (int, float)):
-                    new_grating = []
-                    for i, g in enumerate(data["grating"]):
-                        new_grating.append({
-                            "index": i + 1,
-                            "grooves": int(g),
-                            "defaultROI": data.get("defaultROI", {"from": 100, "to": 140})
-                        })
-                    data["grating"] = new_grating
-                    
-                    try:
-                        with open(config_path, "w", encoding="utf-8") as fw:
-                            json.dump(data, fw, indent=4)
-                    except:
-                        pass
-                
-                for key, val in default_config.items():
-                    if key not in data:
-                        data[key] = val
-                return data
-        except:
-            return default_config
 
     def on_flip_x_changed(self):
         self.config["flip_x"] = self.chk_flip_x.isChecked()
@@ -1830,85 +1726,3 @@ class SpectrometerGUI(QMainWindow):
         else:
             event.ignore()
 
-def print_software_and_author_info(): 
-    print(
-        "\n================================================================================\n================================================================================\n"\
-        "FluoraPressée: Spectrometer Control & Analysis for high-pressure experiments\nHiroki Kobayashi (The University of Tokyo), 2026\n"\
-        "https://github.com/khsacc/AndorPy\n"\
-        "================================================================================\n================================================================================\n"
-    )
-
-def check_and_create_config():
-    config_path = "spectrometerConfig.json"
-    default_config = {
-        "model": "Andor",
-        "com_port": "COM3",
-        "grating": [
-            {
-                "index": 1,
-                "grooves": 600,
-                "defaultROI": {"from": 100, "to": 140}
-            },
-            {
-                "index": 2,
-                "grooves": 1200,
-                "defaultROI": {"from": 100, "to": 140}
-            },
-            {
-                "index": 3,
-                "grooves": 1800,
-                "defaultROI": {"from": 100, "to": 140}
-            }
-        ],
-        "flip_x": False
-    }
-    
-    if not os.path.exists(config_path):
-        app_temp = QApplication.instance()
-        if not app_temp:
-            app_temp = QApplication(sys.argv)
-            
-        text, ok = QInputDialog.getText(
-            None, 
-            "Spectrometer Configuration", 
-            "spectrometerConfig.json not found.\nPlease enter the gratings (grooves/mm) separated by commas\n(e.g., 600, 1200, 1800):"
-        )
-        
-        gratings_int = []
-        if ok and text:
-            gratings_str = [g.strip() for g in text.split(",") if g.strip()]
-            for g in gratings_str:
-                try:
-                    gratings_int.append(int(g))
-                except ValueError:
-                    pass
-                    
-        if gratings_int:
-            new_grating = []
-            for i, g_val in enumerate(gratings_int):
-                new_grating.append({
-                    "index": i + 1,
-                    "grooves": g_val,
-                    "defaultROI": {"from": 100, "to": 140}
-                })
-            default_config["grating"] = new_grating
-            
-        try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(default_config, f, indent=4)
-        except Exception as e:
-            QMessageBox.warning(None, "Warning", f"Failed to save config file:\n{e}")
-
-
-if __name__ == "__main__":
-    print_software_and_author_info()
-    check_and_create_config()
-    
-    debug_mode = "--debug" in sys.argv
-    app = QApplication.instance()
-    if not app:
-        app = QApplication(sys.argv)
-    
-    window = SpectrometerGUI(debug=debug_mode)
-    window.show()
-    sys.exit(app.exec())

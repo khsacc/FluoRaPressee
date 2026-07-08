@@ -8,7 +8,8 @@ gc.enable()
 from PyQt5.QtWidgets import QApplication
 
 # ui.py から必要なクラスや関数をインポート
-from src.ui import SpectrometerGUI, print_software_and_author_info, check_and_create_config
+from src.ui import SpectrometerGUI
+from src.app_bootstrap import print_software_and_author_info, check_and_create_config
 
 def main():
 
