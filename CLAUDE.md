@@ -29,13 +29,26 @@ app in `--debug` mode and exercising the relevant UI flow.
 
 **Entry point**: `main.py` sets `QT_OPENGL=software`, prints startup info, ensures
 `spectrometerConfig.json` exists (prompting the user for grating grooves/mm if not — see
-`check_and_create_config()` in `src/ui.py`), then constructs `SpectrometerGUI` from `src/ui.py`.
+`check_and_create_config()` in `src/app_bootstrap.py`), then constructs `SpectrometerGUI` from
+`src/ui.py`.
 
-**`src/ui.py`** (`SpectrometerGUI`) is the ~1900-line monolith that owns the main window, all widgets,
-and the majority of application state (calibration coefficients, background data, sequential-save
-state, fit results, etc.). Other modules are mostly stateless helpers or dialogs that `ui.py` drives.
-When making UI changes, expect to touch this file; when making analysis/calibration/pressure logic
-changes, prefer the dedicated modules below and keep `ui.py` as the thin caller.
+**`src/ui.py`** (`SpectrometerGUI`) now holds only `__init__` (widget construction and signal wiring)
+and `closeEvent`; every event handler and piece of application state (calibration coefficients,
+background data, sequential-save state, fit results, etc.) lives in one of the Mixin classes under
+`src/ui_mixins/`, which `SpectrometerGUI` multiply inherits from:
+- `config_mixin.py` (`ConfigMixin`): spectrometer config file / local UI cache load-save, per-grating ROI defaults.
+- `file_io_mixin.py` (`FileIOMixin`): background acquisition/mismatch checks, save/load dialogs, calibration loading.
+- `spectrometer_control_mixin.py` (`SpectrometerControlMixin`): wavelength/Raman mode switching, grating/centre-wavelength Apply flow, neon calibration launch.
+- `sequential_mixin.py` (`SequentialMixin`): sequential (continuous) measurement start/stop/progress and directory selection.
+- `acquisition_mixin.py` (`AcquisitionMixin`): camera thread interaction — single-shot/continuous measurement, exposure/temperature/ROI, accumulation and frame handling.
+- `display_mixin.py` (`DisplayMixin`): plot/image rendering, peak fitting invocation and result display, mouse-hover readout.
+- `pressure_dialog_mixin.py` (`PressureDialogMixin`): opening/syncing the pressure calculator window.
+
+Mixins are plain Python classes (no `QObject` base) that assume they're mixed into `SpectrometerGUI`,
+so they freely call `self.xxx` across mixin boundaries — all methods end up on the same instance at
+runtime. When making UI changes, find the mixin that owns the relevant behavior (or `__init__` for
+widget/layout changes); when making analysis/calibration/pressure logic changes, prefer the dedicated
+modules below and keep the mixins as thin callers.
 
 **Hardware abstraction (factory pattern)**: `src/camera.py` and `src/spectrometer.py` are *not* classes
 — they're factory functions (`CameraThread(config, debug)`, `SpectrometerController(config, debug)`)
@@ -73,7 +86,8 @@ usable standalone or from scripts:
 
 **Config/state files** (generated at runtime, not checked in): `spectrometerConfig.json` (grating list,
 default ROIs, `flip_x`, hardware `model`) at the repo root, plus a local UI cache read/written by
-`_load_local_cache`/`_save_local_cache` in `src/ui.py` (last save/sequential directories, etc.).
+`_load_local_cache`/`_save_local_cache` in `src/ui_mixins/config_mixin.py` (last save/sequential
+directories, etc.).
 
 ## Notes on the code
 
