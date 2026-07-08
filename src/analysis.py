@@ -49,10 +49,18 @@ class DataAnalyzer:
     def double_pseudo_voigt(self, x, a1, x01, fwhm1, eta1, a2, x02, fwhm2, eta2, offset):
         return self.pseudo_voigt(x, a1, x01, fwhm1, eta1, 0) + self.pseudo_voigt(x, a2, x02, fwhm2, eta2, 0) + offset
 
+    def _fit_strict(self, func, x, y, p0, bounds):
+        """curve_fit ラッパー。scipy は共分散行列を推定できない場合などに
+        OptimizeWarning を警告として発するだけで例外にはしないため、
+        このスコープ内だけ warning を例外に変換して呼び出し元の except で拾えるようにする。"""
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", OptimizeWarning)
+            return curve_fit(func, x, y, p0=p0, bounds=bounds)
+
     # ==========================================
     # --- フィッティング処理 ---
     # ==========================================
-    def fit_spectrum(self, x_data: np.ndarray, y_data: np.ndarray, func_type: str = "Gauss", 
+    def fit_spectrum(self, x_data: np.ndarray, y_data: np.ndarray, func_type: str = "Gauss",
                      fit_start: Optional[float] = None, fit_end: Optional[float] = None) -> Tuple:
         """スペクトルのピークフィッティングを行う（指定されたX軸の範囲内で実行）
         
@@ -126,7 +134,7 @@ class DataAnalyzer:
                     )
 
                 if func_type == "Double Gauss":
-                    popt, pcov = curve_fit(self.double_gaussian, x_fit, y_fit, p0=p0, bounds=bounds)
+                    popt, pcov = self._fit_strict(self.double_gaussian, x_fit, y_fit, p0, bounds)
                     y_fit_curve = self.double_gaussian(x_fit, *popt)
                     
                     y1_curve = self.gaussian(x_fit, popt[0], popt[1], popt[2], popt[6])
@@ -137,7 +145,7 @@ class DataAnalyzer:
                     e1_pos, e1_w, e2_pos, e2_w = perr[1], perr[2], perr[4], perr[5]
                     
                 elif func_type == "Double Lorentz":
-                    popt, pcov = curve_fit(self.double_lorentzian, x_fit, y_fit, p0=p0, bounds=bounds)
+                    popt, pcov = self._fit_strict(self.double_lorentzian, x_fit, y_fit, p0, bounds)
                     y_fit_curve = self.double_lorentzian(x_fit, *popt)
                     
                     y1_curve = self.lorentzian(x_fit, popt[0], popt[1], popt[2], popt[6])
@@ -148,7 +156,7 @@ class DataAnalyzer:
                     e1_pos, e1_w, e2_pos, e2_w = perr[1], perr[2], perr[4], perr[5]
                     
                 elif func_type == "Double pseudo Voigt":
-                    popt, pcov = curve_fit(self.double_pseudo_voigt, x_fit, y_fit, p0=p0, bounds=bounds)
+                    popt, pcov = self._fit_strict(self.double_pseudo_voigt, x_fit, y_fit, p0, bounds)
                     y_fit_curve = self.double_pseudo_voigt(x_fit, *popt)
                     
                     y1_curve = self.pseudo_voigt(x_fit, popt[0], popt[1], popt[2], popt[3], popt[8])
@@ -191,13 +199,13 @@ class DataAnalyzer:
                     bounds = ([0, min(x_fit), 0.0001, 0.0, -np.inf], [np.inf, max(x_fit), x_range, 1.0, np.inf])
                 
                 if func_type == "Gauss":
-                    popt, pcov = curve_fit(self.gaussian, x_fit, y_fit, p0=p0, bounds=bounds)
+                    popt, pcov = self._fit_strict(self.gaussian, x_fit, y_fit, p0, bounds)
                     y_fit_curve = self.gaussian(x_fit, *popt)
                 elif func_type == "Lorentz":
-                    popt, pcov = curve_fit(self.lorentzian, x_fit, y_fit, p0=p0, bounds=bounds)
+                    popt, pcov = self._fit_strict(self.lorentzian, x_fit, y_fit, p0, bounds)
                     y_fit_curve = self.lorentzian(x_fit, *popt)
                 elif func_type == "Pseudo Voigt":
-                    popt, pcov = curve_fit(self.pseudo_voigt, x_fit, y_fit, p0=p0, bounds=bounds)
+                    popt, pcov = self._fit_strict(self.pseudo_voigt, x_fit, y_fit, p0, bounds)
                     y_fit_curve = self.pseudo_voigt(x_fit, *popt)
                 
                 # すべての関数で popt[1] が位置、popt[2] がFWHMになる
