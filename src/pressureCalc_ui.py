@@ -174,8 +174,8 @@ class PressureCalculatorWindow(QDialog):
 
 
         p, dp = PressureCalculator.calculate(
-            sensor, p_scale, self.current_peak_val, lam0, self.current_peak_err,
-            current_t=curr_t, t0=self.spin_t0.value()
+            sensor, p_scale, self.current_peak_val, lam0, self.spin_lam0_t0.value(),
+            lam_err=self.current_peak_err, current_t=curr_t, t0=self.spin_t0.value()
         )
         if p is not None:
             self.current_pressure = p
