@@ -1,0 +1,82 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+FluoraPressée is a PyQt5 desktop GUI for controlling Andor/Princeton Instruments spectrometer+camera
+rigs and analyzing the resulting spectra for high-pressure diamond-anvil-cell experiments (ruby
+fluorescence pressure scale, Raman shift, etc.). It is a lab instrument-control tool, not a library or
+service — there is no test suite, package manifest, linter, or CI in this repo.
+
+## Running the app
+
+```bash
+python main.py            # normal mode — requires real hardware + Andor SDK installed
+python main.py --debug    # debug mode — simulates camera/spectrometer, no hardware needed
+```
+
+There is no `requirements.txt`/`pyproject.toml`. Dependencies (per README.md) are installed ad hoc:
+`PyQt5`, `pyqtgraph`, `numpy`, `scipy`, plus `pylablib` (Andor SDK wrapper) and `pyserial` (Princeton
+spectrometer serial control) for hardware mode. The app targets Windows (Andor SDK is Windows-only,
+and `ShamrockCIF.dll` at repo root is loaded via `ctypes` for Shamrock spectrometer control), but
+`--debug` mode runs fine cross-platform for UI development.
+
+There are no automated tests, build step, or lint config in this repo. Verify changes by running the
+app in `--debug` mode and exercising the relevant UI flow.
+
+## Architecture
+
+**Entry point**: `main.py` sets `QT_OPENGL=software`, prints startup info, ensures
+`spectrometerConfig.json` exists (prompting the user for grating grooves/mm if not — see
+`check_and_create_config()` in `src/ui.py`), then constructs `SpectrometerGUI` from `src/ui.py`.
+
+**`src/ui.py`** (`SpectrometerGUI`) is the ~1900-line monolith that owns the main window, all widgets,
+and the majority of application state (calibration coefficients, background data, sequential-save
+state, fit results, etc.). Other modules are mostly stateless helpers or dialogs that `ui.py` drives.
+When making UI changes, expect to touch this file; when making analysis/calibration/pressure logic
+changes, prefer the dedicated modules below and keep `ui.py` as the thin caller.
+
+**Hardware abstraction (factory pattern)**: `src/camera.py` and `src/spectrometer.py` are *not* classes
+— they're factory functions (`CameraThread(config, debug)`, `SpectrometerController(config, debug)`)
+that read `config["model"]` (from `spectrometerConfig.json`, default `"Andor"`) and return either the
+`*_andor.py` or `*_princeton.py` implementation. `src/ui.py` and other consumers only ever import from
+`src.camera`/`src.spectrometer`, never the `_andor`/`_princeton` files directly. Adding a third hardware
+backend means adding a new `camera_<vendor>.py` / `spectrometer_<vendor>.py` pair with the same public
+interface and extending these two factory functions.
+
+- `camera_andor.py` / `camera_princeton.py`: `QThread` subclasses that poll the detector in a loop and
+  emit `data_ready`/`temperature_ready`/etc. signals back to the GUI thread. Settings changes (exposure,
+  temperature, ROI) are relayed to the thread via locked instance variables set by the GUI and read at
+  the top of each loop iteration — not via direct hardware calls from the GUI thread.
+- `spectrometer_andor.py` drives the Shamrock unit via `ctypes` + `ShamrockCIF.dll`.
+  `spectrometer_princeton.py` drives it over serial (`pyserial`).
+- **Debug mode**: every hardware class has a `debug=True` path that fabricates a synthetic ruby-like
+  double-peak spectrum (with noise) instead of touching hardware. This is the primary way to develop
+  and test UI/analysis changes without a spectrometer attached.
+
+**Analysis/calibration/pressure modules** are plain Python classes with no PyQt dependency, so they're
+usable standalone or from scripts:
+- `src/analysis.py` (`DataAnalyzer`): single/double peak fitting (Gauss, Lorentz, Pseudo-Voigt).
+- `src/calibration.py` (`CalibrationCore`): pixel→wavelength/Raman-shift polynomial calibration from
+  detected reference peaks; `src/calibration_ui.py` wraps it in a `QDialog`.
+- `src/calibration_helper.py` (`ReferenceHelperWindow`): reference neon-line lookup dialog backed by
+  the pre-generated spectra JSON in `calibrationHelper/` (produced by
+  `calibrationHelper/generateCalibrationHelper.py`).
+- `src/pressureCalc.py` (`PressureCalculator`): static methods mapping peak shift → pressure (GPa) for
+  several sensors (Ruby, Sm2+:SrB4O7, diamond, cBN, zircon) and published calibration scales, with
+  per-scale temperature-validity ranges; `src/pressureCalc_ui.py` wraps it in a `QDialog`.
+- `src/file_io.py` (`DataFileIO`): all file I/O (spectrum CSV, background JSON, calibration JSON,
+  fitting-result files, sequential-measurement summaries) is deliberately isolated here with **no
+  PyQt5 dependency**, so it can be reused from external scripts. Keep new save/load logic here rather
+  than inlining it in `ui.py`.
+
+**Config/state files** (generated at runtime, not checked in): `spectrometerConfig.json` (grating list,
+default ROIs, `flip_x`, hardware `model`) at the repo root, plus a local UI cache read/written by
+`_load_local_cache`/`_save_local_cache` in `src/ui.py` (last save/sequential directories, etc.).
+
+## Notes on the code
+
+- Comments and many log/print messages are in Japanese; the README is bilingual (`README.md` /
+  `README_ja.md`). Match the existing language when editing a given file's comments.
+- `manuals/` contains user-facing manual images, not developer docs.
