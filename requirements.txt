@@ -1,0 +1,9 @@
+PyQt5
+pyqtgraph
+numpy
+scipy
+# pylablib depends on numba; pin to a version with prebuilt wheels on Windows/macOS
+# (Intel + Apple Silicon) so pip doesn't fall back to a slow/broken source build.
+numba<=0.62.1
+pylablib
+pyserial

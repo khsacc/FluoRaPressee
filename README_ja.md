@@ -84,13 +84,10 @@ Andor製のカメラ（検出器）および分光器を制御し、スペクト
 
 ## インストール方法 
 
-1. コマンドプロンプトまたはPowerShellを開きます。
-2. 必要なPythonパッケージをインストールします。
-    ```bash
-    pip install PyQt5 pyqtgraph numpy scipy pylablib
-    ```
-3. Andor SDKが正しくインストールされていることを確認します。
-4. ディレクトリに、``spectrometerConfig.json``を作成し、以下の例を参考にしながら、``ShamrockCIF.dll``ファイルのパス、回折格子の情報および検出器の情報を記録します。``spectrometerConfig.json``を更新したのち、再度起動すれば、新しい内容が反映されます。
+1. リポジトリをクローンしたのち、``setup.bat``をダブルクリック（またはコマンドプロンプト/PowerShellから実行）します。
+   プロジェクトフォルダ内に仮想環境``.venv``が作成され、必要なPythonパッケージ（``PyQt5``, ``pyqtgraph``, ``numpy``, ``scipy``, ``pylablib``, ``pyserial``）がすべて自動的にインストールされます。
+2. Andor SDKが正しくインストールされていることを確認します。
+3. ディレクトリに、``spectrometerConfig.json``を作成し、以下の例を参考にしながら、``ShamrockCIF.dll``ファイルのパス、回折格子の情報および検出器の情報を記録します。``spectrometerConfig.json``を更新したのち、再度起動すれば、新しい内容が反映されます。
 
 
 ```json
@@ -119,14 +116,11 @@ Andor製のカメラ（検出器）および分光器を制御し、スペクト
 
 ##  使い方 
 
-    ```bash
-    python ui.py
-    ```
-※ ハードウェアを接続せずにUIのテストだけを行いたい場合は、デバッグモードで起動できます。
+``run.bat``をダブルクリック（またはコマンドプロンプト/PowerShellから実行）すると、``setup.bat``で作成した仮想環境を使ってアプリが起動します。
 
-    ```bash
-    python ui.py --debug
-    ```
+※ ハードウェアを接続せずにUIのテストだけを行いたい場合は、``run_debug.bat``を使うとデバッグモードで起動できます。
+
+macOS/Linux上でUI開発のみ行う場合（ハードウェア制御は非対応）は、``./setup.sh``と``./run_debug.sh``を使用してください。
 
 ##  保存されるファイルの形式
 

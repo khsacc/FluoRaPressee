@@ -45,24 +45,22 @@ A Python-based GUI application designed to control Andor cameras (detectors) and
 
 ## 📥 Installation
 
-1. Open Command Prompt or PowerShell.
-2. Install the required Python packages:
-
-    pip install PyQt5 pyqtgraph numpy scipy
-
-3. Ensure the Andor SDK is properly installed.
-4. Navigate to the project directory and run the script.
+1. Clone the repository, then double-click `setup.bat` (or run it from Command Prompt / PowerShell).
+   This creates a `.venv` virtual environment in the project folder and installs all required
+   packages (`PyQt5`, `pyqtgraph`, `numpy`, `scipy`, `pylablib`, `pyserial`) into it.
+2. Ensure the Andor SDK is properly installed on the system.
 
 ## 🚀 Usage
 
 ### Launching the Application
-Run the application with the following command:
+Double-click `run.bat` (or run it from Command Prompt / PowerShell) to launch the app using the
+virtual environment created by `setup.bat`.
 
-    python ui.py
+*Note: If you want to test the UI without connecting to the hardware, use `run_debug.bat` instead,
+which launches the app in debug mode.*
 
-*Note: If you want to test the UI without connecting to the hardware, you can launch it in debug mode:*
-
-    python ui.py --debug
+On macOS/Linux (UI development only, no hardware support), use `./setup.sh` and `./run_debug.sh`
+instead.
 
 ### Basic Measurement Workflow
 1. **Cooling**: 
