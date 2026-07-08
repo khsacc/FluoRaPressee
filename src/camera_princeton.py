@@ -50,9 +50,10 @@ class CameraThreadPI(QThread):
     data_ready = pyqtSignal(str, np.ndarray)
     init_finished = pyqtSignal()
     temperature_ready = pyqtSignal(float)
-    
+
     exposure_set_finished = pyqtSignal()
     temperature_set_finished = pyqtSignal()
+    acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors
 
     def __init__(self, config=None, debug=False):
         super().__init__()
@@ -204,6 +205,7 @@ class CameraThreadPI(QThread):
                             print("Stopping acquisition after 5 consecutive camera errors.")
                             with self._lock:
                                 self.is_measuring = False
+                            self.acquisition_failed.emit(str(e))
                             _consec_errors = 0
                         time.sleep(0.05)
                 else:
@@ -252,10 +254,6 @@ class CameraThreadPI(QThread):
             self.roi_vend = vend
             self.settings_changed = True
     
-    def get_temperature(self):
-        with self._lock:
-            return self.mock_temp if self.debug else (self.new_temperature if self.new_temperature is not None else -70.0)
-
     @property
     def camera(self):
         return self

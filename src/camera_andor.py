@@ -15,9 +15,10 @@ class CameraThreadAndor(QThread):
     data_ready = pyqtSignal(str, np.ndarray)
     init_finished = pyqtSignal()
     temperature_ready = pyqtSignal(float)
-    
+
     exposure_set_finished = pyqtSignal()
     temperature_set_finished = pyqtSignal()
+    acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors
 
     # カメラ仕様の定数
     DEFAULT_DETECTOR_WIDTH = 1024
@@ -183,6 +184,7 @@ class CameraThreadAndor(QThread):
                             print("Stopping acquisition after 5 consecutive camera errors.")
                             with self._lock:
                                 self.is_measuring = False
+                            self.acquisition_failed.emit(str(e))
                             _consec_errors = 0
                         time.sleep(self.SLEEP_INTERVAL)
                 else:
@@ -238,11 +240,6 @@ class CameraThreadAndor(QThread):
             self.roi_vend = vend
             self.settings_changed = True
     
-    def get_temperature(self) -> float:
-        """現在の目標温度（または最後に取得した温度）を返す"""
-        with self._lock:
-            return self.mock_temp if self.debug else (self.new_temperature if self.new_temperature is not None else -60.0)
-
     @property
     def camera(self):
         """calibration_ui から self.camera_thread.camera.acquire_single_image() と呼ばれるためのプロキシ"""
