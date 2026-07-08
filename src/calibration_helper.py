@@ -3,35 +3,34 @@ from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel
 from PyQt5.QtCore import Qt
 import pyqtgraph as pg
 
+from src.calibration import CalibrationCore
+
 class ReferenceHelperWindow(QDialog):
     def __init__(self, json_data, is_raman=False, laser_wl=532.0, parent=None):
         super().__init__(parent)
-        
+
         material = json_data.get("material", "Reference")
         approx = json_data.get("approximate_range", "Unknown")
-        
+
         # タイトルの単位も動的に変更
         if is_raman:
             # ラマンシフトへ変換 (簡易計算)
             approx_val = float(approx) if approx.replace('.','',1).isdigit() else 0.0
-            approx_raman = (1e7 / laser_wl) - (1e7 / approx_val) if approx_val != 0 else 0.0
+            approx_raman = CalibrationCore.nm_to_raman(approx_val, laser_wl)
             self.setWindowTitle(f"Guide: {material} around {approx_raman:.1f} cm⁻¹")
         else:
             self.setWindowTitle(f"Guide: {material} around {approx} nm")
-            
+
         self.resize(800, 550) # 注意書き用に少し高さを広げる
-        
+
         self.json_data = json_data
         self.is_raman = is_raman
         self.laser_wl = laser_wl
-        
+
         self.init_ui()
 
     def nm_to_raman(self, wl_nm):
-        """Wavelength (nm) to Raman Shift (cm^-1)"""
-        if wl_nm == 0: 
-            return 0.0
-        return (1e7 / self.laser_wl) - (1e7 / wl_nm)
+        return CalibrationCore.nm_to_raman(wl_nm, self.laser_wl)
 
     def init_ui(self):
         layout = QVBoxLayout(self)

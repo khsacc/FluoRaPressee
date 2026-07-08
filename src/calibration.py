@@ -11,7 +11,14 @@ class CalibrationCore:
     SIGMA_GUESS = 2.0  # ガウス関数のシグマ初期値
     SIGMA_MAX = 20  # シグマの最大値
     NOISE_THRESHOLD = 1.0  # ノイズレベルの最小値
-    
+
+    @staticmethod
+    def nm_to_raman(wl_nm: float, laser_wl: float) -> float:
+        """Wavelength (nm) to Raman shift (cm^-1) for a given excitation wavelength."""
+        if wl_nm == 0:
+            return 0.0
+        return (1e7 / laser_wl) - (1e7 / wl_nm)
+
     def gaussian(self, x: np.ndarray, a: float, x0: float, sigma: float, offset: float) -> np.ndarray:
         return a * np.exp(-(x - x0)**2 / (2 * sigma**2)) + offset
 

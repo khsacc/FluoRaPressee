@@ -69,8 +69,7 @@ class CalibrationWindow(QDialog):
             self.camera_thread.data_ready.connect(self.on_data_ready)
 
     def nm_to_raman(self, wl_nm, laser_wl):
-        if wl_nm == 0: return 0.0
-        return (1e7 / laser_wl) - (1e7 / wl_nm)
+        return self.calib_core.nm_to_raman(wl_nm, laser_wl)
 
     def init_ui(self):
         main_layout = QHBoxLayout(self)
@@ -370,7 +369,7 @@ class CalibrationWindow(QDialog):
                 if mw and hasattr(mw, 'spin_exc_wl'):
                     laser_wl = mw.spin_exc_wl.value()
                 neon_nm = [692.94673, 702.40504, 703.24131]
-                items = [f"{1e7/laser_wl - 1e7/nm:.2f}" for nm in neon_nm]
+                items = [f"{self.calib_core.nm_to_raman(nm, laser_wl):.2f}" for nm in neon_nm]
                 val_widget.addItems(items)
             else:
                 val_widget.addItems(["692.94673", "702.40504", "703.24131"])
