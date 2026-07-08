@@ -1,4 +1,5 @@
 import numpy as np
+from PyQt5.QtWidgets import QMessageBox
 
 
 class AcquisitionMixin:
@@ -130,6 +131,33 @@ class AcquisitionMixin:
         self.btn_terminate.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
         self.lbl_accum_status.setVisible(False)
         self.thread.stop_measuring()
+
+    def on_acquisition_failed(self, error_msg):
+        """Camera thread auto-stopped acquisition after repeated hardware errors.
+
+        Without this handler the GUI would silently stay in a "measuring" state
+        forever (buttons still showing Terminate as active) with no indication
+        that data collection actually halted - dangerous for unattended
+        Sequential runs that may go for hours.
+        """
+        was_sequential = getattr(self, 'is_sequential_running', False)
+
+        self.current_accum_count = 0
+        self.accumulated_data = None
+        self.is_single_shot = False
+
+        if was_sequential:
+            self.stop_sequential()
+        else:
+            self.stop_measurement()
+
+        self.status_label.setText("Camera Error: acquisition stopped")
+        QMessageBox.critical(
+            self, "Acquisition Stopped",
+            "Data acquisition failed repeatedly and was stopped automatically.\n\n"
+            f"Last error: {error_msg}\n\n"
+            "Check the camera connection/hardware before starting a new measurement."
+        )
 
     def on_data_ready(self, mode, data):
         if not getattr(self.thread, 'is_measuring', False) and not self.is_single_shot:
