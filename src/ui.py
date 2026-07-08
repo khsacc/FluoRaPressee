@@ -556,6 +556,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.thread.data_ready.connect(self.on_data_ready)
         self.thread.init_finished.connect(self.on_camera_initialized)
         self.thread.temperature_ready.connect(self.on_temperature_read)
+        self.thread.acquisition_failed.connect(self.on_acquisition_failed)
         
         self.thread.exposure_set_finished.connect(lambda: self.spin_acq_time.setEnabled(True))
         self.thread.temperature_set_finished.connect(lambda: self.spin_cooler_temp.setEnabled(True))
