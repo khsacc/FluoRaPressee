@@ -915,16 +915,6 @@ class SpectrometerGUI(QMainWindow):
         if hasattr(self.thread, 'is_measuring') and self.thread.is_measuring:
             self.stop_measurement()
 
-    def on_set_r1_clicked(self):
-        if self.current_w_peak1 is not None:
-            if self.calib_coeffs is not None and self.radio_spec_mode_raman.isChecked():
-                ex_wl = self.spin_exc_wl.value()
-                if ex_wl > 0:
-                    lam_peak1 = 1e7 / (1e7 / ex_wl - self.current_w_peak1)
-                    self.spin_lambda0.setValue(float(lam_peak1))
-            else:
-                self.spin_lambda0.setValue(float(self.current_w_peak1))
-
     def toggle_sequential(self, checked):
         self.seq_content.setVisible(checked)
         self.seq_toggle_btn.setText("▼ Sequential measurements" if checked else "▶ Sequential measurements")
@@ -1536,8 +1526,11 @@ class SpectrometerGUI(QMainWindow):
 
     def on_data_ready(self, mode, data):
         if not getattr(self.thread, 'is_measuring', False) and not self.is_single_shot:
-            pass
-            
+            # Stray frame that arrived after the thread was told to stop measuring
+            # (the camera thread may already be mid-acquisition when stop_measuring()
+            # is called) - ignore it rather than accumulating/displaying/saving it.
+            return
+
         if self._ignore_next_frames:
             return
             
