@@ -190,21 +190,15 @@ class SpectrometerControlMixin:
                 self._pending_calib_laser_wl = None
             self._loading_config = False
         else:
+            # Grating/centre-wavelength changes invalidate the pixel calibration (it was only
+            # valid at the previous physical position), but must NOT touch the ROI: ROI is set
+            # independently via config load, calibration-file load, or direct user edits only.
             self.calib_coeffs = None
             self.calib_unit = 'Wavelength'
             self.calib_laser_wl = None
             self.calib_file_name = "None"
             self.lbl_loaded_calib.setText("Loaded: None")
             self.update_plot_labels()
-
-            roi_f, roi_t = self.get_roi_for_grating(self.physical_grating)
-            self.spin_vstart.blockSignals(True)
-            self.spin_vend.blockSignals(True)
-            self.spin_vstart.setValue(roi_f)
-            self.spin_vend.setValue(roi_t)
-            self.spin_vstart.blockSignals(False)
-            self.spin_vend.blockSignals(False)
-            self.apply_roi_settings()
 
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
             self.update_display(is_new_data=False)
