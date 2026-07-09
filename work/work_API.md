@@ -641,7 +641,7 @@ Step 5までの内部APIが完成していることを前提とする。
 
 **依存:** Step 8
 
-**対象ファイル:** `README.md`, `README_ja.md`, `CLAUDE.md`
+**対象ファイル:** `README.md`, `README_ja.md`, `CLAUDE.md`, `API.md`
 
 **実行プロンプト:**
 
@@ -656,4 +656,4 @@ Step 5までの内部APIが完成していることを前提とする。
 >   シャッター制御が本アプリに未実装のため現時点では見送っている旨も明記する)。
 > - `README.md`/`README_ja.md` に、依存関係のインストール手順(`pip install -r requirements.txt`
 >   が使えるようになったこと)と、APIサーバーの起動方法・エンドポイント一覧への簡単な言及
->   (詳細は `/docs` のSwagger UIを見るよう案内する形でよい)を追記する。
+>   APIの仕様の詳細を、`manuals/API.md`に追記する。
