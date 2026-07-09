@@ -85,7 +85,10 @@ Andor製のカメラ（検出器）および分光器を制御し、スペクト
 ## インストール方法 
 
 1. リポジトリをクローンしたのち、``setup.bat``をダブルクリック（またはコマンドプロンプト/PowerShellから実行）します。
-   プロジェクトフォルダ内に仮想環境``.venv``が作成され、必要なPythonパッケージ（``PyQt5``, ``pyqtgraph``, ``numpy``, ``scipy``, ``pylablib``, ``pyserial``）がすべて自動的にインストールされます。
+   プロジェクトフォルダ内に仮想環境``.venv``が作成され、``requirements.txt``に記載された必要なPythonパッケージ
+   （``PyQt5``, ``pyqtgraph``, ``numpy``, ``scipy``, ``pylablib``, ``pyserial``、および後述のAPI機能用の
+   ``fastapi``, ``uvicorn``, ``pydantic``）がすべて自動的にインストールされます。
+   手動でインストールする場合は、作成した仮想環境内で ``pip install -r requirements.txt`` を実行してください。
 2. Andor SDKが正しくインストールされていることを確認します。
 3. ディレクトリに、``spectrometerConfig.json``を作成し、以下の例を参考にしながら、``ShamrockCIF.dll``ファイルのパス、回折格子の情報および検出器の情報を記録します。``spectrometerConfig.json``を更新したのち、再度起動すれば、新しい内容が反映されます。
 
@@ -121,6 +124,16 @@ Andor製のカメラ（検出器）および分光器を制御し、スペクト
 ※ ハードウェアを接続せずにUIのテストだけを行いたい場合は、``run_debug.bat``を使うとデバッグモードで起動できます。
 
 macOS/Linux上でUI開発のみ行う場合（ハードウェア制御は非対応）は、``./setup.sh``と``./run_debug.sh``を使用してください。
+
+## API機能（同一LAN内の他PCからの操作）
+
+校正やROI設定などの基本操作をGUI内で完結させたのち、画面下部の「API Server」パネルで
+**Start API Server** を押すと、同一LAN内の他PCからHTTP経由で測定をトリガーできるようになります。
+起動するとURLとAPIキーが表示されるので、それを使いたい相手に共有してください。APIサーバーが
+起動している間、GUI側の測定・設定系操作はロックされ（プロットの表示設定等は引き続き操作可）、
+**Stop API Server** を押すとローカルでの操作権が戻ります。
+
+エンドポイント一覧・リクエスト/レスポンスの詳細は [manuals/API.md](manuals/API.md) を参照してください。
 
 ##  保存されるファイルの形式
 

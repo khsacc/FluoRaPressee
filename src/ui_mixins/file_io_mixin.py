@@ -27,10 +27,11 @@ class FileIOMixin:
                 mismatch = True
         return mismatch
 
-    def handle_bg_mismatch_and_run(self, callback):
+    def handle_bg_mismatch_and_run(self, callback) -> bool:
+        """Returns True if callback was actually invoked, False if the user declined (Quit)."""
         if not self.check_bg_mismatch():
             callback()
-            return
+            return True
 
         msgBox = QMessageBox(self)
         msgBox.setIcon(QMessageBox.Icon.Warning)
@@ -44,15 +45,29 @@ class FileIOMixin:
 
         if msgBox.clickedButton() == btn_ignore:
             callback()
+            return True
+        return False
 
     def check_bg_and_take_single(self):
-        self.handle_bg_mismatch_and_run(self.take_single_spectrum)
+        if not self._try_acquire_gate():
+            QMessageBox.warning(self, "Busy", "Another acquisition is already in progress.")
+            return
+        if not self.handle_bg_mismatch_and_run(self.take_single_spectrum):
+            self._release_acquisition_gate()
 
     def check_bg_and_start_meas(self):
-        self.handle_bg_mismatch_and_run(self.start_measurement)
+        if not self._try_acquire_gate():
+            QMessageBox.warning(self, "Busy", "Another acquisition is already in progress.")
+            return
+        if not self.handle_bg_mismatch_and_run(self.start_measurement):
+            self._release_acquisition_gate()
 
     def check_bg_and_start_seq(self):
-        self.handle_bg_mismatch_and_run(self.start_sequential)
+        if not self._try_acquire_gate():
+            QMessageBox.warning(self, "Busy", "Another acquisition is already in progress.")
+            return
+        if not self.handle_bg_mismatch_and_run(self.start_sequential):
+            self._release_acquisition_gate()
 
     def apply_calibration(self, coeffs, filename, calib_unit='Wavelength', calib_laser_wl=None):
         self.calib_coeffs = coeffs
@@ -148,6 +163,9 @@ class FileIOMixin:
         self.on_apply_spectrometer()
 
     def on_acq_bg_clicked(self):
+        if not self._try_acquire_gate():
+            QMessageBox.warning(self, "Busy", "Another acquisition is already in progress.")
+            return
         self._is_acquiring_bg = True
         self.is_single_shot = True
         self._ignore_next_frames = False

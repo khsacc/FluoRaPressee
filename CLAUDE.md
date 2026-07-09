@@ -16,11 +16,12 @@ python main.py            # normal mode — requires real hardware + Andor SDK i
 python main.py --debug    # debug mode — simulates camera/spectrometer, no hardware needed
 ```
 
-There is no `requirements.txt`/`pyproject.toml`. Dependencies (per README.md) are installed ad hoc:
-`PyQt5`, `pyqtgraph`, `numpy`, `scipy`, plus `pylablib` (Andor SDK wrapper) and `pyserial` (Princeton
-spectrometer serial control) for hardware mode. The app targets Windows (Andor SDK is Windows-only,
-and `ShamrockCIF.dll` at repo root is loaded via `ctypes` for Shamrock spectrometer control), but
-`--debug` mode runs fine cross-platform for UI development.
+Dependencies are listed in `requirements.txt` (no `pyproject.toml`): `PyQt5`, `pyqtgraph`, `numpy`,
+`scipy`, plus `pylablib` (Andor SDK wrapper) and `pyserial` (Princeton spectrometer serial control)
+for hardware mode, plus `fastapi`/`uvicorn`/`pydantic` for the optional HTTP API layer (see
+Architecture below). Install with `pip install -r requirements.txt`. The app targets Windows (Andor
+SDK is Windows-only, and `ShamrockCIF.dll` at repo root is loaded via `ctypes` for Shamrock
+spectrometer control), but `--debug` mode runs fine cross-platform for UI development.
 
 There are no automated tests, build step, or lint config in this repo. Verify changes by running the
 app in `--debug` mode and exercising the relevant UI flow.
@@ -89,8 +90,39 @@ default ROIs, `flip_x`, hardware `model`) at the repo root, plus a local UI cach
 `_load_local_cache`/`_save_local_cache` in `src/ui_mixins/config_mixin.py` (last save/sequential
 directories, etc.).
 
+**Optional HTTP API layer** (`src/api/`, `src/ui_mixins/api_mixin.py`): exposes a subset of
+`SpectrometerGUI`'s functionality over HTTP so other machines on the same LAN can trigger
+measurements. It only starts when the user explicitly clicks "Start API Server" in the GUI's "API
+Server" panel (`ApiMixin.start_api_server`/`on_start_api_server_clicked`) — the intended workflow is
+to finish calibration and basic setup in the GUI first, then activate the API for remote-triggered
+acquisition. While the API server is running, the GUI's measurement/config controls are disabled
+(only display controls like plot style/auto-rescale remain interactive) via
+`SequentialMixin._lock_ui`/`_unlock_ui`, which tracks a set of lock "reasons" (sequential run, API
+server) so either one alone can hold the lock; stopping the API server is how the operator regains
+full local control.
+
+- `src/api/gui_bridge.py` (`GuiBridge`): marshals calls from the API's worker threads onto the Qt GUI
+  thread via a `pyqtSignal`, since almost all of `SpectrometerGUI`'s state lives in QWidgets and Qt
+  forbids touching them off-thread. Acquisition uses a two-phase Future-based handoff
+  (`ApiMixin._api_start_acquire`/`api_acquire`) rather than blocking the GUI thread on the result, to
+  avoid deadlocking the Qt event loop — see the module docstring for why.
+- `src/api/schemas.py` / `src/api/server.py` (`create_app`): Pydantic request/response models and the
+  FastAPI app factory (routes, `X-API-Key` header auth). `src/ui_mixins/api_mixin.py` (`ApiMixin`)
+  implements the actual logic each route calls into (`api_acquire`, `api_fit`, `api_pressure`,
+  `api_apply_calibration`, `api_get_status`) independent of the GUI's own `radio_bg_on`/`chk_flip_x`/
+  fit-panel widgets, so a remote request never depends on or mutates what the operator is currently
+  looking at.
+- Background (dark) subtraction over the API defaults to rejecting a mismatched exposure/ROI outright
+  (`BackgroundMismatchError` → HTTP 422) rather than silently subtracting an invalid dark frame;
+  callers can opt into subtracting anyway (`dark.ignore_mismatch`) or supply their own dark spectrum
+  directly (`dark.mode="provided"`). Remote re-acquisition of a fresh dark frame is not implemented —
+  the app has no shutter control, so that needs to land in the GUI first.
+- See `manuals/API.md` for the full endpoint reference and `work/work_API.md` for the implementation
+  history/design rationale.
+
 ## Notes on the code
 
 - Comments and many log/print messages are in Japanese; the README is bilingual (`README.md` /
   `README_ja.md`). Match the existing language when editing a given file's comments.
-- `manuals/` contains user-facing manual images, not developer docs.
+- `manuals/` contains user-facing manual images and the API reference (`manuals/API.md`), not
+  internal developer docs (those live in `work/`).

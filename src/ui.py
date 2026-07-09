@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 from datetime import datetime
 import numpy as np
 from PyQt5.QtWidgets import (QMainWindow, QPushButton, QVBoxLayout,
@@ -26,9 +27,10 @@ from src.ui_mixins.sequential_mixin import SequentialMixin
 from src.ui_mixins.acquisition_mixin import AcquisitionMixin
 from src.ui_mixins.display_mixin import DisplayMixin
 from src.ui_mixins.pressure_dialog_mixin import PressureDialogMixin
+from src.ui_mixins.api_mixin import ApiMixin
 # ----------------------------------------
 
-class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControlMixin, SequentialMixin, AcquisitionMixin, DisplayMixin, PressureDialogMixin):
+class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControlMixin, SequentialMixin, AcquisitionMixin, DisplayMixin, PressureDialogMixin, ApiMixin):
     def __init__(self, debug=False):
         super().__init__()
         self.debug = debug
@@ -53,7 +55,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.loaded_bg_metadata = None
         self.is_single_shot = False
         self._ignore_next_frames = False
-        
+
+        # 「GUIの手動測定・校正ダイアログ・(将来の)API経由の測定」のうち、同時にどれか1つだけが
+        # 実際の測定権を持てることを保証する排他ゲート。ウィジェットの有効/無効とは独立したレイヤー。
+        self._acquisition_gate = threading.Lock()
+        self._gate_held_by_me = False
+
         self.latest_fit_res = None
         self.latest_fit_func = None
 
@@ -61,6 +68,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.accumulated_data = None
         self.accum_frames = None
         self._accum_use_rejection = False
+        # API経由の取得でのみ設定される、spin_accumulate.value() を上書きする積算数。
+        # None のときは常にウィジェット値を使う(既存のGUI操作の挙動は変わらない)。
+        self._active_target_accum = None
+        # api_acquire() が単発取得の完了を待つための Future(GuiBridge経由でAPIワーカー
+        # スレッドから設定され、_process_completed_data() がGUIスレッド上で解決する)。
+        self._api_pending_future = None
+        # 「測定系コントロールをロックしている理由」の集合(連続測定中・APIサーバー起動中など)。
+        # 全ての理由が解消されたときのみ再度有効化する(_lock_ui/_unlock_ui、sequential_mixin.py)。
+        self._ui_lock_reasons = set()
 
         self.seq_dir = _cache.get("last_seq_dir", "")
         self.is_sequential_running = False
@@ -468,9 +484,35 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         
         press_layout.addWidget(self.btn_open_pressure)
         self.press_group.setLayout(press_layout)
-        
+
         controls_layout.addWidget(self.press_group)
-                    
+
+        api_group = QGroupBox("API Server")
+        api_layout = QVBoxLayout()
+
+        api_port_layout = QHBoxLayout()
+        api_port_layout.addWidget(QLabel("Port:"))
+        self.spin_api_port = CustomSpinBox()
+        self.spin_api_port.setRange(1, 65535)
+        self.spin_api_port.setValue(8765)
+        api_port_layout.addWidget(self.spin_api_port)
+        api_layout.addLayout(api_port_layout)
+
+        self.btn_start_api = QPushButton("Start API Server")
+        self.btn_start_api.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self.btn_stop_api = QPushButton("Stop API Server")
+        self.btn_stop_api.setEnabled(False)
+        self.btn_stop_api.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        api_layout.addWidget(self.btn_start_api)
+        api_layout.addWidget(self.btn_stop_api)
+
+        self.lbl_api_status = QLabel("Not running")
+        self.lbl_api_status.setWordWrap(True)
+        self.lbl_api_status.setStyleSheet("color: #666; font-size: 11px;")
+        api_layout.addWidget(self.lbl_api_status)
+
+        api_group.setLayout(api_layout)
+        controls_layout.addWidget(api_group)
 
         controls_layout.addStretch()
         scroll_area.setWidget(controls_widget)
@@ -533,8 +575,11 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.btn_apply_spec.clicked.connect(self.on_apply_spectrometer)
         self.btn_calib_neon.clicked.connect(self.on_calibrate_neon)
-        self.btn_load_calib.clicked.connect(self.on_load_calibration) 
-        
+        self.btn_load_calib.clicked.connect(self.on_load_calibration)
+
+        self.btn_start_api.clicked.connect(self.on_start_api_server_clicked)
+        self.btn_stop_api.clicked.connect(self.on_stop_api_server_clicked)
+
         self.seq_timer = QTimer(self)
         self.seq_timer.timeout.connect(self.update_seq_progress)
         
@@ -609,6 +654,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
             QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
+            if getattr(self, '_api_server', None) is not None:
+                self.stop_api_server()
             self.thread.stop_thread()
             self.spec_ctrl.close()
             event.accept()

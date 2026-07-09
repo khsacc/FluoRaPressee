@@ -7,3 +7,7 @@ scipy
 numba<=0.62.1
 pylablib
 pyserial
+# API layer (src/api/, src/ui_mixins/api_mixin.py)
+fastapi
+uvicorn
+pydantic

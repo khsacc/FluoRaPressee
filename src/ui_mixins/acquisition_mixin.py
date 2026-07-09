@@ -12,6 +12,19 @@ MAX_BUFFERED_FRAMES = 2000
 
 
 class AcquisitionMixin:
+    def _try_acquire_gate(self) -> bool:
+        """測定権の排他ゲートを非ブロッキングで取得する。既に誰かが握っていれば False を返す。"""
+        if self._acquisition_gate.acquire(blocking=False):
+            self._gate_held_by_me = True
+            return True
+        return False
+
+    def _release_acquisition_gate(self) -> None:
+        """自分が取得したゲートを解放する（保持していなければ何もしない、二重解放を防止）。"""
+        if getattr(self, '_gate_held_by_me', False):
+            self._gate_held_by_me = False
+            self._acquisition_gate.release()
+
     def take_single_spectrum(self):
         self.is_single_shot = True
         self._ignore_next_frames = False
@@ -140,6 +153,7 @@ class AcquisitionMixin:
         self.btn_terminate.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
         self.lbl_accum_status.setVisible(False)
         self.thread.stop_measuring()
+        self._release_acquisition_gate()
 
     def on_acquisition_failed(self, error_msg):
         """Camera thread auto-stopped acquisition after repeated hardware errors.
@@ -160,6 +174,12 @@ class AcquisitionMixin:
             self.stop_sequential()
         else:
             self.stop_measurement()
+
+        # stop_sequential() only relays to stop_measurement() (which releases the gate) when
+        # thread.is_measuring is still True; but the camera thread already sets is_measuring to
+        # False internally before emitting this signal, so that relay is skipped here. Release
+        # explicitly as a backstop (no-op if already released by the stop_measurement() call above).
+        self._release_acquisition_gate()
 
         self.status_label.setText("Camera Error: acquisition stopped")
         QMessageBox.critical(
@@ -182,7 +202,7 @@ class AcquisitionMixin:
         if self._ignore_next_frames:
             return
 
-        target_accum = self.spin_accumulate.value()
+        target_accum = self._active_target_accum if self._active_target_accum is not None else self.spin_accumulate.value()
 
         if self.current_accum_count == 0:
             # Decide the combine strategy once per cycle, at the first frame, so a
@@ -240,11 +260,28 @@ class AcquisitionMixin:
     def _process_completed_data(self, mode, data):
         if self.is_single_shot:
             self.is_single_shot = False
+            # stop_measurement() (called from on_data_ready() just before this method, for the
+            # single-shot completion path) already releases the gate; call again defensively in
+            # case that call path ever changes so a single-shot completion never leaves it stuck.
+            self._release_acquisition_gate()
+            # Reset any API-supplied accumulation override so the next GUI-triggered
+            # acquisition goes back to reading spin_accumulate.value().
+            self._active_target_accum = None
 
             if mode == "1d":
                 self.raw_1d_data = data
             elif mode == "2d":
                 self.raw_2d_data = data
+
+            pending = getattr(self, '_api_pending_future', None)
+            if pending is not None:
+                self._api_pending_future = None
+                if not pending.done():
+                    pending.set_result({
+                        "raw": (self.raw_1d_data if mode == "1d" else self.raw_2d_data),
+                        "mode": mode,
+                    })
+
             self.update_display(is_new_data=True, mode=mode)
 
             if getattr(self, '_is_acquiring_bg', False):

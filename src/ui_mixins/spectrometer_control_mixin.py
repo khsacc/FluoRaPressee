@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QVBoxLayout, QLabel, QDialog
+from PyQt5.QtWidgets import QVBoxLayout, QLabel, QDialog, QMessageBox
 from PyQt5.QtCore import Qt
 
 from src.spectrometer import SpectrometerMoveThread
@@ -97,13 +97,25 @@ class SpectrometerControlMixin:
     def on_calibrate_neon(self):
         was_measuring = self.thread.is_measuring
         if was_measuring:
-            self.stop_measurement()
+            self.stop_measurement()  # also releases the acquisition gate
+
+        if not self._try_acquire_gate():
+            QMessageBox.warning(self, "Busy", "Another acquisition is already in progress.")
+            return
 
         calib_win = CalibrationWindow(camera_thread=self.thread, parent=self)
         calib_win.exec()
 
+        self._release_acquisition_gate()
+
         if was_measuring:
-            self.start_measurement()
+            # Re-acquire before resuming; if something else grabbed the gate in the brief
+            # window since release (e.g. a concurrent API request), skip the resume rather
+            # than starting an unprotected measurement.
+            if self._try_acquire_gate():
+                self.start_measurement()
+            else:
+                QMessageBox.warning(self, "Busy", "Could not resume measurement: acquisition is busy.")
 
     def _set_spectrometer_controls_enabled(self, enabled):
         self.combo_grating.setEnabled(enabled)

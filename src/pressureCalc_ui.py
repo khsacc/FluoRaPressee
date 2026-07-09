@@ -154,7 +154,7 @@ class PressureCalculatorWindow(QDialog):
         t_scale = self.combo_t_scale.currentText()
         curr_t = self.spin_t.value()
 
-        is_valid, rng = PressureCalculator.is_temp_in_range(sensor, t_scale, curr_t)
+        is_valid, rng = PressureCalculator.is_temp_in_range(sensor=sensor, t_scale=t_scale, temp=curr_t)
         if self.radio_on.isChecked() and not is_valid and rng[0] is not None:
             self.lbl_t_warning.setText(f"Warning: T out of range ({rng[0]} - {rng[1]} K)")
             self.spin_t.setStyleSheet("background-color: #FFCCCC; color: red;")
@@ -167,14 +167,16 @@ class PressureCalculatorWindow(QDialog):
         lam0 = self.spin_lam0.value()
         if self.radio_on.isChecked():
             lam0 = PressureCalculator.get_corrected_lam0(
-                sensor, t_scale, curr_t, self.spin_t0.value(), self.spin_lam0_t0.value()
+                sensor=sensor, t_scale=t_scale, current_t=curr_t,
+                t0=self.spin_t0.value(), lam0_at_t0=self.spin_lam0_t0.value()
             )
 
             self.spin_lam0.setValue(lam0)
 
 
         p, dp = PressureCalculator.calculate(
-            sensor, p_scale, self.current_peak_val, lam0, self.spin_lam0_t0.value(),
+            sensor=sensor, p_scale=p_scale, lam=self.current_peak_val, lam0=lam0,
+            lam0_at_t0=self.spin_lam0_t0.value(),
             lam_err=self.current_peak_err, current_t=curr_t, t0=self.spin_t0.value()
         )
         if p is not None:

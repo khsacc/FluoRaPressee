@@ -478,12 +478,18 @@ Step 5までの内部APIが完成していることを前提とする。
 >    JSON化する)。
 >
 > 2. `api_pressure(self, peak, peak_err, sensor, pressure_scale, zero_pressure_peak, temperature_correction=None) -> dict`:
->    同様にGUIスレッド不要。`temperature_correction` が指定されていれば
->    `PressureCalculator.is_temp_in_range(...)` → (有効範囲外でも計算は続行し警告のみ付与) →
->    `PressureCalculator.get_corrected_lam0(...)` で `zero_pressure_peak` を補正してから
->    `PressureCalculator.calculate(sensor, pressure_scale, peak, zero_pressure_peak, peak_err,
->    current_t=..., t0=...)` を呼ぶ。`src/pressureCalc_ui.py` の `PressureCalculatorWindow.calculate()`
->    と全く同じ計算順序に倣うこと(このメソッドを直接参照して処理順序を確認すること)。
+>    同様にGUIスレッド不要。`PressureCalculator` の3メソッド(`is_temp_in_range`/
+>    `get_corrected_lam0`/`calculate`)はすべてキーワード専用引数(`*`マーカー)なので、呼び出しは
+>    必ず `PressureCalculator.calculate(sensor=..., p_scale=..., lam=..., lam0=..., lam0_at_t0=...,
+>    lam_err=..., current_t=..., t0=...)` のようにキーワードで書くこと(位置引数で呼ぶと
+>    `TypeError` になる)。`lam0_at_t0` は温度補正が有効かどうかに関わらず、`temperature_correction`
+>    が渡されていれば常に `temperature_correction["zero_pressure_peak_at_t0"]` を使う(渡されて
+>    いなければ省略してよく、その場合 `calculate()` 内部で `lam0` と同値として扱われる)。
+>    `temperature_correction.get("enabled")` が真の場合のみ `PressureCalculator.is_temp_in_range(...)`
+>    (有効範囲外でも計算は続行し警告のみ付与)→ `PressureCalculator.get_corrected_lam0(...)` で
+>    `lam0` を補正してから `PressureCalculator.calculate(...)` を呼ぶ。`src/pressureCalc_ui.py` の
+>    `PressureCalculatorWindow.calculate()` と全く同じ計算順序に倣うこと(このメソッドを直接参照
+>    して処理順序を確認すること)。
 >    戻り値は `pressure`, `pressure_err`, `temperature_warning`(範囲外の場合の文字列 or None)を
 >    含むdict。
 >
@@ -552,7 +558,7 @@ Step 5までの内部APIが完成していることを前提とする。
 >    - `POST /acquire/pressure`: 上記に加え `gui_window.api_pressure(...)` を呼ぶ。
 >    - 各エンドポイントの numpy 配列は `.tolist()` でJSONシリアライズ可能な形にしてから返す。
 >
-> 4. まだGUIへのStart/Stopボタンは実装しない(次のStep 9)。代わりに、動作確認用として
+> 4. まだGUIへのStart/Stopボタンは実装しない(次のStep 8)。代わりに、動作確認用として
 >    一時的なスクリプト `scripts/_dev_run_api.py`(gitで管理してよい一時スクリプトとして
 >    残すか、確認後に削除するかはユーザーに確認)を作成し、`main.py` 相当の初期化
 >    (QApplication, GuiBridge, SpectrometerGUI, `--debug`固定)を行った上で、別
@@ -576,7 +582,7 @@ Step 5までの内部APIが完成していることを前提とする。
 
 **実行プロンプト:**
 
-> Step 8で作った `create_app` を、GUIから明示的に起動・停止できるようにする。あわせて、
+> Step 7で作った `create_app` を、GUIから明示的に起動・停止できるようにする。あわせて、
 > 「採用する方針」の「API稼働中のGUI操作ロック」に記載した通り、APIサーバーが起動している間は
 > GUIの測定系コントロールを丸ごと無効化し、表示系(プロットスタイル・自動レンジ)だけ操作可能
 > な状態にする。

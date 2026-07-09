@@ -38,14 +38,16 @@ class PressureCalculator:
     }
 
     @staticmethod
-    def is_temp_in_range(sensor: str, t_scale: str, temp: float) -> Tuple[bool, Tuple]:
+    def is_temp_in_range(*, sensor: str, t_scale: str, temp: float) -> Tuple[bool, Tuple]:
         """温度がセンサーの有効範囲内にあるか確認
-        
+
+        全引数キーワード専用・すべて必須。
+
         Args:
             sensor: センサー名
             t_scale: 温度スケール
             temp: 温度値
-            
+
         Returns:
             (有効性, (最小値, 最大値)) のタプル
         """
@@ -65,8 +67,28 @@ class PressureCalculator:
 
 
     @staticmethod
-    def calculate(sensor: str, p_scale: str, lam: float, lam0: float, lam0_at_t0: float, 
-                  lam_err: float = 0.0, current_t: float = 298.15, t0: float = 298.15) -> Tuple[Optional[float], Optional[float]]:
+    def calculate(*, sensor: str, p_scale: str, lam: float, lam0: float,
+                  lam0_at_t0: Optional[float] = None, lam_err: float = 0.0,
+                  current_t: float = 298.15, t0: float = 298.15) -> Tuple[Optional[float], Optional[float]]:
+        """圧力を計算する。全引数キーワード専用。
+
+        Args:
+            sensor: センサー名(必須)
+            p_scale: 圧力スケール名(必須)
+            lam: 現在のピーク位置(必須)
+            lam0: ゼロ圧力ピーク位置(必須)。温度補正を使わない場合はこれがそのまま使われる
+            lam0_at_t0: 基準温度T0でのゼロ圧力ピーク位置(任意)。P-T方程式を直接使うスケール
+                (例: Cubic BN TOのDatchi et al. 2004)でのみ実際に使われる。省略時(None)は
+                `lam0` と同じ値とみなす
+            lam_err: `lam` の誤差(任意、既定0.0)
+            current_t: 現在の温度、単位K(任意、既定298.15 = 25℃)
+            t0: 基準温度、単位K(任意、既定298.15)
+
+        Returns:
+            (圧力[GPa], 圧力誤差[GPa]) のタプル。計算できない場合は (None, None)
+        """
+        if lam0_at_t0 is None:
+            lam0_at_t0 = lam0
         try:
             # --- Ruby Scales ---
             if sensor == "Ruby":
@@ -231,16 +253,19 @@ class PressureCalculator:
             return None, None
 
     @staticmethod
-    def get_corrected_lam0(sensor: str, t_scale: str, current_t: float, t0: float, lam0_at_t0: float) -> float:
+    def get_corrected_lam0(*, sensor: str, t_scale: str, current_t: float, t0: float,
+                            lam0_at_t0: float) -> float:
         """温度補正されたゼロ圧力ピーク位置を計算
-        
+
+        全引数キーワード専用・すべて必須。
+
         Args:
             sensor: センサー名
             t_scale: 温度スケール
             current_t: 現在の温度
             t0: 基準温度
             lam0_at_t0: 基準温度でのゼロ圧力ピーク位置
-            
+
         Returns:
             補正されたゼロ圧力ピーク位置
         """

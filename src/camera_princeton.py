@@ -64,8 +64,9 @@ class CameraThreadPI(QThread):
         self.is_measuring = False
         self.cam = None
         self._lock = Lock()
-        
-        self.det_width = 1024 
+        self._hw_lock = Lock()  # ハードウェア(snap/設定適用)への排他アクセス用ロック
+
+        self.det_width = 1024
         self.det_height = 1024 
 
         self.roi_mode = "1d_roi"
@@ -167,7 +168,8 @@ class CameraThreadPI(QThread):
                         with self._lock:
                             self.settings_changed = False
                         if not self.debug:
-                            self._apply_camera_settings()
+                            with self._hw_lock:
+                                self._apply_camera_settings()
 
                     try:
                         if self.debug:
@@ -185,7 +187,8 @@ class CameraThreadPI(QThread):
                             time.sleep(self.mock_exposure)
                         else:
                             snap_timeout = self.current_exposure + 10
-                            data = self.cam.snap(timeout=snap_timeout)
+                            with self._hw_lock:
+                                data = self.cam.snap(timeout=snap_timeout)
                             if data is None:
                                 time.sleep(0.05)
                                 continue
@@ -276,14 +279,16 @@ class CameraThreadPI(QThread):
                 return spectrum
         else:
             if self.cam is None: return None
-            
+
             if self.settings_changed:
-                self._apply_camera_settings()
+                with self._hw_lock:
+                    self._apply_camera_settings()
                 self.settings_changed = False
 
             try:
                 snap_timeout = self.current_exposure + 10
-                data = self.cam.snap(timeout=snap_timeout)
+                with self._hw_lock:
+                    data = self.cam.snap(timeout=snap_timeout)
                 return data
             except Exception as e:
                 print(f"Failed to acquire single image: {e}")

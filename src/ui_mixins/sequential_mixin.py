@@ -6,6 +6,20 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton,
 
 
 class SequentialMixin:
+    def _lock_ui(self, reason):
+        """Add `reason` to the set of active UI locks and disable the
+        measurement/config controls (see set_ui_enabled_during_seq). Multiple
+        independent lockers (sequential run, API server) can be active at
+        once; the UI only re-enables once all of them have released.
+        """
+        self._ui_lock_reasons.add(reason)
+        self.set_ui_enabled_during_seq(False)
+
+    def _unlock_ui(self, reason):
+        self._ui_lock_reasons.discard(reason)
+        if len(self._ui_lock_reasons) == 0:
+            self.set_ui_enabled_during_seq(True)
+
     def show_skip_frames_info(self, link):
         dialog = QDialog(self)
         dialog.setWindowTitle("How Skip frames works")
@@ -115,7 +129,7 @@ class SequentialMixin:
         self.lbl_seq_progress.setVisible(True)
         self.lbl_seq_progress.setText(f"Progress: Acquired 0 / {self.spin_max_num.value()}")
 
-        self.set_ui_enabled_during_seq(False)
+        self._lock_ui("sequential")
 
         if self.radio_fit_on.isChecked():
             start_date_str = self.seq_start_time_dt.strftime("%Y%m%d_%H%M%S")
@@ -168,7 +182,7 @@ class SequentialMixin:
         self.btn_stop_seq.setEnabled(False)
         self.btn_stop_seq.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
 
-        self.set_ui_enabled_during_seq(True)
+        self._unlock_ui("sequential")
 
         if hasattr(self.thread, 'is_measuring') and self.thread.is_measuring:
             self.stop_measurement()
