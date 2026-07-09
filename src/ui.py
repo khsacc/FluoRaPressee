@@ -39,6 +39,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.config = self.load_spectrometer_config()
         _cache = self._load_local_cache()
+        self._api_key = self.get_or_create_api_key()
 
         self.raw_1d_data = None 
         self.raw_2d_data = None
@@ -579,6 +580,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.btn_start_api.clicked.connect(self.on_start_api_server_clicked)
         self.btn_stop_api.clicked.connect(self.on_stop_api_server_clicked)
+
+        api_menu = self.menuBar().addMenu("API")
+        self.action_regenerate_api_key = api_menu.addAction("Regenerate Key")
+        self.action_regenerate_api_key.triggered.connect(self.on_regenerate_api_key_clicked)
 
         self.seq_timer = QTimer(self)
         self.seq_timer.timeout.connect(self.update_seq_progress)

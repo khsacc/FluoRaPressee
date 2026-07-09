@@ -35,6 +35,20 @@ class ConfigMixin:
         except Exception as e:
             print(f"Failed to save local cache: {e}")
 
+    def load_api_key_file(self):
+        try:
+            with open("fluora_pressee_api_key.json", "r", encoding="utf-8") as f:
+                return json.load(f).get("api_key")
+        except Exception:
+            return None
+
+    def save_api_key_file(self, key):
+        try:
+            with open("fluora_pressee_api_key.json", "w", encoding="utf-8") as f:
+                json.dump({"api_key": key}, f, indent=4)
+        except Exception as e:
+            print(f"Failed to save API key: {e}")
+
     def load_spectrometer_config(self):
         config_path = "spectrometerConfig.json"
         default_config = {

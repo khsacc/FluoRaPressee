@@ -40,7 +40,7 @@ def _jsonify(obj):
     return obj
 
 
-def create_app(gui_window, gui_bridge, api_key: str) -> FastAPI:
+def create_app(gui_window, gui_bridge) -> FastAPI:
     """Build the FastAPI app exposing ApiMixin's methods over HTTP.
 
     All routes here run as plain (non-async) functions so Starlette executes
@@ -53,10 +53,14 @@ def create_app(gui_window, gui_bridge, api_key: str) -> FastAPI:
     app = FastAPI(title="FluoraPressée API")
 
     def verify_api_key(x_api_key: str | None = Header(default=None)):
+        # Reads gui_window._api_key live on every request (rather than
+        # closing over a value captured at server-start time) so that
+        # ApiMixin.regenerate_api_key() invalidates the old key immediately,
+        # without needing to restart this server.
         # Use Header(default=None) rather than a required Header(...) so a
         # missing header and a wrong one both resolve to the same 401 here,
         # instead of FastAPI's default 422 for a missing required header.
-        if x_api_key is None or x_api_key != api_key:
+        if x_api_key is None or x_api_key != gui_window._api_key:
             raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
 
     router = APIRouter(dependencies=[Depends(verify_api_key)])

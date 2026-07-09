@@ -7,6 +7,7 @@ from datetime import datetime
 
 import numpy as np
 import uvicorn
+from PyQt5.QtWidgets import QMessageBox
 
 from src.pressureCalc import PressureCalculator
 
@@ -293,8 +294,9 @@ class ApiMixin:
         # circular import. Importing lazily, inside the method, avoids it.
         from src.api.server import create_app
 
-        self._api_key = secrets.token_urlsafe(24)
-        api_app = create_app(self, self.gui_bridge, self._api_key)
+        self._api_key = self.get_or_create_api_key()
+        self._api_last_port = port
+        api_app = create_app(self, self.gui_bridge)
         config = uvicorn.Config(api_app, host=host, port=port, log_level="info")
         self._api_server = uvicorn.Server(config)
         self._api_server_thread = threading.Thread(target=self._api_server.run, daemon=True)
@@ -309,18 +311,58 @@ class ApiMixin:
             self._api_server_thread = None
         self._unlock_ui("api_server")
 
-    def on_start_api_server_clicked(self):
-        port = self.spin_api_port.value()
-        self.start_api_server(host="0.0.0.0", port=port)
+    def get_or_create_api_key(self):
+        """Load the persisted API key, generating and persisting one on first
+        use so it stays stable across app restarts and server start/stop
+        cycles - the paired client application only needs to be configured
+        with it once (see work/work_API.md for the pre-shared-key rationale).
+        """
+        key = self.load_api_key_file()
+        if not key:
+            key = secrets.token_urlsafe(24)
+            self.save_api_key_file(key)
+        return key
 
+    def regenerate_api_key(self):
+        """Immediately invalidates the current key and persists a new one.
+        src/api/server.py's verify_api_key reads self._api_key live on every
+        request rather than closing over a value captured at server-start
+        time, so this takes effect on the very next request without needing
+        to restart the running server.
+        """
+        self._api_key = secrets.token_urlsafe(24)
+        self.save_api_key_file(self._api_key)
+        return self._api_key
+
+    def _build_api_status_text(self, port):
         try:
             local_ip = socket.gethostbyname(socket.gethostname())
         except Exception:
             local_ip = "127.0.0.1"
+        return f"Running at http://{local_ip}:{port}/docs\nX-API-Key: {self._api_key}"
 
-        self.lbl_api_status.setText(
-            f"Running at http://{local_ip}:{port}/docs\nX-API-Key: {self._api_key}"
+    def on_regenerate_api_key_clicked(self):
+        reply = QMessageBox.question(
+            self, "Regenerate API Key",
+            "This immediately invalidates the current API key. Any paired client still using the "
+            "old key will get 401 Unauthorized until it's updated with the new one shown next.\n\n"
+            "Continue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
+        if reply != QMessageBox.Yes:
+            return
+
+        new_key = self.regenerate_api_key()
+        QMessageBox.information(self, "API Key Regenerated", f"New API key:\n\n{new_key}")
+
+        if getattr(self, '_api_server', None) is not None:
+            self.lbl_api_status.setText(self._build_api_status_text(self._api_last_port))
+
+    def on_start_api_server_clicked(self):
+        port = self.spin_api_port.value()
+        self.start_api_server(host="0.0.0.0", port=port)
+
+        self.lbl_api_status.setText(self._build_api_status_text(port))
         self.btn_start_api.setEnabled(False)
         self.btn_start_api.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
         self.spin_api_port.setEnabled(False)
