@@ -430,6 +430,8 @@ class CalibrationWindow(QDialog):
             main_window.current_accum_count = 0
         if hasattr(main_window, 'accumulated_data'):
             main_window.accumulated_data = None
+        if hasattr(main_window, 'accum_frames'):
+            main_window.accum_frames = None
 
     def _disconnect_camera_thread(self):
         """Stop any in-flight acquisition started by this dialog and detach our

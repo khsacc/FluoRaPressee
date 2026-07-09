@@ -39,6 +39,8 @@ class SequentialMixin:
 
         self.spin_acq_time.setEnabled(enabled)
         self.spin_accumulate.setEnabled(enabled)
+        self.chk_cosmic_ray_removal.setEnabled(enabled)
+        self.spin_spike_threshold.setEnabled(enabled and self.chk_cosmic_ray_removal.isChecked())
         self.spin_cooler_temp.setEnabled(enabled)
         self.btn_read_temp.setEnabled(enabled)
 

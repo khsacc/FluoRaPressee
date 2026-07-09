@@ -1,6 +1,15 @@
 import numpy as np
 from PyQt5.QtWidgets import QMessageBox
 
+from src.accumulation import AccumulationCombiner
+
+# Cap on how many raw frames we buffer in memory for spike rejection (list of
+# individual frames instead of an O(1) running sum). ~16MB worst case for a
+# 1024-pixel 1D spectrum. Accumulation counts above this fall back to the
+# legacy plain-sum path (no rejection) rather than risking unbounded memory,
+# since spin_accumulate allows values up to 99999.
+MAX_BUFFERED_FRAMES = 2000
+
 
 class AcquisitionMixin:
     def take_single_spectrum(self):
@@ -144,6 +153,7 @@ class AcquisitionMixin:
 
         self.current_accum_count = 0
         self.accumulated_data = None
+        self.accum_frames = None
         self.is_single_shot = False
 
         if was_sequential:
@@ -159,6 +169,9 @@ class AcquisitionMixin:
             "Check the camera connection/hardware before starting a new measurement."
         )
 
+    def on_cosmic_ray_removal_toggled(self, checked):
+        self.spin_spike_threshold.setEnabled(checked)
+
     def on_data_ready(self, mode, data):
         if not getattr(self.thread, 'is_measuring', False) and not self.is_single_shot:
             # Stray frame that arrived after the thread was told to stop measuring
@@ -172,9 +185,28 @@ class AcquisitionMixin:
         target_accum = self.spin_accumulate.value()
 
         if self.current_accum_count == 0:
-            self.accumulated_data = data.astype(np.float64).copy()
+            # Decide the combine strategy once per cycle, at the first frame, so a
+            # mid-cycle checkbox toggle can't desync accum_frames vs accumulated_data.
+            self._accum_use_rejection = (
+                mode == "1d"
+                and self.chk_cosmic_ray_removal.isChecked()
+                and AccumulationCombiner.MIN_FRAMES_FOR_REJECTION <= target_accum <= MAX_BUFFERED_FRAMES
+            )
+            if self._accum_use_rejection:
+                self.accum_frames = [data.astype(np.float64).copy()]
+                self.accumulated_data = None
+            else:
+                if (self.chk_cosmic_ray_removal.isChecked() and mode == "1d"
+                        and not (AccumulationCombiner.MIN_FRAMES_FOR_REJECTION <= target_accum <= MAX_BUFFERED_FRAMES)):
+                    print("[Cosmic ray removal] skipped: accumulation count out of range "
+                          f"({AccumulationCombiner.MIN_FRAMES_FOR_REJECTION}-{MAX_BUFFERED_FRAMES}).")
+                self.accum_frames = None
+                self.accumulated_data = data.astype(np.float64).copy()
         else:
-            self.accumulated_data += data.astype(np.float64)
+            if self._accum_use_rejection:
+                self.accum_frames.append(data.astype(np.float64).copy())
+            else:
+                self.accumulated_data += data.astype(np.float64)
 
         self.current_accum_count += 1
         self.lbl_accum_status.setText(f"Acquired: {self.current_accum_count} / {target_accum}")
@@ -185,7 +217,24 @@ class AcquisitionMixin:
                 self._ignore_next_frames = True
                 self.stop_measurement()
             self.current_accum_count = 0
-            final_data = self.accumulated_data.copy()
+
+            if self._accum_use_rejection:
+                threshold_k = self.spin_spike_threshold.value()
+                final_data, n_spikes = AccumulationCombiner.combine(
+                    self.accum_frames, reject_spikes=True, threshold_k=threshold_k
+                )
+                self.accum_frames = None
+                if n_spikes > 0:
+                    print(f"[Cosmic ray removal] {n_spikes} spike value(s) rejected "
+                          f"over {target_accum} accumulated frames (threshold={threshold_k}σ).")
+                    self.lbl_accum_status.setText(
+                        f"Acquired: {target_accum} / {target_accum} ({n_spikes} spikes rejected)"
+                    )
+                    self.lbl_accum_status.setVisible(True)
+            else:
+                final_data = self.accumulated_data.copy()
+                self.accumulated_data = None
+
             self._process_completed_data(mode, final_data)
 
     def _process_completed_data(self, mode, data):

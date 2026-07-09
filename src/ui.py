@@ -59,6 +59,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.current_accum_count = 0
         self.accumulated_data = None
+        self.accum_frames = None
+        self._accum_use_rejection = False
 
         self.seq_dir = _cache.get("last_seq_dir", "")
         self.is_sequential_running = False
@@ -202,22 +204,56 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spin_accumulate = CustomSpinBox()
         self.spin_accumulate.setRange(1, 99999)
         self.spin_accumulate.setValue(1)
-        
+
+        self.chk_cosmic_ray_removal = QCheckBox("Cosmic ray removal")
+        self.chk_cosmic_ray_removal.setChecked(False)
+        self.chk_cosmic_ray_removal.setToolTip(
+            "During accumulation (Accumulations ≥ 5), detect and remove cosmic-ray\n"
+            "spikes that hit only a single frame before summing. For each pixel, frames\n"
+            "far above the per-pixel median (relative to the other frames' spread) are\n"
+            "replaced by that median before summing. Has no effect below 5 accumulations\n"
+            "or in 2D image mode."
+        )
+
+        self.spin_spike_threshold = CustomDoubleSpinBox()
+        self.spin_spike_threshold.setRange(1.0, 20.0)
+        self.spin_spike_threshold.setDecimals(1)
+        # A conservative default: at the realistic Accumulations counts this app
+        # sees (roughly 5-30 frames), a low threshold flags many ordinary noise
+        # fluctuations as "spikes" (verified empirically - see src/accumulation.py).
+        # Real cosmic-ray hits are typically orders of magnitude larger than
+        # detector noise, so a high threshold still catches them reliably.
+        self.spin_spike_threshold.setValue(10.0)
+        self.spin_spike_threshold.setEnabled(False)
+        self.spin_spike_threshold.setToolTip(
+            "Spike detection threshold, in multiples of the per-pixel noise (σ) estimated\n"
+            "across the accumulated frames. A frame's pixel value is treated as a cosmic-ray\n"
+            "spike if it exceeds the median of that pixel across all frames by more than this\n"
+            "many σ.\n\n"
+            "Higher = more conservative (fewer false positives, but may miss weaker spikes).\n"
+            "Lower = more aggressive (catches weaker spikes, but flags more ordinary noise).\n\n"
+            "Real cosmic-ray hits are typically far larger than detector noise, so values\n"
+            "around 8-15 are usually safe. With fewer accumulated frames (close to 5), consider\n"
+            "raising this further to reduce false positives."
+        )
+
         self.spin_cooler_temp = CustomSpinBox()
         self.spin_cooler_temp.setRange(-100, 20)
         self.spin_cooler_temp.setValue(-65)
         self.btn_read_temp = QPushButton("Read current temperature")
         self.label_current_temp = QLabel("-- °C")
         self.label_current_temp.setStyleSheet("font-weight: bold; color: #E91E63;")
-        
+
         det_layout.addWidget(QLabel("Acquisition time (s):"), 0, 0)
         det_layout.addWidget(self.spin_acq_time, 0, 1)
         det_layout.addWidget(QLabel("Accumulations:"), 1, 0)
         det_layout.addWidget(self.spin_accumulate, 1, 1)
-        det_layout.addWidget(QLabel("Cooler target temp (°C):"), 2, 0)
-        det_layout.addWidget(self.spin_cooler_temp, 2, 1)
-        det_layout.addWidget(self.btn_read_temp, 3, 0)
-        det_layout.addWidget(self.label_current_temp, 3, 1)
+        det_layout.addWidget(self.chk_cosmic_ray_removal, 2, 0)
+        det_layout.addWidget(self.spin_spike_threshold, 2, 1)
+        det_layout.addWidget(QLabel("Cooler target temp (°C):"), 3, 0)
+        det_layout.addWidget(self.spin_cooler_temp, 3, 1)
+        det_layout.addWidget(self.btn_read_temp, 4, 0)
+        det_layout.addWidget(self.label_current_temp, 4, 1)
         det_sub_group.setLayout(det_layout)
         meas_layout.addWidget(det_sub_group)
 
@@ -474,6 +510,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.radio_plot_scatter.toggled.connect(self.on_fit_settings_changed)
 
         self.btn_read_temp.clicked.connect(self.request_temperature_read)
+
+        self.chk_cosmic_ray_removal.toggled.connect(self.on_cosmic_ray_removal_toggled)
 
         self.radio_fit_on.toggled.connect(self.toggle_fitting_panel)
         self.radio_fit_off.toggled.connect(self.toggle_fitting_panel)
