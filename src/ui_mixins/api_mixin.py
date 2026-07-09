@@ -322,12 +322,16 @@ class ApiMixin:
             f"Running at http://{local_ip}:{port}/docs\nX-API-Key: {self._api_key}"
         )
         self.btn_start_api.setEnabled(False)
+        self.btn_start_api.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
         self.spin_api_port.setEnabled(False)
         self.btn_stop_api.setEnabled(True)
+        self.btn_stop_api.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
 
     def on_stop_api_server_clicked(self):
         self.stop_api_server()
         self.lbl_api_status.setText("Not running")
         self.btn_start_api.setEnabled(True)
+        self.btn_start_api.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
         self.spin_api_port.setEnabled(True)
         self.btn_stop_api.setEnabled(False)
+        self.btn_stop_api.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
