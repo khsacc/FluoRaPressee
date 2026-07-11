@@ -30,7 +30,45 @@ from src.ui_mixins.pressure_dialog_mixin import PressureDialogMixin
 from src.ui_mixins.api_mixin import ApiMixin
 # ----------------------------------------
 
+BUTTON_STYLE_BLUE = "background-color: #2196F3; color: white; font-weight: bold;"
+BUTTON_STYLE_GREEN = "background-color: #4CAF50; color: white; font-weight: bold;"
+BUTTON_STYLE_RED = "background-color: #f44336; color: white; font-weight: bold;"
+BUTTON_STYLE_ORANGE = "background-color: #FF9800; color: white; font-weight: bold;"
+BUTTON_STYLE_PURPLE = "background-color: #673AB7; color: white; font-weight: bold;"
+BUTTON_STYLE_PINK = "font-weight: bold; padding: 10px; background-color: #E91E63; color: white;"
+BUTTON_STYLE_LINK = "font-weight: bold; color: #2196F3;"
+BUTTON_STYLE_DISABLED = "background-color: #A0A0A0; color: white; font-weight: bold;"
+
+CONTROL_DISABLED_STYLE_SHEET = """
+QPushButton:disabled {
+    background-color: #A0A0A0;
+    color: white;
+    font-weight: bold;
+}
+QAbstractSpinBox:disabled,
+QComboBox:disabled,
+QLineEdit:disabled,
+QTextEdit:disabled {
+    background-color: #E0E0E0;
+    color: #666666;
+    border: 1px solid #BDBDBD;
+}
+QCheckBox:disabled,
+QRadioButton:disabled {
+    color: #777777;
+}
+"""
+
 class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControlMixin, SequentialMixin, AcquisitionMixin, DisplayMixin, PressureDialogMixin, ApiMixin):
+    BUTTON_STYLE_BLUE = BUTTON_STYLE_BLUE
+    BUTTON_STYLE_GREEN = BUTTON_STYLE_GREEN
+    BUTTON_STYLE_RED = BUTTON_STYLE_RED
+    BUTTON_STYLE_ORANGE = BUTTON_STYLE_ORANGE
+    BUTTON_STYLE_PURPLE = BUTTON_STYLE_PURPLE
+    BUTTON_STYLE_PINK = BUTTON_STYLE_PINK
+    BUTTON_STYLE_LINK = BUTTON_STYLE_LINK
+    BUTTON_STYLE_DISABLED = BUTTON_STYLE_DISABLED
+
     def __init__(self, debug=False):
         super().__init__()
         self.debug = debug
@@ -184,23 +222,24 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         scroll_area.setMinimumWidth(400)
         
         controls_widget = QWidget()
+        controls_widget.setStyleSheet(CONTROL_DISABLED_STYLE_SHEET)
         controls_layout = QVBoxLayout(controls_widget)
 
         meas_group = QGroupBox("Measurement")
         meas_layout = QVBoxLayout()
         
         self.btn_single = QPushButton("Take single spectrum")
-        self.btn_single.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_single, self.BUTTON_STYLE_BLUE)
         
         self.btn_commence = QPushButton("Commence Measurement")
         self.btn_commence.setEnabled(False)
-        self.btn_commence.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_commence, self.BUTTON_STYLE_GREEN)
         self.btn_terminate = QPushButton("Terminate Measurement")
         self.btn_terminate.setEnabled(False)
-        self.btn_terminate.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_terminate, self.BUTTON_STYLE_RED)
         
         self.btn_save_data = QPushButton("Save data")
-        self.btn_save_data.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_save_data, self.BUTTON_STYLE_ORANGE)
         
         self.chk_save_fitting = QCheckBox("Save fitting results")
         self.chk_save_fitting.setEnabled(False)
@@ -307,10 +346,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         
         self.btn_start_seq = QPushButton("Start Sequential")
         self.btn_start_seq.setEnabled(False)
-        self.btn_start_seq.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_start_seq, self.BUTTON_STYLE_BLUE)
         self.btn_stop_seq = QPushButton("Stop Sequential")
         self.btn_stop_seq.setEnabled(False)
-        self.btn_stop_seq.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_stop_seq, self.BUTTON_STYLE_RED)
         
         seq_layout.addWidget(self.btn_choose_dir, 0, 0, 1, 2)
         seq_layout.addWidget(self.lbl_seq_dir, 1, 0, 1, 2)
@@ -332,11 +371,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         spec_layout = QGridLayout()
 
         self.btn_load_calib = QPushButton("Load previous configuration")
-        self.btn_load_calib.setStyleSheet("""
-            background-color: #673AB7; 
-            color: white; 
-            font-weight: bold; 
-        """)
+        self._set_button_style(self.btn_load_calib, self.BUTTON_STYLE_PURPLE)
         self.lbl_notes_calib_loading = QLabel('Loading a configuration will change the grating, centre, ROI, and pixel-wavelength calibration.')
         self.lbl_notes_calib_loading.setStyleSheet("font-style: italic;")
         self.lbl_notes_calib_loading.setWordWrap(True) # テキストの折り返しを有効にしてレイアウト崩れを防ぐ
@@ -369,7 +404,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         
         self.btn_apply_spec = QPushButton("Apply")
         self.btn_apply_spec.setEnabled(False)
-        self.btn_apply_spec.setStyleSheet("font-weight: bold; color: #2196F3;")
+        self._set_button_style(self.btn_apply_spec, self.BUTTON_STYLE_LINK)
         
         self.btn_calib_neon = QPushButton("Calibrate x-axis")
         
@@ -494,7 +529,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         press_layout = QVBoxLayout()
         
         self.btn_open_pressure = QPushButton("Open Pressure Calculator")
-        self.btn_open_pressure.setStyleSheet("font-weight: bold; padding: 10px; background-color: #E91E63; color: white;")
+        self._set_button_style(self.btn_open_pressure, self.BUTTON_STYLE_PINK)
         self.btn_open_pressure.clicked.connect(self.open_pressure_calculator)
         
         press_layout.addWidget(self.btn_open_pressure)
@@ -514,10 +549,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         api_layout.addLayout(api_port_layout)
 
         self.btn_start_api = QPushButton("Start API Server")
-        self.btn_start_api.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_start_api, self.BUTTON_STYLE_GREEN)
         self.btn_stop_api = QPushButton("Stop API Server")
         self.btn_stop_api.setEnabled(False)
-        self.btn_stop_api.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_stop_api, self.BUTTON_STYLE_RED)
         api_layout.addWidget(self.btn_start_api)
         api_layout.addWidget(self.btn_stop_api)
 
@@ -610,7 +645,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
             display_path = self.seq_dir if len(self.seq_dir) < 25 else "..." + self.seq_dir[-22:]
             self.lbl_seq_dir.setText(f"Dir: {display_path}")
             self.btn_start_seq.setEnabled(True)
-            self.btn_start_seq.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+            self._set_button_style(self.btn_start_seq, self.BUTTON_STYLE_BLUE)
         else:
             self.seq_dir = ""
 
@@ -666,6 +701,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.thread.temperature_set_finished.connect(lambda: self.spin_cooler_temp.setEnabled(True))
         
         self.thread.start()
+
+    def _set_button_style(self, button, enabled_style):
+        button.setStyleSheet(
+            f"QPushButton {{ {enabled_style} }}\n"
+            f"QPushButton:disabled {{ {BUTTON_STYLE_DISABLED} }}"
+        )
 
     def closeEvent(self, event):
         reply = QMessageBox.question(

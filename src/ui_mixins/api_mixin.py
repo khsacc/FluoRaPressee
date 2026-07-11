@@ -385,16 +385,16 @@ class ApiMixin:
 
         self.lbl_api_status.setText(self._build_api_status_text(port))
         self.btn_start_api.setEnabled(False)
-        self.btn_start_api.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_start_api, self.BUTTON_STYLE_GREEN)
         self.spin_api_port.setEnabled(False)
         self.btn_stop_api.setEnabled(True)
-        self.btn_stop_api.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_stop_api, self.BUTTON_STYLE_RED)
 
     def on_stop_api_server_clicked(self):
         self.stop_api_server()
         self.lbl_api_status.setText("Not running")
         self.btn_start_api.setEnabled(True)
-        self.btn_start_api.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_start_api, self.BUTTON_STYLE_GREEN)
         self.spin_api_port.setEnabled(True)
         self.btn_stop_api.setEnabled(False)
-        self.btn_stop_api.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_stop_api, self.BUTTON_STYLE_RED)

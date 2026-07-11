@@ -108,7 +108,7 @@ class SequentialMixin:
             self.lbl_seq_dir.setText(f"Dir: {display_path}")
             if not self.is_sequential_running:
                 self.btn_start_seq.setEnabled(True)
-                self.btn_start_seq.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+                self._set_button_style(self.btn_start_seq, self.BUTTON_STYLE_BLUE)
 
     def start_sequential(self):
         if not self.seq_dir:
@@ -121,9 +121,9 @@ class SequentialMixin:
         self._seq_fit_failed = False
 
         self.btn_start_seq.setEnabled(False)
-        self.btn_start_seq.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_start_seq, self.BUTTON_STYLE_BLUE)
         self.btn_stop_seq.setEnabled(True)
-        self.btn_stop_seq.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_stop_seq, self.BUTTON_STYLE_RED)
 
         self.seq_start_time_dt = datetime.now()
         self.seq_log_data = []
@@ -181,9 +181,9 @@ class SequentialMixin:
         self.seq_fitting_summary_path = None
 
         self.btn_start_seq.setEnabled(True)
-        self.btn_start_seq.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_start_seq, self.BUTTON_STYLE_BLUE)
         self.btn_stop_seq.setEnabled(False)
-        self.btn_stop_seq.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_stop_seq, self.BUTTON_STYLE_RED)
 
         self._unlock_ui("sequential")
 

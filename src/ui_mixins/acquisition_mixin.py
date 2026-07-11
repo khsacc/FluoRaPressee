@@ -31,9 +31,9 @@ class AcquisitionMixin:
         self.current_accum_count = 0
         self.btn_single.setEnabled(False)
         self.btn_commence.setEnabled(False)
-        self.btn_commence.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_commence, self.BUTTON_STYLE_GREEN)
         self.btn_terminate.setEnabled(True)
-        self.btn_terminate.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_terminate, self.BUTTON_STYLE_RED)
         self.thread.start_measuring()
 
     def get_x_axis(self, num_pixels):
@@ -95,7 +95,7 @@ class AcquisitionMixin:
         self.centralWidget().setEnabled(True)
 
         self.btn_commence.setEnabled(True)
-        self.btn_commence.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_commence, self.BUTTON_STYLE_GREEN)
         self.btn_single.setEnabled(True)
 
         self.status_label.setText("Camera Ready")
@@ -140,17 +140,17 @@ class AcquisitionMixin:
         self.current_accum_count = 0
         self.btn_single.setEnabled(False)
         self.btn_commence.setEnabled(False)
-        self.btn_commence.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_commence, self.BUTTON_STYLE_GREEN)
         self.btn_terminate.setEnabled(True)
-        self.btn_terminate.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_terminate, self.BUTTON_STYLE_RED)
         self.thread.start_measuring()
 
     def stop_measurement(self):
         self.btn_single.setEnabled(True)
         self.btn_commence.setEnabled(True)
-        self.btn_commence.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_commence, self.BUTTON_STYLE_GREEN)
         self.btn_terminate.setEnabled(False)
-        self.btn_terminate.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_terminate, self.BUTTON_STYLE_RED)
         self.lbl_accum_status.setVisible(False)
         self.thread.stop_measuring()
         self._release_acquisition_gate()
