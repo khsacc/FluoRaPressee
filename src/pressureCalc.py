@@ -207,6 +207,25 @@ class PressureCalculator:
             if sensor == "13C diamond 1st order":
                 if p_scale == "Schiferl et al. 1997":
                     return (nu - nu0) / 2.83, (nu_err) / 2.83
+                elif p_scale == "Mysen and Yamashita 2010":
+                    a = 1.65e-2
+                    a_err = 0.044e-2      # = 4.4e-4
+
+                    b = 1.769e-5
+                    b_err = 0.0046e-5     # = 4.6e-8
+
+                    c = 0.002707 * 1000
+
+                    p = ((nu - nu0) + a * current_t + b * current_t**2) / c 
+
+                    p_err = np.sqrt(
+                        nu_err**2 +
+                        (current_t * a_err)**2 +
+                        (current_t**2 * b_err)**2
+                    ) / c
+
+                    return p, p_err
+                                        
                 
             if sensor == "Cubic BN TO": 
                 if p_scale == "Datchi et al. 2004":
