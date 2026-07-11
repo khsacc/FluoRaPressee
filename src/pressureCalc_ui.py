@@ -213,7 +213,7 @@ class PressureCalculatorWindow(QDialog):
             self.combo_p_scale.addItems(["Shen et al. 2020", "Dorogokupets and Oganov 2007", "Holzapfel 2003", "Mao et al. 1986", "Piermarini et al. 1975"])
             self.combo_t_scale.addItems(["Kobayashi et al. unpublished", "Yen and Nicol 1992", "Ragan et al. 1992", "Datchi et al. 1997"])
         elif sensor == "Sm2+:SrB4O7":
-            self.combo_p_scale.addItems(["Datchi et al. 1997 (MXB1986)", "Datchi et al. 2007 (DO2007)", "Rashchenko 2015"])
+            self.combo_p_scale.addItems(["0-0 line: Datchi et al. 1997 (MXB1986)", "0-0 line: Datchi et al. 2007 (DO2007)", "0-0 line (lam1): Rashchenko et al. 2015", "0-1 line (lam2): Rashchenko et al. 2015", "0-1 line (lam3): Rashchenko et al. 2015", "0-1 line (lam4): Rashchenko et al. 2015"])
             self.combo_t_scale.addItems(["Datchi et al. 2007"])
         elif sensor == "13C diamond 1st order":
             self.combo_p_scale.addItems(["Schiferl et al. 1997", "Mysen and Yamashita 2010"])

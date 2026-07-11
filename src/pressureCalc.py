@@ -18,6 +18,7 @@ class PressureCalculator:
         "Ruby": {
             "Ragan et al. 1992": (0.0, 600.0),
             "Datchi et al. 1997": (296, 900) ,
+            "Datchi et al. 2007": (0, 296),
             "Kobayashi et al. unpublished": (0, 300),
             "Yen and Nicol 1992": (0, 600)
         },
@@ -190,11 +191,55 @@ class PressureCalculator:
                     )
 
                     return p, dp
+                
+                def rashchenko_borate_calc(
+                    lam, lam0, lam_err,
+                    a, b, a_err, b_err
+                ):
+                    dlam = lam - lam0
 
-                if p_scale == "Datchi et al. 1997 (MXB1986)":
+                    D = b**2 + 4*a*dlam
+                    sqrtD = np.sqrt(D)
+
+                    p = (-b + sqrtD) / (2*a)
+
+                    dp_ddlam = 1 / sqrtD
+                    dp_db = (-1 + b / sqrtD) / (2*a)
+                    dp_da = dlam / (a * sqrtD) - (-b + sqrtD) / (2 * a**2)
+
+                    p_err = np.sqrt(
+                        (dp_ddlam * lam_err)**2 +
+                        (dp_da * a_err)**2 +
+                        (dp_db * b_err)**2
+                    )
+
+                    return p, p_err
+
+                if p_scale == "0-0 line: Datchi et al. 1997 (MXB1986)":
                     return datchi_borate_calc(4.032, 9.29e-3, 2.32e-2, lam - lam0, 0, 0, 0)
-                if p_scale == "Datchi et al. 2007 (DO2007)":
+                elif p_scale == "0-0 line: Datchi et al. 2007 (DO2007)":
                     return datchi_borate_calc(3.989, 0.006915, 0.0166, lam-lam0, 0.006, 0.000074, 0.001)
+                elif p_scale == "0-0 line (lam1): Rashchenko et al. 2015":
+                    return rashchenko_borate_calc(
+                        lam, lam0, lam_err,
+                        8.7 * 10 **-4, 0.238, 0.4 * 10 ** -4, 0.002
+                    )
+                elif p_scale == "0-1 line (lam2): Rashchenko et al. 2015":
+                    return rashchenko_borate_calc(
+                        lam, lam0, lam_err,
+                        9.5 * 10 **-4, 0.209, 0.5 * 10 ** -4, 0.002
+                    )
+                elif p_scale == "0-1 line (lam3): Rashchenko et al. 2015":
+                    return rashchenko_borate_calc(
+                        lam, lam0, lam_err,
+                        1.3 * 10 **-4, 0.292, 0.5 * 10 ** -4, 0.002
+                    )
+                elif p_scale == "0-1 line (lam4): Rashchenko et al. 2015":
+                    return rashchenko_borate_calc(
+                        lam, lam0, lam_err,
+                        13.3 * 10 **-4, 0.228, 0.7 * 10 ** -4, 0.003
+                    )
+
 
             # Raman sensors
             # 表記が気持ち悪いため・・・
