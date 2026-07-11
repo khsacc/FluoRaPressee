@@ -152,6 +152,7 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
         if not fit_payload["success"] or fit_res is None:
             payload["pressure_gpa"] = None
             payload["pressure_err_gpa"] = None
+            payload["zero_pressure_peak_at_current_t"] = None
             payload["temperature_warning"] = None
             return payload
 
@@ -168,6 +169,9 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
         )
         payload["pressure_gpa"] = _jsonify(pressure_result["pressure"])
         payload["pressure_err_gpa"] = _jsonify(pressure_result["pressure_err"])
+        payload["zero_pressure_peak_at_current_t"] = _jsonify(
+            pressure_result["zero_pressure_peak_at_current_t"]
+        )
         payload["temperature_warning"] = pressure_result["temperature_warning"]
         return payload
 

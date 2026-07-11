@@ -201,22 +201,24 @@ class ApiMixin:
         "ruby_kobayashi_unpublished", not GUI labels.
 
         This mirrors PressureCalculatorWindow.calculate() without any widget
-        dependency. `zero_pressure_peak_at_t0` is read from
-        temperature_correction whenever that object is supplied, matching the
-        GUI's habit of always forwarding spin_lam0_t0.value().
+        dependency. Temperature correction is performed inside
+        PressureCalculator.calculate(); this method only gathers request values
+        and formats the API response.
         """
-        lam0 = zero_pressure_peak
-        lam0_at_t0 = None
+        zero_peak_at_t0 = None
         current_t = 298.15
         t0 = 298.15
+        t_scale = None
+        temperature_enabled = False
         temperature_warning = None
 
         if temperature_correction is not None:
             current_t = temperature_correction.get("current_t", current_t)
             t0 = temperature_correction.get("t0", t0)
-            lam0_at_t0 = temperature_correction.get("zero_pressure_peak_at_t0", zero_pressure_peak)
+            zero_peak_at_t0 = temperature_correction.get("zero_pressure_peak_at_t0", zero_pressure_peak)
+            temperature_enabled = temperature_correction.get("enabled", False)
 
-            if temperature_correction.get("enabled", False):
+            if temperature_enabled:
                 t_scale = temperature_correction.get("scale")
                 is_valid, rng = PressureCalculator.is_temp_in_range(
                     sensor=sensor, p_scale=pressure_scale, t_scale=t_scale, temp=current_t
@@ -233,16 +235,24 @@ class ApiMixin:
                         f"Temperature {current_t} K is outside the valid range "
                         f"({rng[0]}-{rng[1]} K) for {sensor} / {warning_scale}."
                     )
-                lam0 = PressureCalculator.get_corrected_lam0(
-                    sensor=sensor, t_scale=t_scale, current_t=current_t, t0=t0, lam0_at_t0=lam0_at_t0
-                )
 
-        p, dp = PressureCalculator.calculate(
-            sensor=sensor, p_scale=pressure_scale, lam=peak, lam0=lam0, lam0_at_t0=lam0_at_t0,
-            lam_err=peak_err, current_t=current_t, t0=t0,
+        t0 = PressureCalculator.resolve_t0(sensor=sensor, p_scale=pressure_scale, t0=t0)
+        result = PressureCalculator.calculate(
+            sensor=sensor, p_scale=pressure_scale,
+            peak=peak, zero_peak=zero_pressure_peak,
+            zero_peak_at_t0=zero_peak_at_t0,
+            peak_err=peak_err,
+            temperature_correction_enabled=temperature_enabled,
+            t_scale=t_scale,
+            current_t=current_t, t0=t0,
         )
 
-        return {"pressure": p, "pressure_err": dp, "temperature_warning": temperature_warning}
+        return {
+            "pressure": result.pressure,
+            "pressure_err": result.pressure_err,
+            "zero_pressure_peak_at_current_t": result.zero_peak_at_current_t,
+            "temperature_warning": temperature_warning,
+        }
 
     # ------------------------------------------------------------------
     # More GUI-thread helpers (state mutation / widget reads).

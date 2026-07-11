@@ -19,6 +19,7 @@ class PressureCalculatorWindow(QDialog):
         self.current_peak_err = 0.0
         self.current_pressure = None       
         self.current_pressure_err = None
+        self.current_zero_peak_at_current_t = None
         self.init_ui()
         self.setup_connections()
         self.update_mode(self.unit)
@@ -52,6 +53,12 @@ class PressureCalculatorWindow(QDialog):
         self.spin_lam0.setRange(-99999, 99999); self.spin_lam0.setDecimals(3)
         self.lbl_lam0_tag = QLabel(f"Zero-pressure peak ({self.unit}):")
         form.addRow(self.lbl_lam0_tag, self.spin_lam0)
+
+        self.lbl_zero_peak_current_t_tag = QLabel(f"Zero-pressure peak at current T ({self.unit}):")
+        self.lbl_zero_peak_current_t = QLabel("")
+        form.addRow(self.lbl_zero_peak_current_t_tag, self.lbl_zero_peak_current_t)
+        self.lbl_zero_peak_current_t_tag.hide()
+        self.lbl_zero_peak_current_t.hide()
 
         top_group.setLayout(form)
         layout.addWidget(top_group)
@@ -89,6 +96,11 @@ class PressureCalculatorWindow(QDialog):
         self.t_form.addRow("Current T (K):", self.spin_t)
         self.t_form.addRow("", self.lbl_t_warning)
         self.t_form.addRow("Reference T0 (K):", self.spin_t0)
+
+        self.lbl_t0_fixed_note = QLabel("")
+        self.lbl_t0_fixed_note.setStyleSheet("color: #666; font-style: italic;")
+        self.t_form.addRow("", self.lbl_t0_fixed_note)
+        self.lbl_t0_fixed_note.hide()
 
         self.spin_lam0_t0 = CustomDoubleSpinBox()
         self.spin_lam0_t0.setRange(-99999, 99999); self.spin_lam0_t0.setDecimals(3)
@@ -135,7 +147,13 @@ class PressureCalculatorWindow(QDialog):
         is_on = self.radio_on.isChecked()
         self.t_form_widget.setEnabled(is_on)
         self.spin_lam0.setEnabled(not is_on)
+        self.spin_lam0.setVisible(not is_on)
+        self.lbl_lam0_tag.setVisible(not is_on)
         self.btn_apply_current.setEnabled(not is_on)
+        self.btn_apply_current.setVisible(not is_on)
+        if not is_on:
+            self._set_zero_peak_at_current_t(None)
+        self._apply_t0_constraint()
         self.calculate()
 
     def apply_current_to_lam0(self):
@@ -166,27 +184,23 @@ class PressureCalculatorWindow(QDialog):
             self.lbl_t_warning.setText("")
             self.spin_t.setStyleSheet("")
 
-        if self.current_peak_val == 0: return
+        if self.current_peak_val == 0:
+            return
 
-        lam0 = self.spin_lam0.value()
-        if self.radio_on.isChecked():
-            lam0 = PressureCalculator.get_corrected_lam0(
-                sensor=sensor, t_scale=t_scale, current_t=curr_t,
-                t0=self.spin_t0.value(), lam0_at_t0=self.spin_lam0_t0.value()
-            )
-
-            self.spin_lam0.setValue(lam0)
-
-
-        p, dp = PressureCalculator.calculate(
-            sensor=sensor, p_scale=p_scale, lam=self.current_peak_val, lam0=lam0,
-            lam0_at_t0=self.spin_lam0_t0.value(),
-            lam_err=self.current_peak_err, current_t=curr_t, t0=self.spin_t0.value()
+        result = PressureCalculator.calculate(
+            sensor=sensor, p_scale=p_scale, peak=self.current_peak_val,
+            zero_peak=self.spin_lam0.value(),
+            zero_peak_at_t0=self.spin_lam0_t0.value(),
+            peak_err=self.current_peak_err,
+            temperature_correction_enabled=self.radio_on.isChecked(),
+            t_scale=t_scale,
+            current_t=curr_t, t0=self._current_t0()
         )
-        if p is not None:
-            self.current_pressure = p
-            self.current_pressure_err = dp
-            self.lbl_result.setText(self._build_result_html(p, dp))
+        self._set_zero_peak_at_current_t(result.zero_peak_at_current_t)
+        if result.pressure is not None:
+            self.current_pressure = result.pressure
+            self.current_pressure_err = result.pressure_err
+            self.lbl_result.setText(self._build_result_html(result.pressure, result.pressure_err))
         else:
             self.current_pressure = None
             self.current_pressure_err = None
@@ -195,6 +209,7 @@ class PressureCalculatorWindow(QDialog):
     def update_mode(self, mode):
         self.unit = mode
         self.lbl_lam0_tag.setText(f"Zero-pressure peak ({mode}):")
+        self.lbl_zero_peak_current_t_tag.setText(f"Zero-pressure peak at current T ({mode}):")
         self.lbl_lam0_t0_tag.setText(f"Zero-pressure peak at T0 ({mode}):")
         self.combo_sensor.blockSignals(True); self.combo_sensor.clear()
         for sensor_key in PressureCalculator.get_sensors_for_unit(mode):
@@ -210,6 +225,7 @@ class PressureCalculatorWindow(QDialog):
         default_val = PressureCalculator.SENSORS[sensor]["initial_value"]
         self.spin_lam0.setValue(default_val)
         self.spin_lam0_t0.setValue(default_val)
+        self._set_zero_peak_at_current_t(None)
 
         self.combo_p_scale.blockSignals(True); self.combo_p_scale.clear()
         self.combo_t_scale.blockSignals(True); self.combo_t_scale.clear()
@@ -239,7 +255,48 @@ class PressureCalculatorWindow(QDialog):
         else:
             self.lbl_t_mandatory.setText("")
             self.lbl_t_mandatory.setStyleSheet("height: 0em;")
+        self._apply_t0_constraint()
         self.toggle_temp_ui()
+
+    def _current_t0(self):
+        sensor = self.combo_sensor.currentData()
+        p_scale = self.combo_p_scale.currentData()
+        if sensor is None or p_scale is None:
+            return self.spin_t0.value()
+        return PressureCalculator.resolve_t0(sensor=sensor, p_scale=p_scale, t0=self.spin_t0.value())
+
+    def _apply_t0_constraint(self):
+        sensor = self.combo_sensor.currentData()
+        p_scale = self.combo_p_scale.currentData()
+        if sensor is None or p_scale is None:
+            self.spin_t0.setEnabled(True)
+            self.lbl_t0_fixed_note.setText("")
+            self.lbl_t0_fixed_note.hide()
+            return
+
+        fixed_t0 = PressureCalculator.get_fixed_t0(sensor=sensor, p_scale=p_scale)
+        if fixed_t0 is None:
+            self.spin_t0.setEnabled(True)
+            self.lbl_t0_fixed_note.setText("")
+            self.lbl_t0_fixed_note.hide()
+            return
+
+        self.spin_t0.blockSignals(True)
+        self.spin_t0.setValue(fixed_t0)
+        self.spin_t0.blockSignals(False)
+        self.spin_t0.setEnabled(False)
+        self.lbl_t0_fixed_note.setText(PressureCalculator.get_fixed_t0_note(sensor=sensor, p_scale=p_scale))
+        self.lbl_t0_fixed_note.show()
+
+    def _set_zero_peak_at_current_t(self, value):
+        self.current_zero_peak_at_current_t = value
+        should_show = self.radio_on.isChecked() and value is not None
+        self.lbl_zero_peak_current_t_tag.setVisible(should_show)
+        self.lbl_zero_peak_current_t.setVisible(should_show)
+        if value is not None:
+            self.lbl_zero_peak_current_t.setText(f"{value:.3f}")
+        else:
+            self.lbl_zero_peak_current_t.setText("")
 
     def _build_result_html(self, p, dp):
         """結果表示ラベル用のHTMLを生成する"""

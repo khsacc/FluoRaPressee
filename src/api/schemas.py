@@ -105,6 +105,7 @@ class AcquireFitResponse(AcquireResponse):
 class AcquirePressureResponse(AcquireFitResponse):
     pressure_gpa: float | None = None
     pressure_err_gpa: float | None = None
+    zero_pressure_peak_at_current_t: float | None = None
     temperature_warning: str | None = None
 
 

@@ -182,16 +182,22 @@ X-API-Key: <API Server パネルに表示されているキー>
   `TEMPERATURE_SCALES` の key を指定し、その温度スケールで
   ゼロ圧力ピークを補正してから圧力を計算する。温度が有効範囲外でも計算自体は続行し、
   `temperature_warning` に警告メッセージが入る。
+- 圧力スケール側で `T0` が固定されている場合は、リクエスト中の `t0` より
+  `src/pressureCalc.py` の定義値が優先される。
 
 **レスポンス**: `/acquire/fit` のフィールドに `pressure_gpa`, `pressure_err_gpa`,
-`temperature_warning` を追加。
+`zero_pressure_peak_at_current_t`, `temperature_warning` を追加。
 ```json
 "pressure_gpa": 16.91,
 "pressure_err_gpa": 8.26,
+"zero_pressure_peak_at_current_t": 694.312,
 "temperature_warning": null
 ```
-フィットが失敗した場合は `pressure_gpa`/`pressure_err_gpa`/`temperature_warning` はすべて
-`null` になる。ダブルピークフィットの場合、圧力計算にはPeak1(較正済みx軸で値が小さい方の
+`zero_pressure_peak_at_current_t` は、現在温度でのゼロ圧ピークを明示的に計算できる
+スケールでのみ値が入り、そうでない場合は `null` になる。
+フィットが失敗した場合は `pressure_gpa`/`pressure_err_gpa`/
+`zero_pressure_peak_at_current_t`/`temperature_warning` はすべて `null` になる。
+ダブルピークフィットの場合、圧力計算にはPeak1(較正済みx軸で値が小さい方の
 主ピーク)が使われる。
 
 ## エラーコード一覧
