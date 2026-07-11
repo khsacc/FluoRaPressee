@@ -1,10 +1,17 @@
-Caution: This program is under active development!
-
-[Japanese version available here](./README_ja.md)
-
 # FluoraPressée: Spectroscopic measurements and analysis platform designed for efficient high-pressure experiments
 
+This program is designed to
+- control spectrometers and cameras, and acquire spectroscopic data
+- instantly fit the data
+- calculate pressure by using an established fluorescence/Raman pressure sensors
+
+The name FluoRaPressée combines **Flu**orescence, **Ra**man, and the French adjective **« pressée »**, a playful nod to rapid spectroscopic measurements and analyses under pressure.
+
 Author: Hiroki Kobayashi (Geochemical Research Center, The University of Tokyo). https://orcid.org/0000-0002-3682-7558 E-mail as of 2026: hiroki (at) eqchem.s.u-tokyo.ac.jp
+
+> [!NOTE]
+> This program is under active development, and README.md will be completed once the fundamental development is completed. [Japanese version available here](./README_ja.md), which is updated more frequently.
+
 
 ## Acknowledgements
 
