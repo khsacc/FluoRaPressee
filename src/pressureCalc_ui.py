@@ -223,6 +223,7 @@ class PressureCalculatorWindow(QDialog):
             self.combo_t_scale.addItems(["Kawamoto et al. 2004"])
         elif sensor == "Zircon B1g":
             self.combo_p_scale.addItems(["Schmidt et al. 2013", "Takahashi et al. 2024"])
+            self.combo_t_scale.addItems(["Schmidt et al. 2013", "Takahashi et al. 2024"])
 
         self.combo_p_scale.blockSignals(False); self.combo_t_scale.blockSignals(False)
         self.on_p_scale_changed()
