@@ -20,6 +20,9 @@ class PressureCalculatorWindow(QDialog):
         self.current_pressure = None       
         self.current_pressure_err = None
         self.current_zero_peak_at_current_t = None
+        self.current_fit_peaks = []
+        self.fit_peak_count = 1
+        self.peak_selection_for_pressure_calc = 1
         self.init_ui()
         self.setup_connections()
         self.update_mode(self.unit)
@@ -38,6 +41,9 @@ class PressureCalculatorWindow(QDialog):
 
         self.lbl_cur_peak = QLabel(f"0.000 {self.unit}")
         form.addRow(f"Current peak ({self.unit}):", self.lbl_cur_peak)
+
+        self.combo_pressure_peak = QComboBox()
+        form.addRow("Calculate pressure by:", self.combo_pressure_peak)
 
         self.lbl_t_mandatory = QLabel("")
         self.lbl_t_mandatory.setStyleSheet("height: 0;")
@@ -133,6 +139,7 @@ class PressureCalculatorWindow(QDialog):
         self.combo_sensor.currentTextChanged.connect(self.on_sensor_changed)
         self.combo_p_scale.currentTextChanged.connect(self.on_p_scale_changed)
         self.combo_t_scale.currentTextChanged.connect(self.calculate)
+        self.combo_pressure_peak.currentIndexChanged.connect(self.on_pressure_peak_selection_changed)
         self.spin_lam0.valueChanged.connect(self.calculate)
         self.spin_lam0_t0.valueChanged.connect(self.calculate)
         self.spin_t.valueChanged.connect(self.calculate)
@@ -185,6 +192,9 @@ class PressureCalculatorWindow(QDialog):
             self.spin_t.setStyleSheet("")
 
         if self.current_peak_val == 0:
+            self.current_pressure = None
+            self.current_pressure_err = None
+            self.lbl_result.setText(self._build_result_html(None, None))
             return
 
         result = PressureCalculator.calculate(
@@ -226,6 +236,7 @@ class PressureCalculatorWindow(QDialog):
         self.spin_lam0.setValue(default_val)
         self.spin_lam0_t0.setValue(default_val)
         self._set_zero_peak_at_current_t(None)
+        self.reset_peak_selection_for_pressure_calc()
 
         self.combo_p_scale.blockSignals(True); self.combo_p_scale.clear()
         self.combo_t_scale.blockSignals(True); self.combo_t_scale.clear()
@@ -257,6 +268,28 @@ class PressureCalculatorWindow(QDialog):
             self.lbl_t_mandatory.setStyleSheet("height: 0em;")
         self._apply_t0_constraint()
         self.toggle_temp_ui()
+        self._apply_recommended_fit_peak_count()
+
+    def _apply_recommended_fit_peak_count(self):
+        sensor = self.combo_sensor.currentData()
+        recommended = None
+        if sensor == "ruby":
+            recommended = 2
+        elif sensor == "sm_srb4o7":
+            recommended = 1
+
+        if recommended is None:
+            self.reset_peak_selection_for_pressure_calc()
+            return
+
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "spin_fit_peak_count"):
+            if parent.spin_fit_peak_count.value() != recommended:
+                parent.spin_fit_peak_count.setValue(recommended)
+            else:
+                self.set_fit_peak_count(recommended, reset_selection=True)
+        else:
+            self.set_fit_peak_count(recommended, reset_selection=True)
 
     def _current_t0(self):
         sensor = self.combo_sensor.currentData()
@@ -298,6 +331,63 @@ class PressureCalculatorWindow(QDialog):
         else:
             self.lbl_zero_peak_current_t.setText("")
 
+    def _refresh_pressure_peak_combo(self):
+        count = max(1, int(self.fit_peak_count))
+        current = min(max(1, int(self.peak_selection_for_pressure_calc)), count)
+        self.combo_pressure_peak.blockSignals(True)
+        self.combo_pressure_peak.clear()
+        for i in range(1, count + 1):
+            self.combo_pressure_peak.addItem(f"Peak {i}", i)
+        self.combo_pressure_peak.setCurrentIndex(current - 1)
+        self.combo_pressure_peak.blockSignals(False)
+        self.peak_selection_for_pressure_calc = current
+
+    def reset_peak_selection_for_pressure_calc(self):
+        self.peak_selection_for_pressure_calc = 1
+        self._refresh_pressure_peak_combo()
+        self._update_current_peak_from_selection()
+
+    def on_pressure_peak_selection_changed(self):
+        selected = self.combo_pressure_peak.currentData()
+        self.peak_selection_for_pressure_calc = selected if selected is not None else 1
+        self._update_current_peak_from_selection()
+        self.calculate()
+
+    def set_fit_peak_count(self, peak_count, reset_selection=False):
+        self.fit_peak_count = max(1, min(5, int(peak_count)))
+        if self.current_fit_peaks and len(self.current_fit_peaks) != self.fit_peak_count:
+            self.current_fit_peaks = []
+        if reset_selection:
+            self.peak_selection_for_pressure_calc = 1
+        self._refresh_pressure_peak_combo()
+        self._update_current_peak_from_selection()
+        self.calculate()
+
+    def set_fit_peaks(self, peaks):
+        self.current_fit_peaks = list(peaks or [])
+        if self.current_fit_peaks:
+            self.fit_peak_count = len(self.current_fit_peaks)
+        self._refresh_pressure_peak_combo()
+        self._update_current_peak_from_selection()
+        self.calculate()
+
+    def _update_current_peak_from_selection(self):
+        idx = self.peak_selection_for_pressure_calc - 1
+        if 0 <= idx < len(self.current_fit_peaks):
+            peak = self.current_fit_peaks[idx]
+            self.current_peak_val = peak.get("position", 0.0)
+            self.current_peak_err = peak.get("position_err", 0.0)
+            self.lbl_cur_peak.setText(f"{self.current_peak_val:.3f} {self.unit}")
+        elif self.current_fit_peaks:
+            peak = self.current_fit_peaks[0]
+            self.current_peak_val = peak.get("position", 0.0)
+            self.current_peak_err = peak.get("position_err", 0.0)
+            self.lbl_cur_peak.setText(f"{self.current_peak_val:.3f} {self.unit}")
+        else:
+            self.current_peak_val = 0.0
+            self.current_peak_err = 0.0
+            self.lbl_cur_peak.setText(f"0.000 {self.unit}")
+
     def _build_result_html(self, p, dp):
         """結果表示ラベル用のHTMLを生成する"""
         sensor = self.combo_sensor.currentText()
@@ -324,6 +414,10 @@ class PressureCalculatorWindow(QDialog):
         )
 
     def set_current_peak(self, val, err=0.0):
-        self.current_peak_val, self.current_peak_err = val, err
-        self.lbl_cur_peak.setText(f"{val:.3f} {self.unit}")
-        self.calculate()
+        self.set_fit_peaks([{
+            "index": 1,
+            "position": val,
+            "position_err": err,
+            "width": 0.0,
+            "width_err": 0.0,
+        }])

@@ -78,22 +78,29 @@ class DataFileIO:
             lam0                    — float, zero-pressure peak position
             lam0_unit               — "nm" or "cm-1"
         """
-        if fit_res.get("is_double"):
-            fit_header = "Function,R2,Peak1_Pos,Peak1_Err,Peak1_Width,Peak1_WErr,Peak2_Pos,Peak2_Err,Peak2_Width,Peak2_WErr"
-            vals = [
-                func_name, f"{fit_res.get('R2', 0):.6f}",
-                f"{fit_res.get('Peak1', 0):.6f}", f"{fit_res.get('Peak1_Err', 0):.6f}",
-                f"{fit_res.get('Width1', 0):.6f}", f"{fit_res.get('Width1_Err', 0):.6f}",
-                f"{fit_res.get('Peak2', 0):.6f}", f"{fit_res.get('Peak2_Err', 0):.6f}",
-                f"{fit_res.get('Width2', 0):.6f}", f"{fit_res.get('Width2_Err', 0):.6f}",
-            ]
-        else:
-            fit_header = "Function,R2,Peak_Pos,Peak_Err,Peak_Width,Peak_WErr"
-            vals = [
-                func_name, f"{fit_res.get('R2', 0):.6f}",
-                f"{fit_res.get('Peak', 0):.6f}", f"{fit_res.get('Peak_Err', 0):.6f}",
-                f"{fit_res.get('Width', 0):.6f}", f"{fit_res.get('Width_Err', 0):.6f}",
-            ]
+        peaks = fit_res.get("peaks") or []
+        if not peaks:
+            peaks = [{
+                "position": fit_res.get("Peak", np.nan),
+                "position_err": fit_res.get("Peak_Err", np.nan),
+                "width": fit_res.get("Width", np.nan),
+                "width_err": fit_res.get("Width_Err", np.nan),
+            }]
+
+        header_cols = ["Function", "R2"]
+        vals = [func_name, f"{fit_res.get('R2', 0):.6f}"]
+        for i, peak in enumerate(peaks, start=1):
+            header_cols.extend([
+                f"Peak{i}_Pos", f"Peak{i}_Err",
+                f"Peak{i}_Width", f"Peak{i}_WErr",
+            ])
+            vals.extend([
+                f"{peak.get('position', np.nan):.6f}",
+                f"{peak.get('position_err', np.nan):.6f}",
+                f"{peak.get('width', np.nan):.6f}",
+                f"{peak.get('width_err', np.nan):.6f}",
+            ])
+        fit_header = ",".join(header_cols)
 
         if pressure_info is not None:
             lam0_col = "Lambda0_nm" if pressure_info.get("lam0_unit") == "nm" else "Nu0_cm-1"
@@ -201,34 +208,27 @@ class DataFileIO:
         }
 
     def create_fitting_seq_summary(self, file_path, func, fit_start, fit_end,
-                                   is_double, unit, has_pressure):
+                                   peak_count, unit, has_pressure, peak_sort="x descending"):
         """Create the fitting sequential summary CSV with comment lines and a header row."""
-        if is_double:
-            header_cols = [
-                "Filename", "Timestamp",
-                f"Peak1 ({unit})", f"Peak1_Err ({unit})",
-                f"Width1 ({unit})", f"Width1_Err ({unit})",
-                f"Peak2 ({unit})", f"Peak2_Err ({unit})",
-                f"Width2 ({unit})", f"Width2_Err ({unit})",
-                "R2",
-            ]
-        else:
-            header_cols = [
-                "Filename", "Timestamp",
-                f"Peak ({unit})", f"Peak_Err ({unit})",
-                f"Width ({unit})", f"Width_Err ({unit})",
-                "R2",
-            ]
+        header_cols = ["Filename", "Timestamp"]
+        for i in range(1, peak_count + 1):
+            header_cols.extend([
+                f"Peak{i} ({unit})", f"Peak{i}_Err ({unit})",
+                f"Width{i} ({unit})", f"Width{i}_Err ({unit})",
+            ])
+        header_cols.append("R2")
         if has_pressure:
             header_cols.extend(["Pressure (GPa)", "Pressure_Err (GPa)"])
 
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(f"# Fitting Function: {func}\n")
+            f.write(f"# Peak Count: {peak_count}\n")
+            f.write(f"# Peak Sort: {peak_sort}\n")
             f.write(f"# Fitting Range: {fit_start} to {fit_end}\n")
             f.write(",".join(header_cols) + "\n")
 
     def append_fitting_seq_row(self, file_path, filename, timestamp_str,
-                               res, is_double, pressure_info=None):
+                               res, peak_count, pressure_info=None):
         """Append one data row to the fitting sequential summary CSV.
 
         pressure_info (optional) dict keys: pressure, pressure_err (float, GPa).
@@ -237,16 +237,22 @@ class DataFileIO:
         cols = [filename, timestamp_str]
 
         if res is None:
-            cols.extend(["NaN"] * (9 if is_double else 5))
+            cols.extend(["NaN"] * (peak_count * 4 + 1))
         else:
-            if is_double:
-                cols.extend([
-                    f"{res.get('Peak1', np.nan):.6f}", f"{res.get('Peak1_Err', np.nan):.6f}",
-                    f"{res.get('Width1', np.nan):.6f}", f"{res.get('Width1_Err', np.nan):.6f}",
-                    f"{res.get('Peak2', np.nan):.6f}", f"{res.get('Peak2_Err', np.nan):.6f}",
-                    f"{res.get('Width2', np.nan):.6f}", f"{res.get('Width2_Err', np.nan):.6f}",
-                    f"{res.get('R2', np.nan):.6f}",
-                ])
+            peaks = res.get("peaks") or []
+            if peaks:
+                for i in range(peak_count):
+                    if i < len(peaks):
+                        peak = peaks[i]
+                        cols.extend([
+                            f"{peak.get('position', np.nan):.6f}",
+                            f"{peak.get('position_err', np.nan):.6f}",
+                            f"{peak.get('width', np.nan):.6f}",
+                            f"{peak.get('width_err', np.nan):.6f}",
+                        ])
+                    else:
+                        cols.extend(["NaN"] * 4)
+                cols.append(f"{res.get('R2', np.nan):.6f}")
             else:
                 cols.extend([
                     f"{res.get('Peak', np.nan):.6f}", f"{res.get('Peak_Err', np.nan):.6f}",

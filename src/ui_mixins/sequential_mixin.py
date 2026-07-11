@@ -87,6 +87,8 @@ class SequentialMixin:
         self.radio_fit_on.setEnabled(enabled)
         self.radio_fit_off.setEnabled(enabled)
         self.combo_fit_func.setEnabled(enabled)
+        self.spin_fit_peak_count.setEnabled(enabled)
+        self.combo_peak_sort.setEnabled(enabled)
         self.spin_fit_start.setEnabled(enabled)
         self.spin_fit_end.setEnabled(enabled)
 
@@ -138,7 +140,8 @@ class SequentialMixin:
             func = self.combo_fit_func.currentText()
             fit_start = self.spin_fit_start.value()
             fit_end = self.spin_fit_end.value()
-            is_double = "Double" in func
+            peak_count = self.spin_fit_peak_count.value()
+            peak_sort = self.combo_peak_sort.currentText()
 
 
             try:
@@ -146,7 +149,7 @@ class SequentialMixin:
                 has_pressure = (self.pressure_window is not None and self.pressure_window.isVisible())
                 self.file_io.create_fitting_seq_summary(
                     self.seq_fitting_summary_path, func, fit_start, fit_end,
-                    is_double, unit, has_pressure
+                    peak_count, unit, has_pressure, peak_sort=peak_sort
                 )
             except Exception as e:
                 print(f"Failed to create summary file: {e}")

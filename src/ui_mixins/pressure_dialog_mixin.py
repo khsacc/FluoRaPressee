@@ -30,3 +30,7 @@ class PressureDialogMixin:
             self.pressure_window.show()
             self.pressure_window.raise_()
             self.pressure_window.activateWindow()
+            if getattr(self, "latest_fit_res", None) is not None and self.latest_fit_res.get("peaks"):
+                self.pressure_window.set_fit_peaks(self.latest_fit_res["peaks"])
+            elif hasattr(self, "spin_fit_peak_count"):
+                self.pressure_window.set_fit_peak_count(self.spin_fit_peak_count.value())

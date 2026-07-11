@@ -109,7 +109,8 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
             )
         fit_start, fit_end = (req.fit_range.start, req.fit_range.end) if req.fit_range else (None, None)
         fit_result = gui_window.api_fit(
-            result["x"], result["y"], req.fit_function, fit_start=fit_start, fit_end=fit_end
+            result["x"], result["y"], req.fit_function, fit_start=fit_start, fit_end=fit_end,
+            fit_peak_count=req.fit_peak_count, peak_sort_order=req.peak_sort_order
         )
         return {
             "success": fit_result["success"],
@@ -156,9 +157,16 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
             payload["temperature_warning"] = None
             return payload
 
-        is_double = fit_res.get("is_double", False)
-        peak = fit_res["Peak1"] if is_double else fit_res["Peak"]
-        peak_err = fit_res["Peak1_Err"] if is_double else fit_res["Peak_Err"]
+        peaks = fit_res.get("peaks") or []
+        peak_idx = req.pressure_peak_index - 1
+        if peak_idx < 0 or peak_idx >= len(peaks):
+            payload["pressure_gpa"] = None
+            payload["pressure_err_gpa"] = None
+            payload["zero_pressure_peak_at_current_t"] = None
+            payload["temperature_warning"] = None
+            return payload
+        peak = peaks[peak_idx]["position"]
+        peak_err = peaks[peak_idx]["position_err"]
 
         temperature_correction = (
             req.temperature_correction.model_dump() if req.temperature_correction else None

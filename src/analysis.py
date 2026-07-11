@@ -18,6 +18,11 @@ class DataAnalyzer:
     PSEUDO_VOIGT_ETA_INIT = 0.5  # Pseudo Voigt の混合比初期値
     PSEUDO_VOIGT_ETA_MIN = 0.0
     PSEUDO_VOIGT_ETA_MAX = 1.0
+    MOFFAT_BETA_INIT = 2.0
+    MOFFAT_BETA_MIN = 0.1
+    MOFFAT_BETA_MAX = 100.0
+    MIN_PEAK_COUNT = 1
+    MAX_PEAK_COUNT = 5
 
     def __init__(self):
         """DataAnalyzer を初期化する"""
@@ -40,6 +45,11 @@ class DataAnalyzer:
         l_val = self.lorentzian(x, a, x0, fwhm, offset=0.0)
         return (1 - eta) * g_val + eta * l_val + offset
 
+    def moffat(self, x, a, x0, width, beta, offset):
+        """Moffat function with a shared background offset."""
+        u = ((x - x0) / width) ** 2
+        return a / (1 + u) ** beta + offset
+
     def double_gaussian(self, x, a1, x01, fwhm1, a2, x02, fwhm2, offset):
         return self.gaussian(x, a1, x01, fwhm1, 0) + self.gaussian(x, a2, x02, fwhm2, 0) + offset
 
@@ -57,19 +67,114 @@ class DataAnalyzer:
             warnings.simplefilter("error", OptimizeWarning)
             return curve_fit(func, x, y, p0=p0, bounds=bounds)
 
+    def _base_function_value(self, func_type, x, params, offset=0.0):
+        if func_type == "Gauss":
+            return self.gaussian(x, params[0], params[1], params[2], offset)
+        if func_type == "Lorentz":
+            return self.lorentzian(x, params[0], params[1], params[2], offset)
+        if func_type == "Pseudo Voigt":
+            return self.pseudo_voigt(x, params[0], params[1], params[2], params[3], offset)
+        if func_type == "Moffat":
+            return self.moffat(x, params[0], params[1], params[2], params[3], offset)
+        raise ValueError(f"Unknown fitting function: {func_type!r}")
+
+    def _params_per_peak(self, func_type):
+        return 3 if func_type in ["Gauss", "Lorentz"] else 4
+
+    def _multi_peak_model(self, func_type, peak_count):
+        params_per_peak = self._params_per_peak(func_type)
+
+        def model(x, *params):
+            offset = params[-1]
+            y = np.zeros_like(x, dtype=np.float64) + offset
+            for i in range(peak_count):
+                start = i * params_per_peak
+                y += self._base_function_value(
+                    func_type, x, params[start:start + params_per_peak], offset=0.0
+                )
+            return y
+
+        return model
+
+    def _component_curve(self, func_type, x, peak_params, offset):
+        return self._base_function_value(func_type, x, peak_params, offset=offset)
+
+    def _initial_peak_positions(self, x_fit, y_fit, peak_count, amp_guess, offset_guess):
+        peaks, _ = find_peaks(
+            y_fit,
+            distance=self.PEAK_DISTANCE,
+            prominence=amp_guess * self.PEAK_PROMINENCE_FACTOR,
+        )
+        candidates = []
+        if len(peaks) > 0:
+            for p in sorted(peaks, key=lambda idx: y_fit[idx], reverse=True):
+                candidates.append((float(x_fit[p]), float(max(y_fit[p] - offset_guess, amp_guess * 0.1))))
+
+        max_idx = int(np.argmax(y_fit))
+        candidates.append((float(x_fit[max_idx]), float(max(y_fit[max_idx] - offset_guess, amp_guess))))
+
+        if peak_count > 1:
+            fallback_positions = np.linspace(float(np.min(x_fit)), float(np.max(x_fit)), peak_count + 2)[1:-1]
+        else:
+            fallback_positions = [float(x_fit[max_idx])]
+        for pos in fallback_positions:
+            candidates.append((float(pos), float(max(amp_guess * self.SECOND_PEAK_AMP_FACTOR, amp_guess * 0.1))))
+
+        selected = []
+        min_sep = max((float(np.max(x_fit)) - float(np.min(x_fit))) * 1e-6, 1e-12)
+        for pos, amp in candidates:
+            if all(abs(pos - existing[0]) > min_sep for existing in selected):
+                selected.append((pos, amp))
+            if len(selected) >= peak_count:
+                break
+
+        while len(selected) < peak_count:
+            idx = len(selected)
+            pos = float(fallback_positions[min(idx, len(fallback_positions) - 1)])
+            selected.append((pos, float(max(amp_guess * self.SECOND_PEAK_AMP_FACTOR, amp_guess * 0.1))))
+
+        return selected
+
+    def _sort_peak_records(self, records, sort_order):
+        reverse = sort_order in ["x_desc", "intensity_desc"]
+        if sort_order in ["x_desc", "x_asc"]:
+            key = lambda item: item["position"]
+        elif sort_order in ["intensity_desc", "intensity_asc"]:
+            key = lambda item: item["intensity"]
+        else:
+            key = lambda item: item["position"]
+            reverse = True
+        return sorted(records, key=key, reverse=reverse)
+
+    def _add_legacy_peak_keys(self, res, peaks):
+        if not peaks:
+            return
+        res["Peak"] = peaks[0]["position"]
+        res["Peak_Err"] = peaks[0]["position_err"]
+        res["Width"] = peaks[0]["width"]
+        res["Width_Err"] = peaks[0]["width_err"]
+        for i, peak in enumerate(peaks, start=1):
+            res[f"Peak{i}"] = peak["position"]
+            res[f"Peak{i}_Err"] = peak["position_err"]
+            res[f"Width{i}"] = peak["width"]
+            res[f"Width{i}_Err"] = peak["width_err"]
+
     # ==========================================
     # --- フィッティング処理 ---
     # ==========================================
-    def fit_spectrum(self, x_data: np.ndarray, y_data: np.ndarray, func_type: str = "Gauss",
-                     fit_start: Optional[float] = None, fit_end: Optional[float] = None) -> Tuple:
+    def fit_spectrum(self, x_data: np.ndarray, y_data: np.ndarray, func_type: str = "Pseudo Voigt",
+                     fit_start: Optional[float] = None, fit_end: Optional[float] = None,
+                     peak_count: int = 1, peak_sort_order: str = "x_desc") -> Tuple:
         """スペクトルのピークフィッティングを行う（指定されたX軸の範囲内で実行）
         
         Args:
             x_data: X 軸データ
             y_data: Y 軸データ
-            func_type: フィッティング関数型 ("Gauss", "Lorentz", "Pseudo Voigt" など)
+            func_type: フィッティング関数型 ("Pseudo Voigt", "Moffat", "Gauss", "Lorentz")
             fit_start: フィッティング範囲の開始値
             fit_end: フィッティング範囲の終了値
+            peak_count: フィットするピーク数 (1-5)
+            peak_sort_order: ピーク番号の並び順
             
         Returns:
             (x_fit, y_fit_curve, res) のタプル。フィッティング失敗時は (None, None, None)
@@ -96,128 +201,79 @@ class DataAnalyzer:
         # FWHMの初期値はX軸のスケールに依存するため、範囲の設定割合程度と推測する
         fwhm_guess = x_range * self.FWHM_FRACTION
         if fwhm_guess <= 0: fwhm_guess = 1.0
+        width_upper = max(x_range, self.FWHM_MIN * 10)
+        fwhm_guess = min(max(fwhm_guess, self.FWHM_MIN), width_upper)
         
-        res = {}
+        peak_count = int(peak_count)
+        if peak_count < self.MIN_PEAK_COUNT or peak_count > self.MAX_PEAK_COUNT:
+            raise ValueError(f"peak_count must be between {self.MIN_PEAK_COUNT} and {self.MAX_PEAK_COUNT}")
+        if func_type not in ["Pseudo Voigt", "Moffat", "Gauss", "Lorentz"]:
+            raise ValueError(f"Unknown fitting function: {func_type!r}")
         
         try:
-            # ==========================================
-            # --- ダブルピーク関数 ---
-            # ==========================================
-            if "Double" in func_type:
-                peaks, _ = find_peaks(y_fit, distance=self.PEAK_DISTANCE, 
-                                     prominence=amp_guess * self.PEAK_PROMINENCE_FACTOR)
-                
-                if len(peaks) >= 2:
-                    top_peaks = sorted(peaks, key=lambda p: y_fit[p], reverse=True)[:2]
-                    p1_x = x_fit[top_peaks[0]]
-                    p2_x = x_fit[top_peaks[1]]
-                    a1_guess = y_fit[top_peaks[0]] - offset_guess
-                    a2_guess = y_fit[top_peaks[1]] - offset_guess
-                else:
-                    max_idx = int(np.argmax(y_fit))
-                    p1_x = x_fit[max_idx]
-                    p2_x = p1_x + (x_range * self.PEAK_SPACING_FACTOR)
-                    a1_guess = amp_guess
-                    a2_guess = amp_guess * self.SECOND_PEAK_AMP_FACTOR
+            params_per_peak = self._params_per_peak(func_type)
+            initial_peaks = self._initial_peak_positions(x_fit, y_fit, peak_count, amp_guess, offset_guess)
+            p0 = []
+            lower = []
+            upper = []
+            for peak_x, peak_amp in initial_peaks:
+                p0.extend([peak_amp, peak_x, fwhm_guess])
+                lower.extend([0, min(x_fit), self.FWHM_MIN])
+                upper.extend([np.inf, max(x_fit), width_upper])
+                if func_type == "Pseudo Voigt":
+                    p0.append(self.PSEUDO_VOIGT_ETA_INIT)
+                    lower.append(self.PSEUDO_VOIGT_ETA_MIN)
+                    upper.append(self.PSEUDO_VOIGT_ETA_MAX)
+                elif func_type == "Moffat":
+                    p0.append(self.MOFFAT_BETA_INIT)
+                    lower.append(self.MOFFAT_BETA_MIN)
+                    upper.append(self.MOFFAT_BETA_MAX)
 
-                if func_type in ["Double Gauss", "Double Lorentz"]:
-                    p0 = [a1_guess, p1_x, fwhm_guess, a2_guess, p2_x, fwhm_guess, offset_guess]
-                    bounds = (
-                        [0, min(x_fit), self.FWHM_MIN, 0, min(x_fit), self.FWHM_MIN, -np.inf],
-                        [np.inf, max(x_fit), x_range, np.inf, max(x_fit), x_range, np.inf]
-                    )
-                elif func_type == "Double pseudo Voigt":
-                    p0 = [a1_guess, p1_x, fwhm_guess, self.PSEUDO_VOIGT_ETA_INIT, a2_guess, p2_x, fwhm_guess, self.PSEUDO_VOIGT_ETA_INIT, offset_guess]
-                    bounds = (
-                        [0, min(x_fit), self.FWHM_MIN, self.PSEUDO_VOIGT_ETA_MIN, 0, min(x_fit), self.FWHM_MIN, self.PSEUDO_VOIGT_ETA_MIN, -np.inf],
-                        [np.inf, max(x_fit), x_range, self.PSEUDO_VOIGT_ETA_MAX, np.inf, max(x_fit), x_range, self.PSEUDO_VOIGT_ETA_MAX, np.inf]
-                    )
+            p0.append(offset_guess)
+            lower.append(-np.inf)
+            upper.append(np.inf)
 
-                if func_type == "Double Gauss":
-                    popt, pcov = self._fit_strict(self.double_gaussian, x_fit, y_fit, p0, bounds)
-                    y_fit_curve = self.double_gaussian(x_fit, *popt)
-                    
-                    y1_curve = self.gaussian(x_fit, popt[0], popt[1], popt[2], popt[6])
-                    y2_curve = self.gaussian(x_fit, popt[3], popt[4], popt[5], popt[6])
-                    
-                    p1_pos, p1_w, p2_pos, p2_w = popt[1], popt[2], popt[4], popt[5]
-                    perr = np.sqrt(np.diag(pcov))
-                    e1_pos, e1_w, e2_pos, e2_w = perr[1], perr[2], perr[4], perr[5]
-                    
-                elif func_type == "Double Lorentz":
-                    popt, pcov = self._fit_strict(self.double_lorentzian, x_fit, y_fit, p0, bounds)
-                    y_fit_curve = self.double_lorentzian(x_fit, *popt)
-                    
-                    y1_curve = self.lorentzian(x_fit, popt[0], popt[1], popt[2], popt[6])
-                    y2_curve = self.lorentzian(x_fit, popt[3], popt[4], popt[5], popt[6])
-                    
-                    p1_pos, p1_w, p2_pos, p2_w = popt[1], popt[2], popt[4], popt[5]
-                    perr = np.sqrt(np.diag(pcov))
-                    e1_pos, e1_w, e2_pos, e2_w = perr[1], perr[2], perr[4], perr[5]
-                    
-                elif func_type == "Double pseudo Voigt":
-                    popt, pcov = self._fit_strict(self.double_pseudo_voigt, x_fit, y_fit, p0, bounds)
-                    y_fit_curve = self.double_pseudo_voigt(x_fit, *popt)
-                    
-                    y1_curve = self.pseudo_voigt(x_fit, popt[0], popt[1], popt[2], popt[3], popt[8])
-                    y2_curve = self.pseudo_voigt(x_fit, popt[4], popt[5], popt[6], popt[7], popt[8])
-                    
-                    p1_pos, p1_w, p2_pos, p2_w = popt[1], popt[2], popt[5], popt[6]
-                    perr = np.sqrt(np.diag(pcov))
-                    e1_pos, e1_w, e2_pos, e2_w = perr[1], perr[2], perr[5], perr[6]
-                
-                # ピークのX座標が小さい方（左側）を常に Peak1 として返す
-                if p1_pos > p2_pos:
-                    res = {
-                        "is_double": True,
-                        "Peak1": p1_pos, "Width1": p1_w, "Peak1_Err": e1_pos, "Width1_Err": e1_w,
-                        "Peak2": p2_pos, "Width2": p2_w, "Peak2_Err": e2_pos, "Width2_Err": e2_w,
-                        "y_fit1": y1_curve,
-                        "y_fit2": y2_curve
-                    }
-                else:
-                    res = {
-                        "is_double": True,
-                        "Peak1": p2_pos, "Width1": p2_w, "Peak1_Err": e2_pos, "Width1_Err": e2_w,
-                        "Peak2": p1_pos, "Width2": p1_w, "Peak2_Err": e1_pos, "Width2_Err": e1_w,
-                        "y_fit1": y2_curve,
-                        "y_fit2": y1_curve
-                    }
+            model = self._multi_peak_model(func_type, peak_count)
+            popt, pcov = self._fit_strict(model, x_fit, y_fit, p0, (lower, upper))
+            y_fit_curve = model(x_fit, *popt)
+            perr = np.sqrt(np.maximum(np.diag(pcov), 0))
 
-            # ==========================================
-            # --- シングルピーク関数 ---
-            # ==========================================
-            else: 
-                max_idx = int(np.argmax(y_fit))
-                p_x = x_fit[max_idx]
-                
-                if func_type in ["Gauss", "Lorentz"]:
-                    p0 = [amp_guess, p_x, fwhm_guess, offset_guess]
-                    bounds = ([0, min(x_fit), 0.0001, -np.inf], [np.inf, max(x_fit), x_range, np.inf])
-                elif func_type == "Pseudo Voigt":
-                    p0 = [amp_guess, p_x, fwhm_guess, 0.5, offset_guess]
-                    bounds = ([0, min(x_fit), 0.0001, 0.0, -np.inf], [np.inf, max(x_fit), x_range, 1.0, np.inf])
-                
-                if func_type == "Gauss":
-                    popt, pcov = self._fit_strict(self.gaussian, x_fit, y_fit, p0, bounds)
-                    y_fit_curve = self.gaussian(x_fit, *popt)
-                elif func_type == "Lorentz":
-                    popt, pcov = self._fit_strict(self.lorentzian, x_fit, y_fit, p0, bounds)
-                    y_fit_curve = self.lorentzian(x_fit, *popt)
-                elif func_type == "Pseudo Voigt":
-                    popt, pcov = self._fit_strict(self.pseudo_voigt, x_fit, y_fit, p0, bounds)
-                    y_fit_curve = self.pseudo_voigt(x_fit, *popt)
-                
-                # すべての関数で popt[1] が位置、popt[2] がFWHMになる
-                p_pos, p_w = popt[1], popt[2]
-                perr = np.sqrt(np.diag(pcov))
-                e_pos, e_w = perr[1], perr[2]
-                
-                res = {
-                    "is_double": False,
-                    "Peak": p_pos, "Width": p_w, 
-                    "Peak_Err": e_pos, "Width_Err": e_w
-                }
+            offset = popt[-1]
+            records = []
+            for i in range(peak_count):
+                start = i * params_per_peak
+                peak_params = popt[start:start + params_per_peak]
+                peak_errs = perr[start:start + params_per_peak]
+                records.append({
+                    "position": peak_params[1],
+                    "position_err": peak_errs[1],
+                    "width": peak_params[2],
+                    "width_err": peak_errs[2],
+                    "amplitude": peak_params[0],
+                    "amplitude_err": peak_errs[0],
+                    "intensity": peak_params[0],
+                    "params": peak_params.copy(),
+                    "errors": peak_errs.copy(),
+                    "y_fit": self._component_curve(func_type, x_fit, peak_params, offset),
+                })
+
+            sorted_peaks = self._sort_peak_records(records, peak_sort_order)
+            for i, peak in enumerate(sorted_peaks, start=1):
+                peak["index"] = i
+
+            res = {
+                "is_double": peak_count == 2,
+                "is_multi": peak_count > 1,
+                "peak_count": peak_count,
+                "peak_sort_order": peak_sort_order,
+                "peaks": [
+                    {k: v for k, v in peak.items() if k not in ["params", "errors", "y_fit"]}
+                    for peak in sorted_peaks
+                ],
+            }
+            for i, peak in enumerate(sorted_peaks, start=1):
+                res[f"y_fit{i}"] = peak["y_fit"]
+            self._add_legacy_peak_keys(res, sorted_peaks)
 
             # R2計算
             residuals = y_fit - y_fit_curve
