@@ -17,8 +17,8 @@ class PressureCalculator:
     TEMP_VALID_RANGES = {
         "Ruby": {
             "Ragan et al. 1992": (0.0, 600.0),
-            "Datchi et al. 1997": (296, 900) ,
-            "Datchi et al. 2007": (0, 296),
+            "Datchi et al. 2007 HT": (296, 900) ,
+            "Datchi et al. 2007 LT": (0, 296),
             "Kobayashi et al. unpublished": (0, 300),
             "Yen and Nicol 1992": (0, 600)
         },
@@ -347,6 +347,15 @@ class PressureCalculator:
                 else:
                     integral, _ = quad(integrand, 0, theta / temperature)
                 return alpha * (temperature / theta)**4 * integral  
+            
+            def datchi_ruby_temp(temp, a1, a2, a3):
+                    # Note: this function returns the absolute wavelength reported in the literature, not the shift from the input lam0_at_t0.
+                    if temp < 50:
+                        return -0.887
+                    else:
+                        wl_at_296K = 694.281
+                        deltat = temp - 296
+                        return wl_at_296K + a1 * deltat + a2 * deltat**2 + a3 * deltat ** 3
 
             if t_scale == "Ragan et al. 1992":
                 def ragan_ruby_temp(temp):
@@ -355,14 +364,15 @@ class PressureCalculator:
                 offset = ragan_ruby_temp(t0) - lam0_at_t0
                 return ragan_ruby_temp(current_t) - offset
             
-            elif t_scale == "Datchi et al. 2007":
-                def datchi_ruby_temp(temp):
-                    wl_at_296K = 694.281
-                    deltat = temp - 296
-                    return wl_at_296K + 0.00746  * deltat -3.01* 10**-6 * deltat**2 + 8.76 * 10**-9 * deltat ** 3
-                
-                offset = datchi_ruby_temp(t0) - lam0_at_t0
-                return datchi_ruby_temp(current_t) - offset
+            elif t_scale == "Datchi et al. 2007 HT":
+                a1, a2, a3 = 0.00746, -3.01e-6, 8.76e-9
+                offset = datchi_ruby_temp(t0, a1, a2, a3) - lam0_at_t0
+                return datchi_ruby_temp(current_t, a1, a2, a3) - offset
+            
+            elif t_scale == "Datchi et al. 2007 LT":
+                a1, a2, a3 = 0.00664, 6.76e-6, -2.33e-8
+                offset = datchi_ruby_temp(t0, a1, a2, a3) - lam0_at_t0
+                return datchi_ruby_temp(current_t, a1, a2, a3) - offset
 
             elif t_scale == "Kobayashi et al. unpublished":
                 wn_at_t0 = 10 ** 7 / lam0_at_t0
