@@ -163,23 +163,23 @@ X-API-Key: <API Server パネルに表示されているキー>
 **追加フィールド:**
 ```json
 {
-  "sensor": "Ruby",
-  "pressure_scale": "Shen et al. 2020",
+  "sensor": "ruby",
+  "pressure_scale": "ruby_shen_2020",
   "zero_pressure_peak": 694.30,
   "temperature_correction": {
     "enabled": true,
-    "scale": "Kobayashi et al. unpublished",
+    "scale": "ruby_kobayashi_unpublished",
     "current_t": 300.0,
     "t0": 298.15,
     "zero_pressure_peak_at_t0": 694.30
   }
 }
 ```
-- `sensor`/`pressure_scale`: GUIの圧力計算ウィンドウと同じセンサー名・スケール名の文字列
-  (`src/pressureCalc.py` 参照)。
+- `sensor`/`pressure_scale`: `src/pressureCalc.py` の `SENSORS` / `PRESSURE_SCALES` で定義された key。
 - `zero_pressure_peak`: 温度補正を使わない場合のゼロ圧力ピーク位置。
 - `temperature_correction` は省略可。`enabled: false`、または省略した場合は温度補正無しで
-  `zero_pressure_peak` がそのまま使われる。`enabled: true` の場合のみ、指定した温度スケールで
+  `zero_pressure_peak` がそのまま使われる。`enabled: true` の場合のみ、`scale` に
+  `TEMPERATURE_SCALES` の key を指定し、その温度スケールで
   ゼロ圧力ピークを補正してから圧力を計算する。温度が有効範囲外でも計算自体は続行し、
   `temperature_warning` に警告メッセージが入る。
 
@@ -229,7 +229,7 @@ curl -X POST -H "X-API-Key: <キー>" -H "Content-Type: application/json" \
         "dark": {"mode": "reuse_loaded"},
         "fit_function": "Double pseudo Voigt",
         "fit_range": {"start": 690, "end": 700},
-        "sensor": "Ruby", "pressure_scale": "Shen et al. 2020",
+        "sensor": "ruby", "pressure_scale": "ruby_shen_2020",
         "zero_pressure_peak": 694.30
       }' \
   http://<IP>:8765/acquire/pressure

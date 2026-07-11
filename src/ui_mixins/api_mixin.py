@@ -194,16 +194,16 @@ class ApiMixin:
 
     def api_pressure(self, peak, peak_err, sensor, pressure_scale, zero_pressure_peak,
                       temperature_correction=None):
-        """Mirrors PressureCalculatorWindow.calculate() (src/pressureCalc_ui.py)
-        exactly, without any GUI widget dependency: PressureCalculator.calculate()
-        takes lam0_at_t0 regardless of whether temperature correction is enabled
-        (the GUI always forwards spin_lam0_t0.value() for it), so
-        `zero_pressure_peak_at_t0` is read from temperature_correction
-        unconditionally, not only when enabled=True. Only the lam0-correction and
-        temperature-range warning are gated on `enabled`, matching the GUI's
-        radio_on.isChecked() branches. When temperature_correction is omitted
-        entirely, lam0_at_t0 is left as None so PressureCalculator.calculate()
-        falls back to treating it as equal to lam0 (its own default behaviour).
+        """Calculate pressure using PressureCalculator's internal keys.
+
+        `sensor`, `pressure_scale`, and `temperature_correction["scale"]` are
+        backend keys such as "ruby", "ruby_shen_2020", and
+        "ruby_kobayashi_unpublished", not GUI labels.
+
+        This mirrors PressureCalculatorWindow.calculate() without any widget
+        dependency. `zero_pressure_peak_at_t0` is read from
+        temperature_correction whenever that object is supplied, matching the
+        GUI's habit of always forwarding spin_lam0_t0.value().
         """
         lam0 = zero_pressure_peak
         lam0_at_t0 = None
@@ -218,11 +218,20 @@ class ApiMixin:
 
             if temperature_correction.get("enabled", False):
                 t_scale = temperature_correction.get("scale")
-                is_valid, rng = PressureCalculator.is_temp_in_range(sensor=sensor, t_scale=t_scale, temp=current_t)
+                is_valid, rng = PressureCalculator.is_temp_in_range(
+                    sensor=sensor, p_scale=pressure_scale, t_scale=t_scale, temp=current_t
+                )
                 if not is_valid and rng[0] is not None:
+                    warning_scale = (
+                        pressure_scale
+                        if PressureCalculator.pressure_scale_requires_temperature(
+                            sensor=sensor, p_scale=pressure_scale
+                        )
+                        else t_scale
+                    )
                     temperature_warning = (
                         f"Temperature {current_t} K is outside the valid range "
-                        f"({rng[0]}-{rng[1]} K) for {sensor} / {t_scale}."
+                        f"({rng[0]}-{rng[1]} K) for {sensor} / {warning_scale}."
                     )
                 lam0 = PressureCalculator.get_corrected_lam0(
                     sensor=sensor, t_scale=t_scale, current_t=current_t, t0=t0, lam0_at_t0=lam0_at_t0

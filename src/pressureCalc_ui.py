@@ -149,12 +149,16 @@ class PressureCalculatorWindow(QDialog):
             self.spin_lam0_t0.setValue(self.current_peak_val)
 
     def calculate(self):
-        sensor = self.combo_sensor.currentText()
-        p_scale = self.combo_p_scale.currentText()
-        t_scale = self.combo_t_scale.currentText()
+        sensor = self.combo_sensor.currentData()
+        p_scale = self.combo_p_scale.currentData()
+        t_scale = self.combo_t_scale.currentData()
         curr_t = self.spin_t.value()
+        if sensor is None or p_scale is None:
+            return
 
-        is_valid, rng = PressureCalculator.is_temp_in_range(sensor=sensor, t_scale=t_scale, temp=curr_t)
+        is_valid, rng = PressureCalculator.is_temp_in_range(
+            sensor=sensor, p_scale=p_scale, t_scale=t_scale, temp=curr_t
+        )
         if self.radio_on.isChecked() and not is_valid and rng[0] is not None:
             self.lbl_t_warning.setText(f"Warning: T out of range ({rng[0]} - {rng[1]} K)")
             self.spin_t.setStyleSheet("background-color: #FFCCCC; color: red;")
@@ -193,53 +197,37 @@ class PressureCalculatorWindow(QDialog):
         self.lbl_lam0_tag.setText(f"Zero-pressure peak ({mode}):")
         self.lbl_lam0_t0_tag.setText(f"Zero-pressure peak at T0 ({mode}):")
         self.combo_sensor.blockSignals(True); self.combo_sensor.clear()
-        if mode == "nm":
-            self.combo_sensor.addItems(["Ruby", "Sm2+:SrB4O7"])
-        else:
-            self.combo_sensor.addItems(["13C diamond 1st order", "Cubic BN TO", "Zircon B1g"])
+        for sensor_key in PressureCalculator.get_sensors_for_unit(mode):
+            self.combo_sensor.addItem(PressureCalculator.SENSORS[sensor_key]["label"], sensor_key)
         self.combo_sensor.blockSignals(False)
         self.on_sensor_changed()
 
     def on_sensor_changed(self):
-        sensor = self.combo_sensor.currentText()
-        default_val = PressureCalculator.INITIAL_VALUES.get(sensor, 0.0)
+        sensor = self.combo_sensor.currentData()
+        if sensor is None:
+            return
+
+        default_val = PressureCalculator.SENSORS[sensor]["initial_value"]
         self.spin_lam0.setValue(default_val)
         self.spin_lam0_t0.setValue(default_val)
 
         self.combo_p_scale.blockSignals(True); self.combo_p_scale.clear()
         self.combo_t_scale.blockSignals(True); self.combo_t_scale.clear()
 
-        if sensor == "Ruby":
-            self.combo_p_scale.addItems(["Shen et al. 2020", "Dorogokupets and Oganov 2007", "Holzapfel 2003", "Mao et al. 1986", "Piermarini et al. 1975"])
-            self.combo_t_scale.addItems(["Kobayashi et al. unpublished", "Yen and Nicol 1992", "Ragan et al. 1992", "Datchi et al. 2007 HT", "Datchi et al. 2007 LT"])
-        elif sensor == "Sm2+:SrB4O7":
-            self.combo_p_scale.addItems(["0-0 line: Datchi et al. 1997 (MXB1986)", "0-0 line: Datchi et al. 2007 (DO2007)", "0-0 line (lam1): Rashchenko et al. 2015", "0-1 line (lam2): Rashchenko et al. 2015", "0-1 line (lam3): Rashchenko et al. 2015", "0-1 line (lam4): Rashchenko et al. 2015"])
-            self.combo_t_scale.addItems(["Datchi et al. 2007"])
-        elif sensor == "13C diamond 1st order":
-            self.combo_p_scale.addItems(["Schiferl et al. 1997", "Mysen and Yamashita 2010"])
-            self.combo_t_scale.addItems(["Schiferl et al. 1997", "Mysen and Yamashita 2010"])
-        elif sensor == "Cubic BN TO":
-            self.combo_p_scale.addItems(["Kawamoto et al. 2004", "Datchi et al. 2004"])
-            self.combo_t_scale.addItems(["Kawamoto et al. 2004"])
-        elif sensor == "Zircon B1g":
-            self.combo_p_scale.addItems(["Schmidt et al. 2013", "Takahashi et al. 2024"])
-            self.combo_t_scale.addItems(["Schmidt et al. 2013", "Takahashi et al. 2024"])
+        for scale_key, scale_meta in PressureCalculator.PRESSURE_SCALES.get(sensor, {}).items():
+            self.combo_p_scale.addItem(scale_meta["label"], scale_key)
+
+        for scale_key, scale_meta in PressureCalculator.TEMPERATURE_SCALES.get(sensor, {}).items():
+            self.combo_t_scale.addItem(scale_meta["label"], scale_key)
 
         self.combo_p_scale.blockSignals(False); self.combo_t_scale.blockSignals(False)
         self.on_p_scale_changed()
         self.lbl_result.setText(self._build_result_html(self.current_pressure, self.current_pressure_err))
 
     def on_p_scale_changed(self):
-        sensor = self.combo_sensor.currentText()
-        scale = self.combo_p_scale.currentText()
-        # 指定したスケールを含むかどうか。階層構造が複雑なので、だらだらif文で書く
-        is_pt_scale = False
-        if sensor == "13C diamond 1st order": 
-            if scale in ["Schiferl et al. 1997", "Mysen and Yamashita 2010"]:
-                is_pt_scale = True
-        elif sensor == "Cubic BN TO":
-            if scale in ["Datchi et al. 2004"]:
-                is_pt_scale = True
+        sensor = self.combo_sensor.currentData()
+        scale = self.combo_p_scale.currentData()
+        is_pt_scale = PressureCalculator.pressure_scale_requires_temperature(sensor=sensor, p_scale=scale)
 
         self.radio_widget.setVisible(not is_pt_scale)
         self.lbl_t_scale_tag.setVisible(not is_pt_scale)
