@@ -4,7 +4,7 @@ import numpy as np
 from threading import Lock
 from PyQt5.QtCore import QThread, pyqtSignal
 
-# ダミーモード時はエラーを回避するためtry-exceptで囲む
+# Wrapped in try-except so a missing SDK doesn't raise an error when running in debug (dummy) mode
 try:
     import pylablib
     from pylablib.devices import PrincetonInstruments
@@ -12,12 +12,12 @@ except ImportError:
     pylablib = None
     PrincetonInstruments = None
 
-# PICam Runtimeのデフォルトインストール先
+# Default install location for the PICam Runtime
 _DEFAULT_PICAM_RUNTIME_PATH = r"C:\Program Files\Princeton Instruments\PICam\Runtime"
 
 
 def _get_picam_runtime_path(config):
-    # 設定キー名は既存の "PIcam_dll_path" を維持する (将来的に "picam_runtime_path" へ統一予定)
+    # Keep using the existing "PIcam_dll_path" config key (may be renamed to "picam_runtime_path" later)
     return (config or {}).get("PIcam_dll_path", _DEFAULT_PICAM_RUNTIME_PATH)
 
 
@@ -46,9 +46,9 @@ class CameraThreadPI(QThread):
         self.cam = None
         self._dll_dir_cookie = None
         self._lock = Lock()
-        self._hw_lock = Lock()  # ハードウェア(snap/設定適用)への排他アクセス用ロック
+        self._hw_lock = Lock()  # Lock for exclusive access to hardware (snap / applying settings)
 
-        # PIXIS: 100F 相当のデフォルト値 (実機接続後は get_detector_size() で上書きされる)
+        # Defaults matching a PIXIS: 100F (overwritten by get_detector_size() once a real camera is connected)
         self.det_width = 1340
         self.det_height = 100
 
@@ -150,7 +150,8 @@ class CameraThreadPI(QThread):
                         self.current_exposure = new_exposure
                     else:
                         try:
-                            # PICamは秒⇔ミリ秒の変換を内部で行い、機器の丸めを反映した実設定値を返す
+                            # PICam converts seconds<->milliseconds internally and returns the actual
+                            # value applied after the device rounds it
                             self.current_exposure = self.cam.set_exposure(new_exposure)
                         except Exception as e:
                             print(f"Failed to set exposure: {e}")

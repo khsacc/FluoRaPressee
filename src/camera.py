@@ -1,5 +1,5 @@
 def CameraThread(config=None, debug=False):
-    # configからモデルを判定（デフォルトはAndor）
+    # Determine the hardware model from config (defaults to Andor)
     model = config.get("model", "Andor") if config else "Andor"
     
     if model == "PrincetonInstruments":

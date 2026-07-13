@@ -26,7 +26,7 @@ class SpectrometerControllerPI:
 
             self.spec = serial.Serial(self.com_port, 9600, timeout=1)
             
-            # 接続テスト
+            # Connection test
             self.spec.write(b'? NM\r\n')
             response = self.spec.readline().decode('ascii').strip()
             
@@ -60,11 +60,11 @@ class SpectrometerControllerPI:
 
     def get_wavelength(self):
         if not self.is_initialized:
-            return 694.0 # ダミー値
+            return 694.0 # Dummy value (used when not initialized/connected)
             
         res = self._send_command('? NM')
         try:
-            # 応答から数値部分だけを抽出 (例: "500.00 nm" -> 500.00)
+            # Extract just the numeric part from the response (e.g. "500.00 nm" -> 500.00)
             match = re.search(r"[-+]?\d*\.\d+|\d+", res)
             if match:
                 return float(match.group())
@@ -74,7 +74,7 @@ class SpectrometerControllerPI:
 
     def get_grating(self):
         if not self.is_initialized:
-            return 1 # ダミー値
+            return 1 # Dummy value (used when not initialized/connected)
             
         res = self._send_command('? TURRET')
         try:
@@ -92,10 +92,10 @@ class SpectrometerControllerPI:
             return False
             
         print(f"Setting spectrometer wavelength to {wavelength_nm} nm...")
-        # Actonコマンド: 波長移動
+        # Acton command: move to wavelength
         self._send_command(f'{wavelength_nm:.3f} GOTO')
-        
-        # モーターの移動を待つための簡易スリープ（機種によっては '? DONE' コマンドでポーリング可能です）
+
+        # Simple sleep to wait for the motor move to finish (some models support polling with '? DONE' instead)
         time.sleep(2.0)
         return True
 
@@ -106,9 +106,9 @@ class SpectrometerControllerPI:
             return False
             
         print(f"Changing grating to index {grating_index}...")
-        # Actonコマンド: ターレットの切り替え (通常 1, 2, 3 のいずれか)
+        # Acton command: switch turret (usually 1, 2, or 3)
         self._send_command(f'{grating_index} TURRET')
-        time.sleep(3.0) # ターレットの回転は時間がかかるため長めに待機
+        time.sleep(3.0) # Wait longer since rotating the turret takes time
         return True
 
     def close(self):

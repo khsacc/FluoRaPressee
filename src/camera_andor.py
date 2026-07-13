@@ -4,7 +4,7 @@ from threading import Lock
 from PyQt5.QtCore import QThread, pyqtSignal
 from scipy.optimize import OptimizeWarning
 
-# ダミーモード時はエラーを回避するためtry-exceptで囲む
+# Wrapped in try-except so a missing SDK doesn't raise an error when running in debug (dummy) mode
 try:
     from pylablib.devices import Andor
 except ImportError:
@@ -22,13 +22,13 @@ class CameraThreadAndor(QThread):
     acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors
     hardware_error = pyqtSignal(str)  # emitted when a settings write (exposure/temperature) fails on hardware
 
-    # カメラ仕様の定数
+    # Constants describing the camera hardware
     DEFAULT_DETECTOR_WIDTH = 1024
     DEFAULT_DETECTOR_HEIGHT = 127
     DEFAULT_TEMP = -65
     DEFAULT_EXPOSURE = 0.1
-    TEMP_TOLERANCE = 0.5  # デバッグモード時の温度ゆらぎ(C)
-    SLEEP_INTERVAL = 0.05  # スレッドループの休止間隔(s)
+    TEMP_TOLERANCE = 0.5  # Simulated temperature fluctuation in debug mode (C)
+    SLEEP_INTERVAL = 0.05  # Sleep interval between iterations of the thread loop (s)
     
     def __init__(self, debug=False):
         super().__init__()
@@ -36,8 +36,8 @@ class CameraThreadAndor(QThread):
         self.thread_active = True
         self.is_measuring = False
         self.cam = None
-        self._lock = Lock()  # スレッド安全性のためのロック
-        self._hw_lock = Lock()  # ハードウェア(snap/設定適用)への排他アクセス用ロック
+        self._lock = Lock()  # Lock guarding thread-safe access to shared state
+        self._hw_lock = Lock()  # Lock for exclusive access to hardware (snap / applying settings)
 
         self.det_width = self.DEFAULT_DETECTOR_WIDTH
         self.det_height = self.DEFAULT_DETECTOR_HEIGHT
@@ -51,7 +51,7 @@ class CameraThreadAndor(QThread):
         self.new_exposure = None
         self.new_temperature = None
         
-        # デバッグ用の仮想設定値
+        # Simulated setting values used in debug mode
         self.mock_exposure = self.DEFAULT_EXPOSURE
         self.mock_temp = self.DEFAULT_TEMP
         self.current_exposure = self.DEFAULT_EXPOSURE
@@ -153,9 +153,9 @@ class CameraThreadAndor(QThread):
 
                     try:
                         if self.debug:
-                            # === デバッグ用ダミーデータ生成 ===
+                            # === Generate dummy data for debug mode ===
                             x = np.arange(self.det_width)
-                            # ルビーのR1, R2線を模したダブルピーク + 背景ノイズ
+                            # Double peak mimicking the ruby R1/R2 lines, plus background noise
                             y1 = 500 * np.exp(-((x - 700)**2) / (2 * 4**2))
                             y2 = 250 * np.exp(-((x - 675)**2) / (2 * 4**2))
                             base = 100 + np.random.normal(0, 10, self.det_width)
@@ -256,7 +256,7 @@ class CameraThreadAndor(QThread):
         """Calibration UI等のために、スレッドをブロックして1枚だけ同期的に撮影する（疑似処理）"""
         if acq_time is not None:
             self.update_exposure(acq_time)
-            time.sleep(0.1) # 露光設定の反映待ち
+            time.sleep(0.1) # Wait for the new exposure setting to take effect
 
         if self.debug:
             x = np.arange(self.det_width)

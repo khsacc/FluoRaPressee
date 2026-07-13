@@ -7,7 +7,7 @@ gc.enable()
 
 from PyQt5.QtWidgets import QApplication
 
-# ui.py から必要なクラスや関数をインポート
+# Import the required classes and functions from ui.py
 from src.ui import SpectrometerGUI
 from src.app_bootstrap import print_software_and_author_info, check_and_create_config
 from src.api.gui_bridge import GuiBridge
@@ -21,7 +21,7 @@ def main():
     debug_mode = "--debug" in sys.argv
     print("debug_mode ", debug_mode)
     
-    # QApplication の初期化
+    # Reuse the existing QApplication instance if one is already running, otherwise create one
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)

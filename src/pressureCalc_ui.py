@@ -30,7 +30,7 @@ class PressureCalculatorWindow(QDialog):
     def init_ui(self):
         layout = QVBoxLayout(self)
 
-        # 1. 基本設定 (Sensor / Pressure Scale)
+        # 1. Base settings (Sensor / Pressure Scale)
         top_group = QGroupBox("Base Settings")
         form = QFormLayout()
 
@@ -49,7 +49,7 @@ class PressureCalculatorWindow(QDialog):
         self.lbl_t_mandatory.setStyleSheet("height: 0;")
         form.addRow(self.lbl_t_mandatory)
 
-        # 現在の値を適用するボタン (温度補正ONのときは無効化される)
+        # Button to apply the current value (hidden/disabled when temperature correction is ON)
         self.btn_apply_current = QPushButton("Use the current value as zero-pressure peak position")
         self.btn_apply_current.setAutoDefault(False)  
         self.btn_apply_current.setDefault(False)
@@ -69,11 +69,11 @@ class PressureCalculatorWindow(QDialog):
         top_group.setLayout(form)
         layout.addWidget(top_group)
 
-        # 2. 温度補正グループ
+        # 2. Temperature correction group
         self.temp_group = QGroupBox("Temperature Correction")
         temp_v_layout = QVBoxLayout()
 
-        # On/Off ラジオボタン
+        # On/Off radio buttons
         self.radio_widget = QWidget()
         radio_h = QHBoxLayout(self.radio_widget)
         self.radio_off = QRadioButton("Off"); self.radio_on = QRadioButton("On")
@@ -81,7 +81,7 @@ class PressureCalculatorWindow(QDialog):
         radio_h.addWidget(self.radio_off); radio_h.addWidget(self.radio_on)
         temp_v_layout.addWidget(self.radio_widget)
 
-        # 補正詳細フォーム
+        # Detailed correction settings form
         self.t_form_widget = QWidget()
         self.t_form = QFormLayout(self.t_form_widget)
 
@@ -114,7 +114,7 @@ class PressureCalculatorWindow(QDialog):
         self.t_form.addRow(self.lbl_lam0_t0_tag, self.spin_lam0_t0)
 
         self.btn_set_lam0_t0 = QPushButton("Use the Current Value as the zero-pressure peak position at T0")
-        self.btn_set_lam0_t0.setAutoDefault(False)  # Fix: Enterキーでボタンが押されないようにする
+        self.btn_set_lam0_t0.setAutoDefault(False)  # Prevent the button from being triggered by pressing Enter
         self.btn_set_lam0_t0.setDefault(False)
         self.t_form.addRow(self.btn_set_lam0_t0)
 
@@ -122,7 +122,7 @@ class PressureCalculatorWindow(QDialog):
         self.temp_group.setLayout(temp_v_layout)
         layout.addWidget(self.temp_group)
 
-        # 3. 結果表示
+        # 3. Result display
         self.lbl_result = QLabel()
         self.lbl_result.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_result.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -146,7 +146,7 @@ class PressureCalculatorWindow(QDialog):
         self.spin_t0.valueChanged.connect(self.calculate)
         self.radio_on.toggled.connect(self.toggle_temp_ui)
 
-        # ボタンの接続
+        # Wire up button signals
         self.btn_apply_current.clicked.connect(self.apply_current_to_lam0)
         self.btn_set_lam0_t0.clicked.connect(self.apply_current_to_lam0_t0)
 

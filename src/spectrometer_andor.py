@@ -23,14 +23,14 @@ class SpectrometerControllerAndor:
 
         print("Spectrometer initialisation...")
 
-        dll_path = "ShamrockCIF.dll" # デフォルト値
+        dll_path = "ShamrockCIF.dll" # Default value
         config_path = "spectrometerConfig.json"
 
         if os.path.exists(config_path):
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
-                    # JSON内に "dll_path" キーがあれば取得、なければデフォルト値
+                    # Use the "dll_path" key from the JSON if present, otherwise fall back to the default
                     dll_path = config.get("dll_path", "ShamrockCIF.dll")
             except Exception as e:
                 print(f"Failed to read config file: {e}. Using default path.")
@@ -66,7 +66,7 @@ class SpectrometerControllerAndor:
 
     def get_wavelength(self):
         if not self.is_initialized or not self.shamrock:
-            return 694.0 # ダミー値
+            return 694.0 # Dummy value (used when not initialized/connected)
         try:
             wl = ctypes.c_float()
             ret = self.shamrock.ShamrockGetWavelength(self.device_id, ctypes.byref(wl))
@@ -78,7 +78,7 @@ class SpectrometerControllerAndor:
 
     def get_grating(self):
         if not self.is_initialized or not self.shamrock:
-            return 1 # ダミー値
+            return 1 # Dummy value (used when not initialized/connected)
         try:
             grating = ctypes.c_int()
             ret = self.shamrock.ShamrockGetGrating(self.device_id, ctypes.byref(grating))

@@ -7,15 +7,15 @@ import warnings
 class DataAnalyzer:
     """リアルタイムスペクトル解析・フィッティング処理を行うクラス"""
     
-    # フィッティングのための定数
+    # Constants used for fitting
     MIN_FIT_POINTS = 10
-    FWHM_FRACTION = 0.02  # X軸範囲のこの割合をFWHM初期値とする
+    FWHM_FRACTION = 0.02  # Initial FWHM guess as a fraction of the X-axis range
     FWHM_MIN = 0.0001
-    PEAK_DISTANCE = 5  # find_peaks で用いるピーク間の最小距離（ピクセル）
-    PEAK_PROMINENCE_FACTOR = 0.1  # 振幅のこの割合をプロミネンス閾値とする
-    PEAK_SPACING_FACTOR = 0.1  # ダブルピーク初期値の間隔係数
-    SECOND_PEAK_AMP_FACTOR = 0.5  # 第2ピークの振幅推定係数
-    PSEUDO_VOIGT_ETA_INIT = 0.5  # Pseudo Voigt の混合比初期値
+    PEAK_DISTANCE = 5  # Minimum distance between peaks (pixels), passed to find_peaks
+    PEAK_PROMINENCE_FACTOR = 0.1  # Prominence threshold as a fraction of the amplitude guess
+    PEAK_SPACING_FACTOR = 0.1  # Spacing factor for double-peak initial guesses (currently unused)
+    SECOND_PEAK_AMP_FACTOR = 0.5  # Amplitude guess factor for peak candidates beyond the primary one
+    PSEUDO_VOIGT_ETA_INIT = 0.5  # Initial mixing ratio for the Pseudo Voigt function
     PSEUDO_VOIGT_ETA_MIN = 0.0
     PSEUDO_VOIGT_ETA_MAX = 1.0
     MOFFAT_BETA_INIT = 2.0
@@ -29,7 +29,7 @@ class DataAnalyzer:
         pass
 
     # ==========================================
-    # --- ベース関数群 ---
+    # --- Base peak-shape functions ---
     # ==========================================
     def gaussian(self, x, a, x0, fwhm, offset):
         """fwhmを用いたガウス関数"""
@@ -160,7 +160,7 @@ class DataAnalyzer:
             res[f"Width{i}_Err"] = peak["width_err"]
 
     # ==========================================
-    # --- フィッティング処理 ---
+    # --- Fitting ---
     # ==========================================
     def fit_spectrum(self, x_data: np.ndarray, y_data: np.ndarray, func_type: str = "Pseudo Voigt",
                      fit_start: Optional[float] = None, fit_end: Optional[float] = None,
@@ -180,7 +180,7 @@ class DataAnalyzer:
             (x_fit, y_fit_curve, res) のタプル。フィッティング失敗時は (None, None, None)
         """
         
-        # 範囲によるマスクの作成
+        # Build a mask restricting the data to the requested fit range
         if fit_start is not None and fit_end is not None:
             start_val = min(fit_start, fit_end)
             end_val = max(fit_start, fit_end)
@@ -198,7 +198,7 @@ class DataAnalyzer:
         offset_guess = np.min(y_fit)
         x_range = np.max(x_fit) - np.min(x_fit)
         
-        # FWHMの初期値はX軸のスケールに依存するため、範囲の設定割合程度と推測する
+        # The initial FWHM guess depends on the X-axis scale, so estimate it as a fraction of the fit range
         fwhm_guess = x_range * self.FWHM_FRACTION
         if fwhm_guess <= 0: fwhm_guess = 1.0
         width_upper = max(x_range, self.FWHM_MIN * 10)
@@ -275,7 +275,7 @@ class DataAnalyzer:
                 res[f"y_fit{i}"] = peak["y_fit"]
             self._add_legacy_peak_keys(res, sorted_peaks)
 
-            # R2計算
+            # Compute R2 (coefficient of determination)
             residuals = y_fit - y_fit_curve
             ss_res = np.sum(residuals**2)
             ss_tot = np.sum((y_fit - np.mean(y_fit))**2)

@@ -6,11 +6,11 @@ from typing import List, Dict, Optional
 class CalibrationCore:
     """スペクトル較正処理を行うコアロジック"""
     
-    # ピーク検出のための定数
-    PEAK_WINDOW = 10  # ピークの周囲何ピクセルを切り出すか
-    SIGMA_GUESS = 2.0  # ガウス関数のシグマ初期値
-    SIGMA_MAX = 20  # シグマの最大値
-    NOISE_THRESHOLD = 1.0  # ノイズレベルの最小値
+    # Constants used for peak detection
+    PEAK_WINDOW = 10  # Number of pixels around each peak to extract for fitting
+    SIGMA_GUESS = 2.0  # Initial sigma guess for the Gaussian fit
+    SIGMA_MAX = 20  # Upper bound on sigma
+    NOISE_THRESHOLD = 1.0  # Floor value used for the estimated noise level
 
     @staticmethod
     def nm_to_raman(wl_nm: float, laser_wl: float) -> float:
@@ -34,12 +34,12 @@ class CalibrationCore:
         """
         x_data = np.arange(len(y_data))
         
-        # 背景ノイズレベルの推定
+        # Estimate the background noise level
         median_y = np.median(y_data)
         baseline_data = y_data[y_data <= median_y]
         noise = np.std(baseline_data) if len(baseline_data) > 0 else self.NOISE_THRESHOLD
         
-        # ノイズが極端に低い場合は閾値を使用
+        # Fall back to the floor value if the estimated noise is too low
         if noise < self.NOISE_THRESHOLD: 
             noise = self.NOISE_THRESHOLD
         
@@ -51,14 +51,14 @@ class CalibrationCore:
 
         fitted_peaks = []
         for p in peaks:
-            # ピークの周囲をウィンドウ幅で切り出してフィット
+            # Extract a window around the peak and fit it
             start = max(0, p - self.PEAK_WINDOW)
             end = min(len(y_data), p + self.PEAK_WINDOW + 1)
             
             x_fit = x_data[start:end]
             y_fit = y_data[start:end]
             
-            # 初期推定値
+            # Initial parameter guesses
             a_guess = y_data[p] - np.min(y_fit)
             offset_guess = np.min(y_fit)
             p0 = [a_guess, p, self.SIGMA_GUESS, offset_guess]
@@ -76,7 +76,7 @@ class CalibrationCore:
                     "y_curve": y_curve
                 })
             except (RuntimeError, ValueError) as e:
-                # フィット失敗時は元データをそのまま返す
+                # If the fit fails, fall back to returning the raw window data as-is
                 print(f"Warning: Peak fitting failed for peak at {p}: {e}")
                 fitted_peaks.append({
                     "center": float(p),
@@ -97,7 +97,7 @@ class CalibrationCore:
             return None
             
         if len(pixels) == 2:
-            # 2点の場合は1次関数 (y = c1*x + c0)
+            # With exactly 2 points, fit a linear function (y = c1*x + c0)
             coeffs = np.polyfit(pixels, ref_values, 1)
             return {
                 "c0": coeffs[1],
@@ -105,7 +105,7 @@ class CalibrationCore:
                 "c2": 0.0
             }
         else:
-            # 3点以上の場合は2次関数 (y = c2*x^2 + c1*x + c0)
+            # With 3 or more points, fit a quadratic function (y = c2*x^2 + c1*x + c0)
             coeffs = np.polyfit(pixels, ref_values, 2)
             return {
                 "c0": coeffs[2],

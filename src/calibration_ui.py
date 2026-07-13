@@ -150,13 +150,13 @@ class CalibrationWindow(QDialog):
         helper_layout = QHBoxLayout()
         helper_layout.addWidget(QLabel("Reference data:"))
         
-        # --- 修正箇所: QComboBox の表示改善 ---
+        # --- QComboBox display improvements ---
         self.combo_reference = QComboBox()
-        # 1. ドロップダウンリスト内でテキストを折り返す設定
+        # 1. Enable word-wrap for text within the dropdown list
         view = QListView()
         view.setWordWrap(True)
         self.combo_reference.setView(view)
-        # 2. ボックス自体の幅を内容（選択テキスト）に合わせて自動調整
+        # 2. Auto-adjust the box width to fit its content (the selected text)
         self.combo_reference.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.combo_reference.setMinimumWidth(150)
         # ------------------------------------

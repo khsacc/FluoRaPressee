@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (QMainWindow, QPushButton, QVBoxLayout,
 from PyQt5.QtCore import Qt, QTimer
 import pyqtgraph as pg
 
-# ---- 分割したモジュールのインポート ----
+# ---- Imports from the split-out modules ----
 from src.camera import CameraThread
 from src.spectrometer import SpectrometerController, SpectrometerMoveThread
 from src.analysis import DataAnalyzer
@@ -95,8 +95,9 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.is_single_shot = False
         self._ignore_next_frames = False
 
-        # 「GUIの手動測定・校正ダイアログ・(将来の)API経由の測定」のうち、同時にどれか1つだけが
-        # 実際の測定権を持てることを保証する排他ゲート。ウィジェットの有効/無効とは独立したレイヤー。
+        # Exclusive gate ensuring only one of "manual GUI measurement / calibration dialog /
+        # (future) API-triggered measurement" can hold actual acquisition rights at a time.
+        # This is a layer independent of widget enabled/disabled state.
         self._acquisition_gate = threading.Lock()
         self._gate_held_by_me = False
 
@@ -107,14 +108,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.accumulated_data = None
         self.accum_frames = None
         self._accum_use_rejection = False
-        # API経由の取得でのみ設定される、spin_accumulate.value() を上書きする積算数。
-        # None のときは常にウィジェット値を使う(既存のGUI操作の挙動は変わらない)。
+        # Accumulation count that overrides spin_accumulate.value(), set only for API-triggered
+        # acquisitions. When None, the widget value is always used (existing GUI behaviour is unchanged).
         self._active_target_accum = None
-        # api_acquire() が単発取得の完了を待つための Future(GuiBridge経由でAPIワーカー
-        # スレッドから設定され、_process_completed_data() がGUIスレッド上で解決する)。
+        # Future that api_acquire() waits on for a single-shot acquisition to complete (set from the
+        # API worker thread via GuiBridge, resolved on the GUI thread by _process_completed_data()).
         self._api_pending_future = None
-        # 「測定系コントロールをロックしている理由」の集合(連続測定中・APIサーバー起動中など)。
-        # 全ての理由が解消されたときのみ再度有効化する(_lock_ui/_unlock_ui、sequential_mixin.py)。
+        # Set of "reasons the measurement controls are locked" (sequential run in progress,
+        # API server running, etc.). Re-enabled only once every reason has been cleared
+        # (see _lock_ui/_unlock_ui in sequential_mixin.py).
         self._ui_lock_reasons = set()
 
         self.seq_dir = _cache.get("last_seq_dir", "")
@@ -374,7 +376,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self._set_button_style(self.btn_load_calib, self.BUTTON_STYLE_PURPLE)
         self.lbl_notes_calib_loading = QLabel('Loading a configuration will change the grating, centre, ROI, and pixel-wavelength calibration.')
         self.lbl_notes_calib_loading.setStyleSheet("font-style: italic;")
-        self.lbl_notes_calib_loading.setWordWrap(True) # テキストの折り返しを有効にしてレイアウト崩れを防ぐ
+        self.lbl_notes_calib_loading.setWordWrap(True) # Enable word wrap to prevent layout overflow
         
         self.lbl_loaded_calib = QLabel("Loaded: None")
         self.lbl_loaded_calib.setStyleSheet("color: #333; font-size: 12px; font-weight: bold; margin-bottom: 10px;")
@@ -523,7 +525,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         fit_group.setLayout(fit_layout)
         controls_layout.addWidget(fit_group)
 
-        self.pressure_window = None  # ウィンドウのインスタンスを保持する変数を初期化
+        self.pressure_window = None  # Holds the pressure calculator dialog instance once opened
 
         self.press_group = QGroupBox("Pressure Calculation")
         press_layout = QVBoxLayout()
