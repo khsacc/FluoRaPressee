@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
     QRadioButton, QButtonGroup, QStackedWidget, QWidget,
     QMessageBox, QSizePolicy, QLineEdit,
 )
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
 # ── Supplier model strings ────────────────────────────────────────────────────
 SUPPLIER_ANDOR = "Andor"
@@ -105,16 +105,31 @@ class _PathSearchThread(QThread):
             self.found.emit(key, results)
 
 
-# ── Reusable path-picker widget ───────────────────────────────────────────────
+# ── Reusable path-picker widget (with inline validation indicator) ─────────────
 
 class _PathField(QWidget):
-    """Editable combo (for suggestions) + Browse button, for a single directory path."""
+    """
+    Editable combo (for suggestions) + Browse button + ✓/✗ status indicator.
+
+    expected_files: list of filenames to look for inside the chosen directory.
+                    If empty/None, only directory existence is checked.
+    validation_desc: human-readable description used in error messages.
+    """
 
     _SEARCHING = "(searching…)"
 
-    def __init__(self, placeholder: str = "", parent=None):
+    def __init__(
+        self,
+        placeholder: str = "",
+        expected_files: Optional[list[str]] = None,
+        validation_desc: str = "",
+        parent=None,
+    ):
         super().__init__(parent)
         self._key = ""
+        self._expected_files: list[str] = expected_files or []
+        self._validation_desc = validation_desc
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
@@ -128,13 +143,25 @@ class _PathField(QWidget):
         btn.setFixedWidth(80)
         btn.clicked.connect(self._browse)
 
+        self._status = QLabel("–")
+        self._status.setFixedWidth(20)
+        self._status.setAlignment(Qt.AlignCenter)
+        self._status.setStyleSheet("color: gray; font-weight: bold;")
+
         layout.addWidget(self._combo)
         layout.addWidget(btn)
+        layout.addWidget(self._status)
+
+        self._combo.currentTextChanged.connect(self._update_status)
+
+    # ── search integration ────────────────────────────────────────────────────
 
     def begin_search(self):
         if self._combo.findText(self._SEARCHING) < 0:
             self._combo.insertItem(0, self._SEARCHING)
         self._combo.setCurrentText(self._SEARCHING)
+        self._status.setText("…")
+        self._status.setStyleSheet("color: gray;")
 
     def apply_results(self, paths: list[str]):
         saved = self._combo.currentText()
@@ -152,13 +179,51 @@ class _PathField(QWidget):
             self._combo.setCurrentText(paths[0])
         elif _FALLBACK_DEFAULTS.get(self._key, ""):
             self._combo.setCurrentText(_FALLBACK_DEFAULTS[self._key])
+        # setCurrentText triggers currentTextChanged → _update_status
 
-    # set_key is called by _PagePaths so apply_results can read the fallback default
+    # ── key / value ──────────────────────────────────────────────────────────
+
     def set_key(self, key: str):
         self._key = key
 
     def value(self) -> str:
         return self._combo.currentText().strip()
+
+    # ── validation ───────────────────────────────────────────────────────────
+
+    def is_valid(self) -> bool:
+        path = self.value()
+        if not path or path == self._SEARCHING:
+            return False
+        if not os.path.isdir(path):
+            return False
+        if not self._expected_files:
+            return True
+        return any(os.path.isfile(os.path.join(path, f)) for f in self._expected_files)
+
+    def _update_status(self, text: str):
+        if not text or text == self._SEARCHING:
+            self._status.setText("–")
+            self._status.setStyleSheet("color: gray; font-weight: bold;")
+            return
+        if self.is_valid():
+            self._status.setText("✓")
+            self._status.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            self._status.setText("✗")
+            self._status.setStyleSheet("color: red; font-weight: bold;")
+
+    def validation_error(self) -> Optional[str]:
+        """Return a human-readable error string if invalid, else None."""
+        if self.is_valid():
+            return None
+        path = self.value() or "(empty)"
+        if self._expected_files:
+            files = " / ".join(self._expected_files)
+            return f"{self._validation_desc}: {files} not found in\n  {path}"
+        return f"{self._validation_desc}: directory not found:\n  {path}"
+
+    # ── browse ────────────────────────────────────────────────────────────────
 
     def _browse(self):
         start = self.value() or "C:\\"
@@ -200,7 +265,13 @@ class _PagePaths(QWidget):
         super().__init__(parent)
         root = QVBoxLayout(self)
         root.addWidget(QLabel("<b>Step 2 / 3 — Connection &amp; path settings</b>"))
-        root.addSpacing(8)
+        root.addSpacing(4)
+        root.addWidget(QLabel(
+            '<span style="color: gray; font-size: small;">'
+            "✓ = file found   ✗ = not found   – = not yet checked"
+            "</span>"
+        ))
+        root.addSpacing(6)
 
         self._stack = QStackedWidget()
         self._andor_panel = self._build_andor()
@@ -227,10 +298,14 @@ class _PagePaths(QWidget):
         w = QWidget()
         vbox = QVBoxLayout(w)
         grp = QGroupBox("Andor Shamrock / Kymera")
-        glayout = QVBoxLayout(grp)
-        glayout.addWidget(QLabel("Directory containing ShamrockCIF.dll:"))
-        self._andor_dll = _PathField("e.g. C:\\Program Files\\Andor SDK\\Shamrock SDK")
-        glayout.addWidget(self._andor_dll)
+        gl = QVBoxLayout(grp)
+        gl.addWidget(QLabel("Directory containing ShamrockCIF.dll:"))
+        self._andor_dll = _PathField(
+            placeholder="e.g. C:\\Program Files\\Andor SDK\\Shamrock SDK",
+            expected_files=["ShamrockCIF.dll"],
+            validation_desc="Andor Shamrock DLL",
+        )
+        gl.addWidget(self._andor_dll)
         vbox.addWidget(grp)
         return w
 
@@ -253,12 +328,22 @@ class _PagePaths(QWidget):
         # Camera SDK paths
         sdk_grp = QGroupBox("Camera SDK paths")
         sdk_v = QVBoxLayout(sdk_grp)
+
         sdk_v.addWidget(QLabel("PVCAM DLL directory  (pvcam32.dll):"))
-        self._pi_pvcam = _PathField("e.g. C:\\Windows\\System32")
+        self._pi_pvcam = _PathField(
+            placeholder="e.g. C:\\Windows\\System32",
+            expected_files=["pvcam32.dll", "pvcam.dll"],
+            validation_desc="PVCAM DLL",
+        )
         sdk_v.addWidget(self._pi_pvcam)
         sdk_v.addSpacing(6)
-        sdk_v.addWidget(QLabel("PICam Runtime directory:"))
-        self._pi_picam = _PathField(r"e.g. C:\Program Files\Princeton Instruments\PICam\Runtime")
+
+        sdk_v.addWidget(QLabel("PICam Runtime directory  (picam.dll / picam64.dll):"))
+        self._pi_picam = _PathField(
+            placeholder=r"e.g. C:\Program Files\Princeton Instruments\PICam\Runtime",
+            expected_files=["picam.dll", "picam64.dll"],
+            validation_desc="PICam Runtime",
+        )
         sdk_v.addWidget(self._pi_picam)
         vbox.addWidget(sdk_grp)
         return w
@@ -280,7 +365,7 @@ class _PagePaths(QWidget):
     def start_search(self):
         """Launch background path search for all fields (Andor + PI)."""
         if self._search_thread and self._search_thread.isRunning():
-            return  # already running — results will arrive via signal
+            return
         for field in self._fields.values():
             field.begin_search()
         self._search_thread = _PathSearchThread()
@@ -296,14 +381,23 @@ class _PagePaths(QWidget):
     def show_supplier(self, supplier: str):
         self._stack.setCurrentIndex(0 if supplier == SUPPLIER_ANDOR else 1)
 
+    # ── validation ───────────────────────────────────────────────────────────
+
+    def get_validation_errors(self, supplier: str) -> list[str]:
+        """Return list of human-readable error strings for the active supplier's fields."""
+        if supplier == SUPPLIER_ANDOR:
+            fields = [self._andor_dll]
+        else:
+            # When GigE is added, branch here on supplier == SUPPLIER_PI_GIGE
+            # and check additional GigE-specific fields.
+            fields = [self._pi_pvcam, self._pi_picam]
+        return [e for f in fields if (e := f.validation_error()) is not None]
+
     # ── result collection ─────────────────────────────────────────────────────
 
     def values(self, supplier: str) -> dict:
         if supplier == SUPPLIER_ANDOR:
             return {"dll_path": self._andor_dll.value()}
-        # SUPPLIER_PI (USB, current default)
-        # When GigE is added, branch here on supplier == SUPPLIER_PI_GIGE
-        # and collect the additional GigE-specific keys.
         return {
             "com_port":       self._pi_com.currentText().strip(),
             "pvcam_dll_path": self._pi_pvcam.value(),
@@ -359,8 +453,8 @@ class ConfigWizard(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Spectrometer Setup Wizard")
-        self.setMinimumWidth(520)
-        self.resize(560, 380)
+        self.setMinimumWidth(540)
+        self.resize(580, 400)
 
         self._p_supplier = _PageSupplier()
         self._p_paths    = _PagePaths()
@@ -402,17 +496,35 @@ class ConfigWizard(QDialog):
                 self._p_paths.start_search()
                 self._search_started = True
             self._stack.setCurrentIndex(1)
+
         elif page == 1:
+            supplier = self._p_supplier.supplier()
+            errors = self._p_paths.get_validation_errors(supplier)
+            if errors:
+                detail = "\n\n".join(errors)
+                reply = QMessageBox.warning(
+                    self,
+                    "Path verification failed",
+                    f"The following paths could not be verified:\n\n{detail}\n\n"
+                    "You can go back and correct them, or proceed anyway\n"
+                    "(the app will fall back to debug mode for unresolved hardware).\n\n"
+                    "Proceed to the next step?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No,
+                )
+                if reply == QMessageBox.No:
+                    return
             self._stack.setCurrentIndex(2)
+
         elif page == 2:
             self._finish()
             return
+
         self._refresh_buttons()
 
     def _go_back(self):
         page = self._stack.currentIndex()
         if page > 0:
-            # If going back to page 0, update the paths panel supplier on the way forward again
             self._stack.setCurrentIndex(page - 1)
         self._refresh_buttons()
 
