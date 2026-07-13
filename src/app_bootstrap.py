@@ -1,7 +1,7 @@
 import sys
 import os
 import json
-from PyQt5.QtWidgets import QApplication, QInputDialog, QMessageBox
+from PyQt5.QtWidgets import QApplication, QDialog, QMessageBox
 
 def print_software_and_author_info():
     print(
@@ -11,63 +11,42 @@ def print_software_and_author_info():
         "================================================================================\n================================================================================\n"
     )
 
+_FALLBACK_CONFIG = {
+    "model": "Andor",
+    "grating": [
+        {"index": 1, "grooves": 600,  "defaultROI": {"from": 100, "to": 140}},
+        {"index": 2, "grooves": 1200, "defaultROI": {"from": 100, "to": 140}},
+        {"index": 3, "grooves": 1800, "defaultROI": {"from": 100, "to": 140}},
+    ],
+    "flip_x": False,
+}
+
 def check_and_create_config():
     config_path = "spectrometerConfig.json"
-    default_config = {
-        "model": "Andor",
-        "com_port": "COM3",
-        "grating": [
-            {
-                "index": 1,
-                "grooves": 600,
-                "defaultROI": {"from": 100, "to": 140}
-            },
-            {
-                "index": 2,
-                "grooves": 1200,
-                "defaultROI": {"from": 100, "to": 140}
-            },
-            {
-                "index": 3,
-                "grooves": 1800,
-                "defaultROI": {"from": 100, "to": 140}
-            }
-        ],
-        "flip_x": False
-    }
+    if os.path.exists(config_path):
+        return
 
-    if not os.path.exists(config_path):
-        app_temp = QApplication.instance()
-        if not app_temp:
-            app_temp = QApplication(sys.argv)
+    app_temp = QApplication.instance()
+    if not app_temp:
+        app_temp = QApplication(sys.argv)
 
-        text, ok = QInputDialog.getText(
+    from src.config_wizard import ConfigWizard
+    wizard = ConfigWizard()
+    if wizard.exec_() == QDialog.Accepted:
+        config = wizard.result_config()
+    else:
+        QMessageBox.information(
             None,
-            "Spectrometer Configuration",
-            "spectrometerConfig.json not found.\nPlease enter the gratings (grooves/mm) separated by commas\n(e.g., 600, 1200, 1800):"
+            "Using default configuration",
+            "Setup wizard was cancelled.\n"
+            "A default Andor configuration will be used.\n"
+            "You can edit spectrometerConfig.json manually to adjust settings.",
         )
+        config = _FALLBACK_CONFIG
 
-        gratings_int = []
-        if ok and text:
-            gratings_str = [g.strip() for g in text.split(",") if g.strip()]
-            for g in gratings_str:
-                try:
-                    gratings_int.append(int(g))
-                except ValueError:
-                    pass
-
-        if gratings_int:
-            new_grating = []
-            for i, g_val in enumerate(gratings_int):
-                new_grating.append({
-                    "index": i + 1,
-                    "grooves": g_val,
-                    "defaultROI": {"from": 100, "to": 140}
-                })
-            default_config["grating"] = new_grating
-
-        try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(default_config, f, indent=4)
-        except Exception as e:
-            QMessageBox.warning(None, "Warning", f"Failed to save config file:\n{e}")
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=4, ensure_ascii=False)
+        print(f"spectrometerConfig.json created: model={config.get('model')}")
+    except Exception as e:
+        QMessageBox.warning(None, "Warning", f"Failed to save config file:\n{e}")
