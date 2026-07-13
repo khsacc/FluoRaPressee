@@ -299,11 +299,16 @@ class CameraThreadPI(QThread):
             applied = self.cam.set_roi(0, self.det_width, 0, self.det_height, hbin=1, vbin=self.det_height)
         elif self.roi_mode == "1d_roi":
             v_size = self.roi_vend - self.roi_vstart
-            applied = None
-            if v_size > 0:
-                applied = self.cam.set_roi(0, self.det_width, self.roi_vstart, self.roi_vend, hbin=1, vbin=v_size)
+            if v_size <= 0:
+                raise ValueError(
+                    f"Invalid vertical ROI: start={self.roi_vstart}, end={self.roi_vend}"
+                )
+            applied = self.cam.set_roi(
+                0, self.det_width, self.roi_vstart, self.roi_vend,
+                hbin=1, vbin=v_size,
+            )
         else:
-            applied = None
+            raise ValueError(f"Unknown ROI mode: {self.roi_mode}")
         if applied is not None:
             # set_roi() may round values to satisfy hardware constraints; log what was actually applied.
             print(f"ROI applied (hstart, hend, vstart, vend, hbin, vbin): {applied}")
