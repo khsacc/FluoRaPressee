@@ -20,6 +20,7 @@ class CameraThreadAndor(QThread):
     exposure_set_finished = pyqtSignal()
     temperature_set_finished = pyqtSignal()
     acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors
+    hardware_error = pyqtSignal(str)  # emitted when a settings write (exposure/temperature) fails on hardware
 
     # カメラ仕様の定数
     DEFAULT_DETECTOR_WIDTH = 1024
@@ -68,15 +69,14 @@ class CameraThreadAndor(QThread):
                     print("Connecting to camera and initializing cooler...")
                     self.cam = Andor.AndorSDK2Camera()
                     self.det_width, self.det_height = self.cam.get_detector_size()
+                    print(f"Connected to Andor camera. Detector size: {self.det_width}x{self.det_height}")
+                    self.cam.set_temperature(-65)
+                    self.cam.set_cooler(True)
+                    self.cam.set_exposure(0.1)
                 except Exception as e:
                     print(f"Failed to initialize Andor camera: {e}")
                     self.init_failed.emit(str(e))
                     return
-                self.det_width, self.det_height = self.cam.get_detector_size()
-                print(f"Connected to Andor camera. Detector size: {self.det_width}x{self.det_height}")
-                self.cam.set_temperature(-65)
-                self.cam.set_cooler(True)
-                self.cam.set_exposure(0.1) 
                 self.init_finished.emit()
             
             was_measuring = False
@@ -100,6 +100,7 @@ class CameraThreadAndor(QThread):
                             print(f"Exposure set to {new_exposure} s")
                         except Exception as e:
                             print(f"Failed to set exposure: {e}")
+                            self.hardware_error.emit(f"Failed to set exposure: {e}")
                     self.current_exposure = new_exposure
                     with self._lock:
                         self.new_exposure = None
@@ -115,6 +116,7 @@ class CameraThreadAndor(QThread):
                             print(f"Target temperature set to {new_temperature} C")
                         except Exception as e:
                             print(f"Failed to set temperature: {e}")
+                            self.hardware_error.emit(f"Failed to set temperature: {e}")
                     with self._lock:
                         self.new_temperature = None
                     self.temperature_set_finished.emit()

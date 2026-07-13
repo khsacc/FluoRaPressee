@@ -695,6 +695,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.thread.data_ready.connect(self.on_data_ready)
         self.thread.init_finished.connect(self.on_camera_initialized)
         self.thread.init_failed.connect(self.on_camera_init_failed)
+        self.thread.hardware_error.connect(self.on_hardware_error)
         self.thread.temperature_ready.connect(self.on_temperature_read)
         self.thread.acquisition_failed.connect(self.on_acquisition_failed)
         

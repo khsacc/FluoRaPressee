@@ -106,6 +106,10 @@ class AcquisitionMixin:
         self.radio_2d.setText(f"2D Image View ({self.thread.det_width}x{self.thread.det_height})")
         self.apply_roi_settings()
 
+    def on_hardware_error(self, message):
+        self.status_label.setText(f"Camera error: {message}")
+        QMessageBox.warning(self, "Camera Error", message)
+
     def on_camera_init_failed(self, reason):
         self.init_dialog.reject()
         self.centralWidget().setEnabled(True)

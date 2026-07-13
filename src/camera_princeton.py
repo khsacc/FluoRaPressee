@@ -34,6 +34,7 @@ class CameraThreadPI(QThread):
     exposure_set_finished = pyqtSignal()
     temperature_set_finished = pyqtSignal()
     acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors
+    hardware_error = pyqtSignal(str)  # emitted when a settings write (exposure/temperature) fails on hardware
 
     def __init__(self, config=None, debug=False):
         super().__init__()
@@ -118,6 +119,9 @@ class CameraThreadPI(QThread):
             else:
                 try:
                     self._connect_camera()
+                    self.det_width, self.det_height = self.cam.get_detector_size()
+                    print(f"Connected. Detector size: {self.det_width}x{self.det_height}")
+                    self.current_exposure = self.cam.set_exposure(0.1)
                 except CameraInitError as e:
                     print(f"Camera initialization failed: {e}")
                     self.init_failed.emit(str(e))
@@ -126,11 +130,6 @@ class CameraThreadPI(QThread):
                     print(f"Unexpected error during camera initialization: {e}")
                     self.init_failed.emit(str(e))
                     return
-
-                self.det_width, self.det_height = self.cam.get_detector_size()
-                print(f"Connected. Detector size: {self.det_width}x{self.det_height}")
-
-                self.current_exposure = self.cam.set_exposure(0.1)
 
                 self.init_finished.emit()
 
@@ -155,6 +154,7 @@ class CameraThreadPI(QThread):
                             self.current_exposure = self.cam.set_exposure(new_exposure)
                         except Exception as e:
                             print(f"Failed to set exposure: {e}")
+                            self.hardware_error.emit(f"Failed to set exposure: {e}")
                     with self._lock:
                         self.new_exposure = None
                     self.exposure_set_finished.emit()
@@ -167,6 +167,7 @@ class CameraThreadPI(QThread):
                             self.cam.set_attribute_value("Sensor Temperature Set Point", float(new_temperature))
                         except Exception as e:
                             print(f"Failed to set temperature: {e}")
+                            self.hardware_error.emit(f"Failed to set temperature: {e}")
                     with self._lock:
                         self.new_temperature = None
                     self.temperature_set_finished.emit()
@@ -189,13 +190,26 @@ class CameraThreadPI(QThread):
                         was_measuring = True
 
                     if settings_changed:
-                        # Clear flag before applying so a new update arriving during
-                        # _apply_camera_settings() is not silently dropped.
-                        with self._lock:
-                            self.settings_changed = False
-                        if not self.debug:
-                            with self._hw_lock:
-                                self._apply_camera_settings()
+                        if self.debug:
+                            with self._lock:
+                                self.settings_changed = False
+                        else:
+                            try:
+                                with self._hw_lock:
+                                    self._apply_camera_settings()
+                            except Exception as e:
+                                # Do not clear settings_changed: the old ROI is still in effect on the
+                                # hardware, so retry applying the same intended settings next time
+                                # instead of silently measuring with stale/undefined ROI.
+                                print(f"Failed to apply ROI settings; stopping acquisition: {e}")
+                                with self._lock:
+                                    self.is_measuring = False
+                                self.acquisition_failed.emit(str(e))
+                                time.sleep(0.05)
+                                continue
+                            # Only clear the flag once the hardware confirms the new ROI was applied.
+                            with self._lock:
+                                self.settings_changed = False
 
                     try:
                         if self.debug:
@@ -246,7 +260,7 @@ class CameraThreadPI(QThread):
                 self.cam = None
             if self._dll_dir_cookie is not None:
                 try:
-                    self._dll_dir_cookie.remove()
+                    self._dll_dir_cookie.close()
                 except Exception:
                     pass
                 self._dll_dir_cookie = None
@@ -275,24 +289,23 @@ class CameraThreadPI(QThread):
             self.new_temperature = temp
 
     def _apply_camera_settings(self):
+        """ROI/binningをハードウェアへ適用する。失敗時は例外をそのまま呼び出し元へ伝播させる
+        (呼び出し元が古いROIのまま測定を継続しないよう、成否を判断できる必要があるため)。"""
         if self.cam is None: return
-        try:
-            if self.roi_mode == "2d":
-                applied = self.cam.set_roi(0, self.det_width, 0, self.det_height, hbin=1, vbin=1)
-            elif self.roi_mode == "1d_full":
-                applied = self.cam.set_roi(0, self.det_width, 0, self.det_height, hbin=1, vbin=self.det_height)
-            elif self.roi_mode == "1d_roi":
-                v_size = self.roi_vend - self.roi_vstart
-                applied = None
-                if v_size > 0:
-                    applied = self.cam.set_roi(0, self.det_width, self.roi_vstart, self.roi_vend, hbin=1, vbin=v_size)
-            else:
-                applied = None
-            if applied is not None:
-                # set_roi() may round values to satisfy hardware constraints; log what was actually applied.
-                print(f"ROI applied (hstart, hend, vstart, vend, hbin, vbin): {applied}")
-        except Exception as e:
-            print(f"Failed to apply ROI settings: {e}")
+        if self.roi_mode == "2d":
+            applied = self.cam.set_roi(0, self.det_width, 0, self.det_height, hbin=1, vbin=1)
+        elif self.roi_mode == "1d_full":
+            applied = self.cam.set_roi(0, self.det_width, 0, self.det_height, hbin=1, vbin=self.det_height)
+        elif self.roi_mode == "1d_roi":
+            v_size = self.roi_vend - self.roi_vstart
+            applied = None
+            if v_size > 0:
+                applied = self.cam.set_roi(0, self.det_width, self.roi_vstart, self.roi_vend, hbin=1, vbin=v_size)
+        else:
+            applied = None
+        if applied is not None:
+            # set_roi() may round values to satisfy hardware constraints; log what was actually applied.
+            print(f"ROI applied (hstart, hend, vstart, vend, hbin, vbin): {applied}")
 
     def update_roi_settings(self, mode, vstart=0, vend=256):
         with self._lock:
@@ -325,8 +338,12 @@ class CameraThreadPI(QThread):
             if self.cam is None: return None
 
             if self.settings_changed:
-                with self._hw_lock:
-                    self._apply_camera_settings()
+                try:
+                    with self._hw_lock:
+                        self._apply_camera_settings()
+                except Exception as e:
+                    print(f"Failed to apply ROI settings: {e}")
+                    return None
                 self.settings_changed = False
 
             try:
