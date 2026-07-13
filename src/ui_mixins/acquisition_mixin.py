@@ -106,6 +106,19 @@ class AcquisitionMixin:
         self.radio_2d.setText(f"2D Image View ({self.thread.det_width}x{self.thread.det_height})")
         self.apply_roi_settings()
 
+    def on_camera_init_failed(self, reason):
+        self.init_dialog.reject()
+        self.centralWidget().setEnabled(True)
+
+        self.btn_commence.setEnabled(False)
+        self.btn_single.setEnabled(False)
+
+        self.status_label.setText("Camera initialization failed")
+        QMessageBox.critical(
+            self, "Camera Initialization Failed",
+            f"Failed to initialize the camera:\n\n{reason}"
+        )
+
     def apply_roi_settings(self):
         is_custom_roi = self.radio_1d_roi.isChecked()
         self.spin_vstart.setEnabled(is_custom_roi)

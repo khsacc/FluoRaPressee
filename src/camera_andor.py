@@ -14,6 +14,7 @@ class CameraThreadAndor(QThread):
     """Andor カメラの制御と画像取得を行うスレッド"""
     data_ready = pyqtSignal(str, np.ndarray)
     init_finished = pyqtSignal()
+    init_failed = pyqtSignal(str)  # emitted when hardware initialization fails, with a human-readable reason
     temperature_ready = pyqtSignal(float)
 
     exposure_set_finished = pyqtSignal()
@@ -61,15 +62,16 @@ class CameraThreadAndor(QThread):
                 self.det_width, self.det_height = self.DEFAULT_DETECTOR_WIDTH, self.DEFAULT_DETECTOR_HEIGHT
                 self.init_finished.emit()
             else:
-                if Andor is None:
-                    raise RuntimeError("Andor SDK not installed. Install pylablib to use hardware camera.")
-                print("Connecting to camera and initializing cooler...")
                 try:
+                    if Andor is None:
+                        raise RuntimeError("Andor SDK not installed. Install pylablib to use hardware camera.")
+                    print("Connecting to camera and initializing cooler...")
                     self.cam = Andor.AndorSDK2Camera()
                     self.det_width, self.det_height = self.cam.get_detector_size()
                 except Exception as e:
                     print(f"Failed to initialize Andor camera: {e}")
-                    raise
+                    self.init_failed.emit(str(e))
+                    return
                 self.det_width, self.det_height = self.cam.get_detector_size()
                 print(f"Connected to Andor camera. Detector size: {self.det_width}x{self.det_height}")
                 self.cam.set_temperature(-65)

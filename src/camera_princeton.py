@@ -1,54 +1,34 @@
-﻿import os
-import sys
+import os
 import time
-import json
 import numpy as np
 from threading import Lock
 from PyQt5.QtCore import QThread, pyqtSignal
 
-def _get_pvcam_dll_path():
-    """PVCamのDLLパスを取得する。
-
-    spectrometerConfig.json に "pvcam_dll_path" キーがあればそれを使う。
-    無ければ従来通り System32 (32bit環境での標準的な配置場所) をデフォルトとする。
-    """
-    default_path = "C:\\Windows\\System32"
-    config_path = "spectrometerConfig.json"
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            return config.get("pvcam_dll_path", default_path)
-        except Exception as e:
-            print(f"Failed to read config file: {e}. Using default PVCam DLL path.")
-    return default_path
-
-# PVCamのDLLパス (独自の場所にある場合は spectrometerConfig.json の "pvcam_dll_path" で上書き可能)
-dll_path = _get_pvcam_dll_path()
-
-if hasattr(os, 'add_dll_directory'):
-    try:
-        os.add_dll_directory(dll_path)
-    except Exception as e:
-        print("add_dll_directory failed", e)
-
-os.environ["PATH"] = dll_path + os.pathsep + os.environ.get("PATH", "")
-
+# ダミーモード時はエラーを回避するためtry-exceptで囲む
 try:
     import pylablib
-    # PVCam用のモジュールをインポート
     from pylablib.devices import PrincetonInstruments
-    print("PVCam cameras:", PrincetonInstruments.list_cameras_pvcam())
-    # pylablibの内部パス設定をPVCam用に変更
-    pylablib.par["devices/dlls/pvcam"] = dll_path  
-         
-except Exception as e:
-    print(f"Error during loading pylablib PVCam: {repr(e)}")
+except ImportError:
+    pylablib = None
     PrincetonInstruments = None
+
+# PICam Runtimeのデフォルトインストール先
+_DEFAULT_PICAM_RUNTIME_PATH = r"C:\Program Files\Princeton Instruments\PICam\Runtime"
+
+
+def _get_picam_runtime_path(config):
+    # 設定キー名は既存の "PIcam_dll_path" を維持する (将来的に "picam_runtime_path" へ統一予定)
+    return (config or {}).get("PIcam_dll_path", _DEFAULT_PICAM_RUNTIME_PATH)
+
+
+class CameraInitError(Exception):
+    """カメラ初期化に失敗した際に、GUIへ伝える理由を保持して送出する例外。"""
+
 
 class CameraThreadPI(QThread):
     data_ready = pyqtSignal(str, np.ndarray)
     init_finished = pyqtSignal()
+    init_failed = pyqtSignal(str)  # emitted when hardware initialization fails, with a human-readable reason
     temperature_ready = pyqtSignal(float)
 
     exposure_set_finished = pyqtSignal()
@@ -63,50 +43,97 @@ class CameraThreadPI(QThread):
         self.thread_active = True
         self.is_measuring = False
         self.cam = None
+        self._dll_dir_cookie = None
         self._lock = Lock()
         self._hw_lock = Lock()  # ハードウェア(snap/設定適用)への排他アクセス用ロック
 
-        self.det_width = 1024
-        self.det_height = 1024 
+        # PIXIS: 100F 相当のデフォルト値 (実機接続後は get_detector_size() で上書きされる)
+        self.det_width = 1340
+        self.det_height = 100
 
         self.roi_mode = "1d_roi"
         self.roi_vstart = 45
         self.roi_vend = 65
         self.settings_changed = True
-        
+
         self.request_temp = False
         self.new_exposure = None
         self.new_temperature = None
-        
+
         self.mock_exposure = 0.1
         self.mock_temp = -70
         self.current_exposure = 0.1
 
+    def _connect_camera(self):
+        """PICamカメラを列挙・選択して接続する。失敗時は CameraInitError を送出する。"""
+        if PrincetonInstruments is None:
+            raise CameraInitError("pylablib is not installed; cannot access PICam cameras.")
+
+        runtime_path = _get_picam_runtime_path(self.config)
+        if hasattr(os, 'add_dll_directory'):
+            try:
+                self._dll_dir_cookie = os.add_dll_directory(runtime_path)
+            except Exception as e:
+                print(f"add_dll_directory failed for PICam runtime path '{runtime_path}': {e}")
+        os.environ["PATH"] = runtime_path + os.pathsep + os.environ.get("PATH", "")
+        pylablib.par["devices/dlls/picam"] = runtime_path
+
+        try:
+            cameras = PrincetonInstruments.list_cameras()
+        except Exception as e:
+            raise CameraInitError(f"Failed to enumerate PICam cameras: {e}")
+
+        if not cameras:
+            raise CameraInitError(
+                "No PICam camera detected. Check the USB connection and PICam Runtime installation."
+            )
+
+        wanted_serial = self.config.get("camera_serial_number")
+        if wanted_serial:
+            target = next((c for c in cameras if c.serial_number == wanted_serial), None)
+            if target is None:
+                found = ", ".join(c.serial_number for c in cameras)
+                raise CameraInitError(
+                    f"Camera with serial number '{wanted_serial}' not found. "
+                    f"Detected serial number(s): {found}"
+                )
+        elif len(cameras) == 1:
+            target = cameras[0]
+        else:
+            found = ", ".join(f"{c.model}/{c.serial_number}" for c in cameras)
+            raise CameraInitError(
+                f"Multiple PICam cameras detected ({found}) but no 'camera_serial_number' is set "
+                "in spectrometerConfig.json. Please specify which camera to use."
+            )
+
+        print(f"Connecting to PICam camera: {target.model} / {target.serial_number} / {target.interface}")
+        self.cam = PrincetonInstruments.PicamCamera(serial_number=target.serial_number)
+
     def run(self):
         try:
-            if self.debug or PrincetonInstruments is None:
+            if self.debug:
                 print("[DEBUG MODE] Activating dummy camera...")
                 time.sleep(1.0)
                 self.init_finished.emit()
-            else:      
-                print("Connecting to PVCam (Princeton Instruments)...")
-                # PicamCamera ではなく PVCamCamera を使用
-                self.cam = PrincetonInstruments.PVCamCamera()
+            else:
+                try:
+                    self._connect_camera()
+                except CameraInitError as e:
+                    print(f"Camera initialization failed: {e}")
+                    self.init_failed.emit(str(e))
+                    return
+                except Exception as e:
+                    print(f"Unexpected error during camera initialization: {e}")
+                    self.init_failed.emit(str(e))
+                    return
 
-                # 検知器サイズの取得
                 self.det_width, self.det_height = self.cam.get_detector_size()
                 print(f"Connected. Detector size: {self.det_width}x{self.det_height}")
-                
-                # 初期設定
-                self.cam.set_exposure(0.1)
-                try:
-                    # PVCamでの温度設定パラメータ名は通常 "setpoint"
-                    self.cam.set_attribute_value("setpoint", -7000) # PVCamは0.01度単位の整数値が必要な場合があります
-                except Exception as e:
-                    print(f"Notice: Could not set default temperature. {e}")
+
+                self.current_exposure = self.cam.set_exposure(0.1)
 
                 self.init_finished.emit()
-            
+
             was_measuring = False
             _consec_errors = 0
 
@@ -121,12 +148,13 @@ class CameraThreadPI(QThread):
                 if new_exposure is not None:
                     if self.debug:
                         self.mock_exposure = new_exposure
+                        self.current_exposure = new_exposure
                     else:
                         try:
-                            self.cam.set_exposure(new_exposure)
+                            # PICamは秒⇔ミリ秒の変換を内部で行い、機器の丸めを反映した実設定値を返す
+                            self.current_exposure = self.cam.set_exposure(new_exposure)
                         except Exception as e:
                             print(f"Failed to set exposure: {e}")
-                    self.current_exposure = new_exposure
                     with self._lock:
                         self.new_exposure = None
                     self.exposure_set_finished.emit()
@@ -136,8 +164,7 @@ class CameraThreadPI(QThread):
                         self.mock_temp = new_temperature
                     else:
                         try:
-                            # PVCamの仕様に合わせ、必要に応じて値を100倍（-70.0 -> -7000）にします
-                            self.cam.set_attribute_value("setpoint", int(float(new_temperature) * 100))
+                            self.cam.set_attribute_value("Sensor Temperature Set Point", float(new_temperature))
                         except Exception as e:
                             print(f"Failed to set temperature: {e}")
                     with self._lock:
@@ -149,9 +176,8 @@ class CameraThreadPI(QThread):
                         self.temperature_ready.emit(self.mock_temp + np.random.uniform(-0.5, 0.5))
                     else:
                         try:
-                            # PVCamでの現在の温度取得 (cur_tempは通常0.01度単位)
-                            temp_raw = self.cam.get_attribute_value("cur_temp")
-                            self.temperature_ready.emit(temp_raw / 100.0)
+                            temp = self.cam.get_attribute_value("Sensor Temperature Reading")
+                            self.temperature_ready.emit(float(temp))
                         except Exception as e:
                             print(f"Failed to read temperature: {e}")
                             self.temperature_ready.emit(-999.0)
@@ -195,11 +221,7 @@ class CameraThreadPI(QThread):
                             if self.roi_mode == "2d":
                                 self.data_ready.emit("2d", data)
                             else:
-                                if data.ndim == 2:
-                                    spectrum = np.sum(data, axis=0)
-                                else:
-                                    spectrum = data
-                                self.data_ready.emit("1d", spectrum)
+                                self.data_ready.emit("1d", self._extract_spectrum(data))
                         _consec_errors = 0
                     except Exception as e:
                         print(f"Failed to acquire camera data: {e}")
@@ -215,13 +237,30 @@ class CameraThreadPI(QThread):
                     _consec_errors = 0
                     was_measuring = False
                     time.sleep(0.05)
-                
+
         except Exception as e:
             print(f"An error occurred in the camera thread: {e}")
         finally:
             if self.cam is not None:
                 self.cam.close()
                 self.cam = None
+            if self._dll_dir_cookie is not None:
+                try:
+                    self._dll_dir_cookie.remove()
+                except Exception:
+                    pass
+                self._dll_dir_cookie = None
+
+    @staticmethod
+    def _extract_spectrum(data):
+        """PicamCamera.snap() が返す2次元フレームを1次元スペクトルへ正規化する。"""
+        if data.ndim == 1:
+            return data
+        if data.ndim == 2:
+            if data.shape[0] == 1:
+                return data[0]
+            return np.sum(data, axis=0)
+        raise ValueError(f"Unexpected frame shape from camera: {data.shape}")
 
     def read_temperature(self):
         with self._lock:
@@ -239,14 +278,19 @@ class CameraThreadPI(QThread):
         if self.cam is None: return
         try:
             if self.roi_mode == "2d":
-                self.cam.set_roi(0, self.det_width, 0, self.det_height, hbin=1, vbin=1)
+                applied = self.cam.set_roi(0, self.det_width, 0, self.det_height, hbin=1, vbin=1)
             elif self.roi_mode == "1d_full":
-                self.cam.set_roi(0, self.det_width, 0, self.det_height, hbin=1, vbin=self.det_height)
+                applied = self.cam.set_roi(0, self.det_width, 0, self.det_height, hbin=1, vbin=self.det_height)
             elif self.roi_mode == "1d_roi":
                 v_size = self.roi_vend - self.roi_vstart
+                applied = None
                 if v_size > 0:
-                    # PVCamでも同様の引数(hstart, hend, vstart, vend, hbin, vbin)が使えます
-                    self.cam.set_roi(0, self.det_width, self.roi_vstart, self.roi_vend, hbin=1, vbin=v_size)
+                    applied = self.cam.set_roi(0, self.det_width, self.roi_vstart, self.roi_vend, hbin=1, vbin=v_size)
+            else:
+                applied = None
+            if applied is not None:
+                # set_roi() may round values to satisfy hardware constraints; log what was actually applied.
+                print(f"ROI applied (hstart, hend, vstart, vend, hbin, vbin): {applied}")
         except Exception as e:
             print(f"Failed to apply ROI settings: {e}")
 
@@ -256,7 +300,7 @@ class CameraThreadPI(QThread):
             self.roi_vstart = vstart
             self.roi_vend = vend
             self.settings_changed = True
-    
+
     @property
     def camera(self):
         return self
@@ -272,7 +316,7 @@ class CameraThreadPI(QThread):
             y2 = 250 * np.exp(-((x - 675)**2) / (2 * 4**2))
             base = 100 + np.random.normal(0, 10, self.det_width)
             spectrum = y1 + y2 + base
-            
+
             if self.roi_mode == "2d":
                 return np.tile(spectrum, (self.det_height, 1))
             else:

@@ -46,16 +46,6 @@ _SEARCH_SPECS: dict[str, tuple[Optional[str], list[str]]] = {
             r"C:\Windows\SysWOW64",
         ],
     ),
-    "pvcam_dll_path": (
-        "pvcam32.dll",
-        [
-            r"C:\Windows\System32",
-            r"C:\Windows\SysWOW64",
-            r"C:\Program Files\Photometrics\PVCAM",
-            r"C:\Program Files (x86)\Photometrics\PVCAM",
-            r"C:\Program Files\Princeton Instruments\PVCAM",
-        ],
-    ),
     "PIcam_dll_path": (
         None,
         [
@@ -69,7 +59,6 @@ _SEARCH_SPECS: dict[str, tuple[Optional[str], list[str]]] = {
 
 _FALLBACK_DEFAULTS = {
     "dll_path":       "",
-    "pvcam_dll_path": r"C:\Windows\System32",
     "PIcam_dll_path": r"C:\Program Files\Princeton Instruments\PICam\Runtime",
 }
 
@@ -284,7 +273,6 @@ class _PagePaths(QWidget):
         # path fields indexed by config key
         self._fields: dict[str, _PathField] = {
             "dll_path":       self._andor_dll,
-            "pvcam_dll_path": self._pi_pvcam,
             "PIcam_dll_path": self._pi_picam,
         }
         for key, field in self._fields.items():
@@ -325,18 +313,9 @@ class _PagePaths(QWidget):
         com_h.addStretch()
         vbox.addWidget(com_grp)
 
-        # Camera SDK paths
-        sdk_grp = QGroupBox("Camera SDK paths")
+        # Camera SDK path + camera selection
+        sdk_grp = QGroupBox("Camera (PICam)")
         sdk_v = QVBoxLayout(sdk_grp)
-
-        sdk_v.addWidget(QLabel("PVCAM DLL directory  (pvcam32.dll):"))
-        self._pi_pvcam = _PathField(
-            placeholder="e.g. C:\\Windows\\System32",
-            expected_files=["pvcam32.dll", "pvcam.dll"],
-            validation_desc="PVCAM DLL",
-        )
-        sdk_v.addWidget(self._pi_pvcam)
-        sdk_v.addSpacing(6)
 
         sdk_v.addWidget(QLabel("PICam Runtime directory  (picam.dll / picam64.dll):"))
         self._pi_picam = _PathField(
@@ -345,6 +324,14 @@ class _PagePaths(QWidget):
             validation_desc="PICam Runtime",
         )
         sdk_v.addWidget(self._pi_picam)
+        sdk_v.addSpacing(6)
+
+        sdk_v.addWidget(QLabel(
+            "Camera serial number  (leave blank to auto-select if only one camera is connected):"
+        ))
+        self._pi_serial = QLineEdit()
+        self._pi_serial.setPlaceholderText("e.g. 0412060001")
+        sdk_v.addWidget(self._pi_serial)
         vbox.addWidget(sdk_grp)
         return w
 
@@ -390,7 +377,7 @@ class _PagePaths(QWidget):
         else:
             # When GigE is added, branch here on supplier == SUPPLIER_PI_GIGE
             # and check additional GigE-specific fields.
-            fields = [self._pi_pvcam, self._pi_picam]
+            fields = [self._pi_picam]
         return [e for f in fields if (e := f.validation_error()) is not None]
 
     # ── result collection ─────────────────────────────────────────────────────
@@ -399,9 +386,9 @@ class _PagePaths(QWidget):
         if supplier == SUPPLIER_ANDOR:
             return {"dll_path": self._andor_dll.value()}
         return {
-            "com_port":       self._pi_com.currentText().strip(),
-            "pvcam_dll_path": self._pi_pvcam.value(),
-            "PIcam_dll_path": self._pi_picam.value(),
+            "com_port":            self._pi_com.currentText().strip(),
+            "PIcam_dll_path":      self._pi_picam.value(),
+            "camera_serial_number": self._pi_serial.text().strip(),
         }
 
 
