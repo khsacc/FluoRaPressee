@@ -25,26 +25,16 @@ class SpectrometerControllerPI:
 
         print("Spectrometer initialization...")
         try:
-            self.spec = serial.Serial(
-                port=self.com_port,
-                baudrate=9600,
-                bytesize=serial.EIGHTBITS,
-                parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE,
-                timeout=0.2,
-                write_timeout=2.0,
-                xonxoff=False,
-                rtscts=False,
-                dsrdtr=False,
-            )
+            self.spec = serial.Serial(self.com_port, 9600, timeout=1)
 
-            # SP-series commands are terminated by CR only.  A command is not
-            # complete until the instrument returns an "ok" line.
-            response = self._send_command("?NM", timeout_s=5.0)
+            # Keep the wavelength connection test in the form that is known
+            # to work with this instrument.
+            self.spec.write(b"? NM\r\n")
+            response = self.spec.readline().decode("ascii").strip()
             if response:
                 print(
                     f"Connected to SP2750 on {self.com_port}. "
-                    f"(Response: {'; '.join(response)})"
+                    f"(Response: {response})"
                 )
                 self.is_initialized = True
                 return True
@@ -110,13 +100,24 @@ class SpectrometerControllerPI:
             if line.lower() != "ok" and line != command
         ]
 
+    def _send_wavelength_command(self, command):
+        """Use the original one-line exchange used by the working centre control."""
+        if not self.is_initialized or not self.spec:
+            return ""
+        try:
+            self.spec.write((command + "\r").encode("ascii"))
+            return self.spec.readline().decode("ascii").strip()
+        except Exception as e:
+            print(f"Serial communication error: {e}")
+            return ""
+
     def get_wavelength(self):
         if not self.is_initialized:
             return 694.0  # Dummy value (used when not initialized/connected)
 
         try:
-            response = self._send_command("?NM", timeout_s=5.0)
-            match = re.search(r"[-+]?\d*\.\d+|\d+", " ".join(response))
+            response = self._send_wavelength_command("? NM")
+            match = re.search(r"[-+]?\d*\.\d+|\d+", response)
             if match:
                 return float(match.group())
         except Exception as e:
@@ -148,12 +149,11 @@ class SpectrometerControllerPI:
             return False
 
         print(f"Setting spectrometer wavelength to {wavelength_nm} nm...")
-        try:
-            self._send_command(f"{wavelength_nm:.3f} GOTO", timeout_s=30.0)
-            return True
-        except Exception as e:
-            print(f"Failed to set spectrometer wavelength: {e}")
-            return False
+        self._send_wavelength_command(f"{wavelength_nm:.3f} GOTO")
+
+        # Preserve the original fixed wait that worked on the actual unit.
+        time.sleep(2.0)
+        return True
 
     def set_grating(self, grating_index):
         if not 1 <= grating_index <= 9:
@@ -214,7 +214,9 @@ class SpectrometerMoveThread(QThread):
             self.success = True
         else:
             grating_ok = self.spec_ctrl.set_grating(self.grating_index)
-            wavelength_ok = grating_ok and self.spec_ctrl.set_wavelength(self.wavelength)
+            # Centre movement must still be attempted if grating verification
+            # fails; this was the behaviour before the protocol change.
+            wavelength_ok = self.spec_ctrl.set_wavelength(self.wavelength)
             self.success = grating_ok and wavelength_ok
             if not self.success:
                 self.error_message = (
