@@ -90,7 +90,8 @@ class AcquisitionMixin:
             self.spin_em_gain.setSingleStep(max(1, increment))
             self.spin_em_gain.setValue(current)
             self.spin_em_gain.setToolTip(
-                "Electron-multiplication gain reported by the connected camera."
+                "Electron-multiplication gain reported by the connected camera.\n"
+                "Changing this value selects the Electron Multiplied ADC quality."
             )
         else:
             self.spin_em_gain.setToolTip(
@@ -120,6 +121,13 @@ class AcquisitionMixin:
         val = self.spin_cooler_temp.value()
         self.spin_cooler_temp.setEnabled(False)
         self.thread.update_temperature(val)
+
+    def on_temperature_set_finished(self, actual_temperature):
+        """Reflect the set point that the camera accepted, not only the requested value."""
+        self.spin_cooler_temp.blockSignals(True)
+        self.spin_cooler_temp.setValue(round(actual_temperature))
+        self.spin_cooler_temp.blockSignals(False)
+        self.spin_cooler_temp.setEnabled(not self._ui_lock_reasons)
 
     def request_temperature_read(self):
         self.label_current_temp.setText("Reading...")

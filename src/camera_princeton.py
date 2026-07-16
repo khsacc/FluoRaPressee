@@ -35,7 +35,7 @@ class CameraThreadPI(QThread):
     # exists, currently_available, minimum, maximum, increment, current
     em_gain_info_ready = pyqtSignal(bool, bool, int, int, int, int)
     em_gain_set_finished = pyqtSignal(int)
-    temperature_set_finished = pyqtSignal()
+    temperature_set_finished = pyqtSignal(float)
     acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors
     hardware_error = pyqtSignal(str)  # emitted when a settings write (exposure/temperature) fails on hardware
 
@@ -70,6 +70,59 @@ class CameraThreadPI(QThread):
         self.mock_temp = -70
         self.current_exposure = 0.1
         self.current_em_gain = None
+        self.current_temperature_setpoint = float(self.mock_temp)
+
+    def _commit_parameters(self):
+        """Commit pending PICam parameters immediately.
+
+        pylablib normally commits them when an acquisition is prepared. Gain and
+        temperature changes need to take effect while the camera is idle as well.
+        """
+        commit = getattr(self.cam, "_commit_parameters", None)
+        if commit is None:
+            raise RuntimeError("The installed pylablib does not expose PICam parameter commit")
+        commit()
+
+    def _refresh_attributes(self):
+        """Refresh cached PICam relevance flags after changing dependent settings."""
+        refresh = getattr(self.cam, "_update_attributes", None)
+        if refresh is not None:
+            refresh(replace=True)
+
+    def _select_valid_dependent_value(self, name):
+        """Move a dependent collection parameter to a valid device-reported value."""
+        attr = self.cam.get_attribute(name, error_on_missing=False)
+        if attr is None or not attr.writable:
+            return
+        attr.update_limits(force=True)
+        if attr.cons_type != "Collection" or not attr.values:
+            return
+        current = self.cam.get_attribute_value(name)
+        if current in attr.values:
+            return
+        selected = attr.default if attr.default in attr.values else attr.values[0]
+        self.cam.set_attribute_value(name, selected, truncate=False)
+        print(f"{name} adjusted for Electron Multiplied mode: {current} -> {selected}")
+
+    def _ensure_em_readout_mode(self):
+        """Select the ProEM multiplication port before applying an EM Gain value."""
+        quality_attr = self.cam.get_attribute("ADC Quality", error_on_missing=False)
+        if quality_attr is None or not quality_attr.writable:
+            raise RuntimeError("ADC Quality cannot be changed to Electron Multiplied")
+
+        current_quality = self.cam.get_attribute_value("ADC Quality")
+        if current_quality == "Electron Multiplied":
+            return
+
+        self.cam.set_attribute_value(
+            "ADC Quality", "Electron Multiplied", truncate=False
+        )
+        # PICam constraints for these values depend on the selected ADC quality.
+        # Preserve the current value when valid; otherwise use the camera default
+        # (or the first device-reported valid value).
+        for name in ("ADC Speed", "ADC Analog Gain", "ADC Bit Depth"):
+            self._select_valid_dependent_value(name)
+        print(f"ADC Quality changed: {current_quality} -> Electron Multiplied")
 
     def _report_em_gain_capability(self):
         """Inspect the connected PICam camera and report its EM-gain capability."""
@@ -96,7 +149,10 @@ class CameraThreadPI(QThread):
 
         try:
             attr.update_limits(force=True)
-            available = bool(attr.relevant and attr.writable and not attr.cons_novalid)
+            # A ProEM reports EM Gain as irrelevant while the Low Noise readout
+            # port is selected. It is still configurable: update_em_gain() will
+            # switch ADC Quality to Electron Multiplied before committing.
+            available = bool(attr.writable)
             minimum = int(attr.min) if attr.min is not None else 0
             maximum = int(attr.max) if attr.max is not None else minimum
             increment = max(1, int(attr.inc)) if attr.inc is not None else 1
@@ -105,7 +161,8 @@ class CameraThreadPI(QThread):
             print(
                 "EM Gain detected: "
                 f"current={current}, range={minimum}-{maximum}, increment={increment}, "
-                f"available={available}"
+                f"relevant={attr.relevant}, writable={attr.writable}, "
+                f"no_valid_value={attr.cons_novalid}, available={available}"
             )
             self.em_gain_info_ready.emit(
                 True, available, minimum, maximum, increment, current
@@ -167,6 +224,7 @@ class CameraThreadPI(QThread):
                 print("[DEBUG MODE] Activating dummy camera...")
                 time.sleep(1.0)
                 self._report_em_gain_capability()
+                self.temperature_set_finished.emit(self.current_temperature_setpoint)
                 self.init_finished.emit()
             else:
                 try:
@@ -175,6 +233,10 @@ class CameraThreadPI(QThread):
                     print(f"Connected. Detector size: {self.det_width}x{self.det_height}")
                     self.current_exposure = self.cam.set_exposure(0.1)
                     self._report_em_gain_capability()
+                    self.current_temperature_setpoint = float(
+                        self.cam.get_attribute_value("Sensor Temperature Set Point")
+                    )
+                    self.temperature_set_finished.emit(self.current_temperature_setpoint)
                 except CameraInitError as e:
                     print(f"Camera initialization failed: {e}")
                     self.init_failed.emit(str(e))
@@ -224,9 +286,12 @@ class CameraThreadPI(QThread):
                     else:
                         try:
                             with self._hw_lock:
+                                self._ensure_em_readout_mode()
                                 self.cam.set_attribute_value(
                                     "EM Gain", int(new_em_gain), truncate=False
                                 )
+                                self._commit_parameters()
+                                self._refresh_attributes()
                                 actual_gain = int(
                                     self.cam.get_attribute_value("EM Gain")
                                 )
@@ -242,17 +307,33 @@ class CameraThreadPI(QThread):
                     )
 
                 if new_temperature is not None:
+                    actual_temperature = self.current_temperature_setpoint
                     if self.debug:
-                        self.mock_temp = new_temperature
+                        self.mock_temp = float(new_temperature)
+                        self.current_temperature_setpoint = self.mock_temp
+                        actual_temperature = self.mock_temp
                     else:
                         try:
-                            self.cam.set_attribute_value("Sensor Temperature Set Point", float(new_temperature))
+                            with self._hw_lock:
+                                self.cam.set_attribute_value(
+                                    "Sensor Temperature Set Point",
+                                    float(new_temperature),
+                                    truncate=False,
+                                )
+                                self._commit_parameters()
+                                actual_temperature = float(
+                                    self.cam.get_attribute_value(
+                                        "Sensor Temperature Set Point"
+                                    )
+                                )
+                            self.current_temperature_setpoint = actual_temperature
+                            print(f"Temperature set point applied: {actual_temperature} C")
                         except Exception as e:
                             print(f"Failed to set temperature: {e}")
                             self.hardware_error.emit(f"Failed to set temperature: {e}")
                     with self._lock:
                         self.new_temperature = None
-                    self.temperature_set_finished.emit()
+                    self.temperature_set_finished.emit(float(actual_temperature))
 
                 if request_temp:
                     if self.debug:

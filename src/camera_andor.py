@@ -22,7 +22,7 @@ class CameraThreadAndor(QThread):
     # EM Gain through the application yet, so the GUI keeps the component hidden.
     em_gain_info_ready = pyqtSignal(bool, bool, int, int, int, int)
     em_gain_set_finished = pyqtSignal(int)
-    temperature_set_finished = pyqtSignal()
+    temperature_set_finished = pyqtSignal(float)
     acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors
     hardware_error = pyqtSignal(str)  # emitted when a settings write (exposure/temperature) fails on hardware
 
@@ -125,7 +125,7 @@ class CameraThreadAndor(QThread):
                             self.hardware_error.emit(f"Failed to set temperature: {e}")
                     with self._lock:
                         self.new_temperature = None
-                    self.temperature_set_finished.emit()
+                    self.temperature_set_finished.emit(float(new_temperature))
 
                 if request_temp:
                     if self.debug:
