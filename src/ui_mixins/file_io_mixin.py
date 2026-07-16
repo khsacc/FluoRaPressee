@@ -81,9 +81,11 @@ class FileIOMixin:
             self.update_display(is_new_data=False)
 
     def on_load_calibration(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Load Configuration", "", "JSON Files (*.json)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Configuration", self._last_calib_dir, "JSON Files (*.json)")
         if not file_path:
             return
+        self._last_calib_dir = os.path.dirname(file_path)
+        self._save_local_cache("last_calib_dir", self._last_calib_dir)
 
         try:
             cfg = self.file_io.load_calibration_config(file_path)
@@ -213,8 +215,10 @@ class FileIOMixin:
             QMessageBox.critical(self, "Error", f"Failed to save background:\n{e}")
 
     def on_load_bg_clicked(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Load Background Data", "", "Text/JSON Files (*.txt *.json)")
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Background Data", self._last_save_dir, "Text/JSON Files (*.txt *.json)")
         if file_path:
+            self._last_save_dir = os.path.dirname(file_path)
+            self._save_local_cache("last_save_dir", self._last_save_dir)
             try:
                 bg_arr, bg_meta = self.file_io.load_background(file_path)
                 self.loaded_bg_data = bg_arr

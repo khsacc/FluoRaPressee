@@ -1,12 +1,22 @@
 import re
+import threading
 import time
 
 import serial
 from PyQt5.QtCore import QThread, pyqtSignal
 
 
+class MoveCancelled(Exception):
+    """Raised by _send_command when a cancellable command was interrupted via MONO-STOP."""
+
+
 class SpectrometerControllerPI:
     """Acton SpectraPro-2750 controller using its serial ASCII protocol."""
+
+    # Tolerates "1200g/mm", "1200 g/mm", and a leading "*" marking the
+    # currently-selected slot (exact real-hardware format unconfirmed; see
+    # work/work_PI_grating.md Step A).
+    _GRATING_LINE_RE = re.compile(r"(\d+)\s*\*?\s*(\d+)\s*g\s*/\s*mm", re.IGNORECASE)
 
     def __init__(self, config=None, debug=False):
         self.debug = debug
@@ -16,6 +26,9 @@ class SpectrometerControllerPI:
         self.spec = None
 
         self.com_port = (self.config or {}).get("com_port", "COM3")
+
+        self._cancel_event = threading.Event()
+        self.last_move_cancelled = False
 
     def initialize(self):
         if self.debug:
@@ -27,10 +40,7 @@ class SpectrometerControllerPI:
         try:
             self.spec = serial.Serial(self.com_port, 9600, timeout=1)
 
-            # Keep the wavelength connection test in the form that is known
-            # to work with this instrument.
-            self.spec.write(b"? NM\r\n")
-            response = self.spec.readline().decode("ascii").strip()
+            response = " ".join(self._send_command("?NM", timeout_s=3.0))
             if response:
                 print(
                     f"Connected to SP2750 on {self.com_port}. "
@@ -55,12 +65,20 @@ class SpectrometerControllerPI:
         self.is_initialized = False
         return False
 
-    def _send_command(self, command, timeout_s=5.0):
-        """Send one command and return response lines after its ``ok`` reply."""
+    def _send_command(self, command, timeout_s=5.0, cancellable=False):
+        """Send one command and return response lines after its ``ok`` reply.
+
+        If ``cancellable`` and a cancellation was requested (see
+        ``request_cancel_move``) while waiting, ``MONO-STOP`` is sent and
+        ``MoveCancelled`` is raised instead of returning normally.
+        """
         if not self.spec:
             raise RuntimeError("Spectrometer serial port is not open")
         if "\r" in command or "\n" in command:
             raise ValueError("command must not contain CR or LF")
+
+        if cancellable:
+            self._cancel_event.clear()
 
         wire_command = command.encode("ascii") + b"\r"
         self.spec.reset_input_buffer()
@@ -68,9 +86,19 @@ class SpectrometerControllerPI:
         self.spec.flush()
 
         deadline = time.monotonic() + timeout_s
+        stop_sent = False
         received = bytearray()
 
         while time.monotonic() < deadline:
+            if cancellable and not stop_sent and self._cancel_event.is_set():
+                print(f"Cancelling in-flight command: command={command!r}")
+                self.spec.write(b"MONO-STOP\r")
+                self.spec.flush()
+                stop_sent = True
+                # Bound the remaining wait instead of riding out the
+                # original (possibly 30s) timeout for the abort ack.
+                deadline = min(deadline, time.monotonic() + 5.0)
+
             size = max(self.spec.in_waiting, 1)
             chunk = self.spec.read(size)
             if not chunk:
@@ -84,10 +112,23 @@ class SpectrometerControllerPI:
             if re.search(rb"(?:^|\s)ok\s*$", normalized, flags=re.IGNORECASE):
                 break
         else:
-            raise TimeoutError(
-                "No completion response from spectrometer: "
+            if not stop_sent:
+                raise TimeoutError(
+                    "No completion response from spectrometer: "
+                    f"command={command!r}, received={bytes(received)!r}"
+                )
+
+        if stop_sent:
+            print(
+                "Command cancelled by user request: "
                 f"command={command!r}, received={bytes(received)!r}"
             )
+            raise MoveCancelled(f"Cancelled: {command!r}")
+
+        print(
+            "Spectrometer command completed: "
+            f"command={command!r}, received={bytes(received)!r}"
+        )
 
         text = received.decode("ascii", errors="replace")
         lines = []
@@ -105,23 +146,16 @@ class SpectrometerControllerPI:
             if line != command
         ]
 
-    def _send_wavelength_command(self, command):
-        """Use the original one-line exchange used by the working centre control."""
-        if not self.is_initialized or not self.spec:
-            return ""
-        try:
-            self.spec.write((command + "\r").encode("ascii"))
-            return self.spec.readline().decode("ascii").strip()
-        except Exception as e:
-            print(f"Serial communication error: {e}")
-            return ""
+    def request_cancel_move(self):
+        """Request that the in-flight cancellable command (see set_wavelength) abort."""
+        self._cancel_event.set()
 
     def get_wavelength(self):
         if not self.is_initialized:
             return 694.0  # Dummy value (used when not initialized/connected)
 
         try:
-            response = self._send_wavelength_command("? NM")
+            response = " ".join(self._send_command("?NM", timeout_s=3.0))
             match = re.search(r"[-+]?\d*\.\d+|\d+", response)
             if match:
                 return float(match.group())
@@ -147,6 +181,34 @@ class SpectrometerControllerPI:
             raise RuntimeError(f"Invalid ?GRATING response: {response!r}")
         return int(match.group())
 
+    def get_gratings(self):
+        """Query all grating slots via ?GRATINGS.
+
+        Returns a list of {"index": int, "grooves": int} dicts sorted by
+        index, or [] if not connected or the response could not be parsed.
+        The exact real-hardware response format is unconfirmed (see
+        work/work_PI_grating.md Step A); parsing is defensive and simply
+        yields no results rather than raising if it doesn't match.
+        """
+        if not self.is_initialized:
+            return []
+        try:
+            response = self._send_command("?GRATINGS", timeout_s=5.0)
+            return self._parse_gratings_response(response)
+        except Exception as e:
+            print(f"Failed to read grating list: {e}")
+            return []
+
+    @classmethod
+    def _parse_gratings_response(cls, lines):
+        gratings = []
+        for line in lines:
+            match = cls._GRATING_LINE_RE.search(line)
+            if match:
+                gratings.append({"index": int(match.group(1)), "grooves": int(match.group(2))})
+        gratings.sort(key=lambda g: g["index"])
+        return gratings
+
     def set_wavelength(self, wavelength_nm):
         if not self.is_initialized:
             print(f"(Dummy) Setting spectrometer wavelength to {wavelength_nm} nm...")
@@ -154,12 +216,17 @@ class SpectrometerControllerPI:
             return False
 
         print(f"Setting spectrometer wavelength to {wavelength_nm} nm...")
+        self.last_move_cancelled = False
         try:
             # As with GRATING, the SP2750 returns "ok" only after movement
             # finishes.  _send_command accepts both a standalone "ok" and an
             # echoed "<command> ok" response from the actual instrument.
-            self._send_command(f"{wavelength_nm:.3f} GOTO", timeout_s=30.0)
+            self._send_command(f"{wavelength_nm:.3f} GOTO", timeout_s=30.0, cancellable=True)
             return True
+        except MoveCancelled:
+            print(f"Wavelength move to {wavelength_nm} nm was cancelled by user request.")
+            self.last_move_cancelled = True
+            return False
         except Exception as e:
             print(f"Failed to set spectrometer wavelength: {e}")
             return False
@@ -206,6 +273,10 @@ class SpectrometerControllerPI:
 
 class SpectrometerMoveThread(QThread):
     finished_signal = pyqtSignal()
+    # Emitted just before each phase starts ("grating" then "wavelength"), so the
+    # GUI can only allow cancellation during the wavelength move (MONO-STOP has no
+    # documented effect on a GRATING turret change).
+    phase_signal = pyqtSignal(str)
 
     def __init__(self, spec_ctrl, grating_index, wavelength):
         super().__init__()
@@ -214,20 +285,30 @@ class SpectrometerMoveThread(QThread):
         self.wavelength = wavelength
         self.success = None
         self.error_message = ""
+        self.cancelled = False
+
+    def request_cancel(self):
+        if hasattr(self.spec_ctrl, "request_cancel_move"):
+            self.spec_ctrl.request_cancel_move()
 
     def run(self):
         if not self.spec_ctrl.is_initialized:
             # Preserve the existing dummy/debug-mode behaviour.
+            self.phase_signal.emit("grating")
             self.spec_ctrl.set_grating(self.grating_index)
+            self.phase_signal.emit("wavelength")
             self.spec_ctrl.set_wavelength(self.wavelength)
             self.success = True
         else:
+            self.phase_signal.emit("grating")
             grating_ok = self.spec_ctrl.set_grating(self.grating_index)
             # Centre movement must still be attempted if grating verification
             # fails; this was the behaviour before the protocol change.
+            self.phase_signal.emit("wavelength")
             wavelength_ok = self.spec_ctrl.set_wavelength(self.wavelength)
+            self.cancelled = getattr(self.spec_ctrl, "last_move_cancelled", False)
             self.success = grating_ok and wavelength_ok
-            if not self.success:
+            if not self.success and not self.cancelled:
                 self.error_message = (
                     "The spectrometer did not confirm the requested grating "
                     "and centre-wavelength settings."

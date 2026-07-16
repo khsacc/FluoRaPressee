@@ -132,6 +132,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.analyzer = DataAnalyzer()
         self.file_io = DataFileIO()
         self._last_save_dir = _cache.get("last_save_dir", "")
+        self._last_calib_dir = _cache.get("last_calib_dir", "")
 
         first_grating = self.config.get("grating", [{}])[0].get("grooves", 600)
         self.physical_grating = str(first_grating)
@@ -671,6 +672,28 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.radio_spec_mode_raman.toggled.connect(self.sync_pressure_calculator_mode)
         
         self.spec_ctrl.initialize()
+
+        if self.spec_ctrl.is_initialized and hasattr(self.spec_ctrl, "get_gratings"):
+            # Warn-only: catches a spectrometerConfig.json left stale after a physical
+            # grating swap. Never auto-edits the config -- see work/work_PI_grating.md Step B.
+            detected_gratings = self.spec_ctrl.get_gratings()
+            if detected_gratings:
+                detected_by_index = {g["index"]: g["grooves"] for g in detected_gratings}
+                mismatches = [
+                    f"Slot {g.get('index')}: config={g.get('grooves')} g/mm, "
+                    f"spectrometer={detected_by_index[g.get('index')]} g/mm"
+                    for g in self.config.get("grating", [])
+                    if g.get("index") in detected_by_index
+                    and detected_by_index[g.get("index")] != g.get("grooves")
+                ]
+                if mismatches:
+                    QMessageBox.warning(
+                        self, "Grating configuration mismatch",
+                        "spectrometerConfig.json does not match what the spectrometer "
+                        "reports:\n\n" + "\n".join(mismatches) +
+                        "\n\nIf a grating was physically swapped, update it via "
+                        "Settings > Hardware Configuration."
+                    )
 
         current_wl = self.spec_ctrl.get_wavelength()
         print(f"[Init] Spectrometer centre wavelength readback: {current_wl} nm")

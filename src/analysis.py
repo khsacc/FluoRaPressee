@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import curve_fit, OptimizeWarning
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, savgol_filter
 from typing import Tuple, Dict, Optional
 import warnings
 
@@ -13,6 +13,15 @@ class DataAnalyzer:
     FWHM_MIN = 0.0001
     PEAK_DISTANCE = 5  # Minimum distance between peaks (pixels), passed to find_peaks
     PEAK_PROMINENCE_FACTOR = 0.1  # Prominence threshold as a fraction of the amplitude guess
+    # Smoothing applied only to the signal handed to find_peaks (never to the data that gets
+    # fitted), to keep per-pixel noise from being mistaken for extra peaks on spectrometers with
+    # many pixels per resolution element. Sized relative to the estimated FWHM in pixel units
+    # (derived from the actual x-axis spacing) so coarse-pixel detectors - where a real FWHM may
+    # span only a handful of pixels, e.g. closely spaced ruby R1/R2 lines - are left untouched.
+    PEAK_SEARCH_MIN_FWHM_PX = 8  # below this estimated peak width (pixels), skip smoothing entirely
+    PEAK_SEARCH_SMOOTH_DIVISOR = 5  # smoothing window = estimated FWHM (pixels) / this divisor
+    PEAK_SEARCH_SMOOTH_MAX_WINDOW = 15
+    PEAK_SEARCH_SMOOTH_POLYORDER = 2
     PEAK_SPACING_FACTOR = 0.1  # Spacing factor for double-peak initial guesses (currently unused)
     SECOND_PEAK_AMP_FACTOR = 0.5  # Amplitude guess factor for peak candidates beyond the primary one
     PSEUDO_VOIGT_ETA_INIT = 0.5  # Initial mixing ratio for the Pseudo Voigt function
@@ -99,15 +108,49 @@ class DataAnalyzer:
     def _component_curve(self, func_type, x, peak_params, offset):
         return self._base_function_value(func_type, x, peak_params, offset=offset)
 
-    def _initial_peak_positions(self, x_fit, y_fit, peak_count, amp_guess, offset_guess):
+    def _smoothed_for_peak_search(self, x_fit, y_fit, fwhm_guess):
+        """find_peaks に渡す信号だけを平滑化する（フィット本体には常に生データを使う）。
+        平滑化窓は x_fit の実際の間隔から求めたピクセル分散を使い、推定FWHMをピクセル数に
+        換算して決める。ピクセル数の粗い分光器（FWHMが数ピクセルしかない場合）ではウィンドウが
+        最小しきい値を下回り、平滑化そのものをスキップする。"""
+        n = len(y_fit)
+        if fwhm_guess is None or n < 2 * self.PEAK_SEARCH_MIN_FWHM_PX:
+            return y_fit
+
+        pixel_steps = np.abs(np.diff(x_fit))
+        pixel_steps = pixel_steps[pixel_steps > 0]
+        if len(pixel_steps) == 0:
+            return y_fit
+        pixel_dispersion = float(np.median(pixel_steps))
+        fwhm_guess_px = fwhm_guess / pixel_dispersion
+
+        if fwhm_guess_px < self.PEAK_SEARCH_MIN_FWHM_PX:
+            return y_fit
+
+        window = int(round(fwhm_guess_px / self.PEAK_SEARCH_SMOOTH_DIVISOR))
+        max_window = n if n % 2 == 1 else n - 1
+        window = max(3, min(window, self.PEAK_SEARCH_SMOOTH_MAX_WINDOW, max_window))
+        if window % 2 == 0:
+            window -= 1
+        if window < 3:
+            return y_fit
+
+        polyorder = min(self.PEAK_SEARCH_SMOOTH_POLYORDER, window - 1)
+        try:
+            return savgol_filter(y_fit, window_length=window, polyorder=polyorder)
+        except ValueError:
+            return y_fit
+
+    def _initial_peak_positions(self, x_fit, y_fit, peak_count, amp_guess, offset_guess, fwhm_guess=None):
+        y_search = self._smoothed_for_peak_search(x_fit, y_fit, fwhm_guess)
         peaks, _ = find_peaks(
-            y_fit,
+            y_search,
             distance=self.PEAK_DISTANCE,
             prominence=amp_guess * self.PEAK_PROMINENCE_FACTOR,
         )
         candidates = []
         if len(peaks) > 0:
-            for p in sorted(peaks, key=lambda idx: y_fit[idx], reverse=True):
+            for p in sorted(peaks, key=lambda idx: y_search[idx], reverse=True):
                 candidates.append((float(x_fit[p]), float(max(y_fit[p] - offset_guess, amp_guess * 0.1))))
 
         max_idx = int(np.argmax(y_fit))
@@ -212,7 +255,7 @@ class DataAnalyzer:
         
         try:
             params_per_peak = self._params_per_peak(func_type)
-            initial_peaks = self._initial_peak_positions(x_fit, y_fit, peak_count, amp_guess, offset_guess)
+            initial_peaks = self._initial_peak_positions(x_fit, y_fit, peak_count, amp_guess, offset_guess, fwhm_guess)
             p0 = []
             lower = []
             upper = []

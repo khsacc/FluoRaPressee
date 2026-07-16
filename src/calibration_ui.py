@@ -477,8 +477,14 @@ class CalibrationWindow(QDialog):
             mode = "2D Image"
         else:
             mode = "1D Spectrum (Custom ROI)" if main_window.radio_1d_roi.isChecked() else "1D Spectrum (Full Range Binning)"
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Config", f"config_{grating}_{center_display:.1f}{unit_sym}_{date_str}.json", "JSON (*.json)")
+        default_filename = f"config_{grating}_{center_display:.1f}{unit_sym}_{date_str}.json"
+        last_calib_dir = getattr(main_window, '_last_calib_dir', "")
+        initial_path = os.path.join(last_calib_dir, default_filename) if last_calib_dir else default_filename
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Config", initial_path, "JSON (*.json)")
         if not file_path: return
+        if hasattr(main_window, '_save_local_cache'):
+            main_window._last_calib_dir = os.path.dirname(file_path)
+            main_window._save_local_cache("last_calib_dir", main_window._last_calib_dir)
         c0, c1, c2 = self.calib_coeffs
         data = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

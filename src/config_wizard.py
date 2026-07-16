@@ -69,6 +69,35 @@ _FALLBACK_DEFAULTS = {
 }
 
 
+# ── Background grating auto-detect (Princeton Instruments only) ───────────────
+
+class _GratingDetectThread(QThread):
+    """Best-effort ``?GRATINGS`` query against a Princeton Instruments spectrometer,
+    used to pre-fill the grating page instead of requiring manual entry.
+
+    Any failure (pyserial not installed, no device on the port, unparseable
+    response) yields an empty list rather than raising -- manual entry remains
+    the fallback, exactly as before this existed.
+    """
+    detected = pyqtSignal(list)  # [{"index": int, "grooves": int}, ...]
+
+    def __init__(self, com_port):
+        super().__init__()
+        self.com_port = com_port
+
+    def run(self):
+        gratings = []
+        try:
+            from src.spectrometer_princeton import SpectrometerControllerPI
+            ctrl = SpectrometerControllerPI(config={"com_port": self.com_port}, debug=False)
+            if ctrl.initialize():
+                gratings = ctrl.get_gratings()
+            ctrl.close()
+        except Exception as e:
+            print(f"Grating auto-detect failed: {e}")
+        self.detected.emit(gratings)
+
+
 # ── Background path search ────────────────────────────────────────────────────
 
 class _PathSearchThread(QThread):
@@ -420,7 +449,14 @@ class _PageGrating(QWidget):
         self._edit = QLineEdit()
         self._edit.setPlaceholderText("600, 1200, 1800")
         layout.addWidget(self._edit)
+
+        self._detect_status = QLabel("")
+        self._detect_status.setStyleSheet("color: gray; font-size: small;")
+        layout.addWidget(self._detect_status)
         layout.addSpacing(12)
+
+        self._detect_thread = None
+        self._detect_started = False
 
         self._flip_x = QCheckBox("Flip spectrum horizontally  (flip_x)")
         layout.addWidget(self._flip_x)
@@ -432,6 +468,37 @@ class _PageGrating(QWidget):
         self._default_temp.setValue(DEFAULT_TEMPERATURE)
         layout.addWidget(self._default_temp)
         layout.addStretch()
+
+    def start_detection(self, com_port: str):
+        """Try ?GRATINGS against com_port once and pre-fill the field on success.
+
+        Never overwrites text the user already typed, and silently falls back to
+        manual entry (leaving the field as-is) on any failure.
+        """
+        if self._detect_started or not com_port:
+            return
+        self._detect_started = True
+        self._detect_status.setText("Detecting installed gratings from spectrometer...")
+        self._detect_status.setStyleSheet("color: gray; font-size: small;")
+        self._detect_thread = _GratingDetectThread(com_port)
+        self._detect_thread.detected.connect(self._on_detected)
+        self._detect_thread.start()
+
+    def _on_detected(self, gratings: list[dict]):
+        if gratings:
+            if not self._edit.text().strip():
+                self._edit.setText(", ".join(str(g["grooves"]) for g in gratings))
+            self._detect_status.setText(
+                f"Auto-detected {len(gratings)} grating(s) from the spectrometer "
+                "(edit above if needed)."
+            )
+            self._detect_status.setStyleSheet("color: green; font-size: small;")
+        else:
+            self._detect_status.setText(
+                "Could not auto-detect gratings (no response / not connected) -- "
+                "please enter them manually."
+            )
+            self._detect_status.setStyleSheet("color: gray; font-size: small;")
 
     def grating_list(self) -> list[dict]:
         result = []
@@ -523,6 +590,9 @@ class ConfigWizard(QDialog):
                 )
                 if reply == QMessageBox.No:
                     return
+            if supplier == SUPPLIER_PI:
+                com_port = self._p_paths.values(SUPPLIER_PI).get("com_port", "")
+                self._p_grating.start_detection(com_port)
             self._stack.setCurrentIndex(2)
 
         elif page == 2:

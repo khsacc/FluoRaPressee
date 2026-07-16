@@ -93,8 +93,11 @@ class CameraThreadAndor(QThread):
 
             while self.thread_active:
                 with self._lock:
-                    new_exposure = self.new_exposure
-                    new_temperature = self.new_temperature
+                    # Swap-and-clear here (not after applying) so a newer request that
+                    # arrives while the old one is still being applied to hardware is
+                    # not silently overwritten by an unconditional clear afterwards.
+                    new_exposure, self.new_exposure = self.new_exposure, None
+                    new_temperature, self.new_temperature = self.new_temperature, None
                     request_temp = self.request_temp
                     is_measuring = self.is_measuring
                     settings_changed = self.settings_changed
@@ -111,8 +114,6 @@ class CameraThreadAndor(QThread):
                             print(f"Failed to set exposure: {e}")
                             self.hardware_error.emit(f"Failed to set exposure: {e}")
                     self.current_exposure = new_exposure
-                    with self._lock:
-                        self.new_exposure = None
                     self.exposure_set_finished.emit()
 
                 if new_temperature is not None:
@@ -126,8 +127,6 @@ class CameraThreadAndor(QThread):
                         except Exception as e:
                             print(f"Failed to set temperature: {e}")
                             self.hardware_error.emit(f"Failed to set temperature: {e}")
-                    with self._lock:
-                        self.new_temperature = None
                     self.temperature_set_finished.emit(float(new_temperature))
 
                 if request_temp:

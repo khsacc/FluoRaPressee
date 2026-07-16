@@ -127,19 +127,61 @@ class CameraThreadPI(QThread):
             print(f"Failed to inspect attribute capability for {name}: {e}")
         return result
 
-    def _apply_attribute_value(self, name, value, *, ensure_relevant=None):
+    def _apply_attribute_value(self, name, value, *, ensure_relevant=None, rollback_names=()):
         """PICamパラメータへ値を設定し、commit・relevance再取得の後、実際に適用された値を
         読み戻して返す。
 
         `ensure_relevant`が渡された場合、設定前提を整えるコールバック(例:
-        `_ensure_em_readout_mode`)を先に呼ぶ。
+        `_ensure_em_readout_mode`)を先に呼ぶ。pylablibのPICamラッパーは
+        set_attribute_value(truncate=False)で範囲検証なしに保留値をセットし、検証は
+        commit時に行う。そのため`ensure_relevant`が依存パラメータを変更した直後や、
+        その最中に例外が出た場合、不正な保留値がPICam内に残留し、以降のcommit(snap()
+        内部のものを含む)が失敗し続けるおそれがある。`rollback_names`に、
+        `ensure_relevant`が触れる可能性のある依存パラメータ名を渡しておくと、
+        変更前の値を記録しておき、失敗時にbest-effortで戻す。
         """
-        if ensure_relevant is not None:
-            ensure_relevant()
-        self.cam.set_attribute_value(name, value, truncate=False)
-        self._commit_parameters()
+        rollback_names = tuple(dict.fromkeys((*rollback_names, name)))
+        previous_values = {}
+        for rname in rollback_names:
+            try:
+                previous_values[rname] = self.cam.get_attribute_value(rname)
+            except Exception as e:
+                print(f"Failed to snapshot {rname} before applying {name}: {e}")
+
+        try:
+            if ensure_relevant is not None:
+                ensure_relevant()
+            self.cam.set_attribute_value(name, value, truncate=False)
+            self._commit_parameters()
+        except Exception:
+            self._rollback_attribute_values(previous_values)
+            raise
         self._refresh_attributes()
         return self.cam.get_attribute_value(name)
+
+    def _rollback_attribute_values(self, previous_values):
+        """commit失敗時(または`ensure_relevant`コールバック内での例外時)、記録しておいた
+        変更前の値へbest-effortで戻す。
+
+        ロールバック自体が失敗しても、PICamパラメータモデルの汚染をこれ以上悪化させない
+        よう、例外は送出せずログのみ残す。
+        """
+        if not previous_values:
+            return
+        for rname, rvalue in previous_values.items():
+            try:
+                self.cam.set_attribute_value(rname, rvalue, truncate=False)
+            except Exception as e:
+                print(f"Rollback: failed to restore {rname} to {rvalue!r}: {e}")
+        try:
+            self._commit_parameters()
+        except Exception as e:
+            print(f"Rollback: commit of restored parameters failed: {e}")
+            return
+        try:
+            self._refresh_attributes()
+        except Exception as e:
+            print(f"Rollback: failed to refresh attributes after restore: {e}")
 
     def _select_valid_dependent_value(self, name):
         """Move a dependent collection parameter to a valid device-reported value."""
@@ -328,9 +370,12 @@ class CameraThreadPI(QThread):
 
             while self.thread_active:
                 with self._lock:
-                    new_exposure = self.new_exposure
-                    new_em_gain = self.new_em_gain
-                    new_temperature = self.new_temperature
+                    # Swap-and-clear here (not after applying) so a newer request that
+                    # arrives while the old one is still being applied to hardware is
+                    # not silently overwritten by an unconditional clear afterwards.
+                    new_exposure, self.new_exposure = self.new_exposure, None
+                    new_em_gain, self.new_em_gain = self.new_em_gain, None
+                    new_temperature, self.new_temperature = self.new_temperature, None
                     request_temp = self.request_temp
                     is_measuring = self.is_measuring
                     settings_changed = self.settings_changed
@@ -347,8 +392,6 @@ class CameraThreadPI(QThread):
                         except Exception as e:
                             print(f"Failed to set exposure: {e}")
                             self.hardware_error.emit(f"Failed to set exposure: {e}")
-                    with self._lock:
-                        self.new_exposure = None
                     self.exposure_set_finished.emit()
 
                 if new_em_gain is not None:
@@ -364,6 +407,10 @@ class CameraThreadPI(QThread):
                                 actual_gain = int(self._apply_attribute_value(
                                     "EM Gain", int(new_em_gain),
                                     ensure_relevant=self._ensure_em_readout_mode,
+                                    rollback_names=(
+                                        "ADC Quality", "ADC Speed",
+                                        "ADC Analog Gain", "ADC Bit Depth",
+                                    ),
                                 ))
                                 # commit_parameters()/_refresh_attributes() above have already run
                                 # (inside _apply_attribute_value), so this reflects the post-switch
@@ -374,8 +421,6 @@ class CameraThreadPI(QThread):
                         except Exception as e:
                             print(f"Failed to set EM Gain: {e}")
                             self.hardware_error.emit(f"Failed to set EM Gain: {e}")
-                    with self._lock:
-                        self.new_em_gain = None
                     self.em_gain_set_finished.emit(
                         int(actual_gain) if actual_gain is not None else int(new_em_gain)
                     )
@@ -405,8 +450,6 @@ class CameraThreadPI(QThread):
                         except Exception as e:
                             print(f"Failed to set temperature: {e}")
                             self.hardware_error.emit(f"Failed to set temperature: {e}")
-                    with self._lock:
-                        self.new_temperature = None
                     self.temperature_set_finished.emit(float(actual_temperature))
 
                 if request_temp:
