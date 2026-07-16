@@ -263,6 +263,18 @@ class PressureCalculator:
 
         dp = np.sqrt(dp_peak**2 + dp_A**2 + dp_B**2)
         return p, dp
+    
+    @staticmethod
+    def _calc_kunk_type(peak, zero_peak, peak_err, A, B, A_err, B_err):
+        # Kunc et al. (2003) PRB 10.1103/PhysRevB.68.094107.
+        ratio = (peak - zero_peak) / zero_peak
+        p = A * ratio * (1.0 + B * ratio)
+        dp = (
+            (ratio * (1 + B * ratio) * A_err)**2
+            + (A * ratio**2 * B_err)**2
+            + (A * (1 + 2 * B * ratio) / zero_peak * peak_err)**2
+        )**0.5
+        return p, dp
 
     @staticmethod
     def _calculate_fluorescence(*, sensor: str, p_scale: str, wavelength: float,
@@ -321,15 +333,9 @@ class PressureCalculator:
                 return p, dp, None
 
             if p_scale == "ruby_shen_2020":
-                A, B = 1870.0, 5.63
-                dA, dB = 10, 0.03
-                ratio = (wavelength - wavelength0) / wavelength0
-                p = A * ratio * (1.0 + B * ratio)
-                dp = (
-                    (ratio * (1 + B * ratio) * dA)**2
-                    + (A * ratio**2 * dB)**2
-                    + (A * (1 + 2 * B * ratio) / wavelength0 * wavelength_err)**2
-                )**0.5
+                p, dp = PressureCalculator._calc_kunk_type(
+                    wavelength, wavelength0, wavelength_err, 1870.0, 5.63, 10, 0.03
+                )
                 return p, dp, None
 
         if sensor == "sm_srb4o7":
