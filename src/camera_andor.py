@@ -1,6 +1,6 @@
 import time
 import numpy as np
-from threading import Lock
+from threading import Lock, Condition
 from PyQt5.QtCore import QThread, pyqtSignal
 from scipy.optimize import OptimizeWarning
 
@@ -23,7 +23,7 @@ class CameraThreadAndor(QThread):
     em_gain_info_ready = pyqtSignal(bool, bool, int, int, int, int)
     em_gain_set_finished = pyqtSignal(int)
     temperature_set_finished = pyqtSignal(float)
-    acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors
+    acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors, or the thread crashes while measuring
     hardware_error = pyqtSignal(str)  # emitted when a settings write (exposure/temperature) fails on hardware
 
     # Constants describing the camera hardware
@@ -41,8 +41,10 @@ class CameraThreadAndor(QThread):
         self.thread_active = True
         self.is_measuring = False
         self.cam = None
-        self._lock = Lock()  # Lock guarding thread-safe access to shared state
+        self._lock = Condition()  # also used to wait for a pending exposure to actually reach hardware
         self._hw_lock = Lock()  # Lock for exclusive access to hardware (snap / applying settings)
+        self._exposure_request_seq = 0
+        self._exposure_applied_seq = 0
 
         self.det_width = self.DEFAULT_DETECTOR_WIDTH
         self.det_height = self.DEFAULT_DETECTOR_HEIGHT
@@ -97,6 +99,7 @@ class CameraThreadAndor(QThread):
                     # arrives while the old one is still being applied to hardware is
                     # not silently overwritten by an unconditional clear afterwards.
                     new_exposure, self.new_exposure = self.new_exposure, None
+                    exposure_request_seq = self._exposure_request_seq
                     new_temperature, self.new_temperature = self.new_temperature, None
                     request_temp = self.request_temp
                     is_measuring = self.is_measuring
@@ -108,13 +111,22 @@ class CameraThreadAndor(QThread):
                         print(f"[DEBUG] Exposure set to {self.mock_exposure} s")
                     else:
                         try:
-                            self.cam.set_exposure(new_exposure)
+                            # Held under _hw_lock so this never races a concurrent snap()/
+                            # acquire_single_image() touching self.cam.
+                            with self._hw_lock:
+                                self.cam.set_exposure(new_exposure)
                             print(f"Exposure set to {new_exposure} s")
                         except Exception as e:
                             print(f"Failed to set exposure: {e}")
                             self.hardware_error.emit(f"Failed to set exposure: {e}")
                     self.current_exposure = new_exposure
                     self.exposure_set_finished.emit()
+                    # Wake anyone blocked in wait_for_exposure_applied() (e.g. acquire_single_image())
+                    # now that self.current_exposure reflects this request (applied or not - failure
+                    # still resolves the wait rather than hanging it).
+                    with self._lock:
+                        self._exposure_applied_seq = exposure_request_seq
+                        self._lock.notify_all()
 
                 if new_temperature is not None:
                     if self.debug:
@@ -209,6 +221,13 @@ class CameraThreadAndor(QThread):
                 
         except Exception as e:
             print(f"An error occurred in the camera thread: {e}")
+            # Without this, an exception escaping the loop above (uncaught by any of the
+            # per-section try/except blocks) would kill the thread silently: the GUI never
+            # learns about it and stays stuck showing "measuring" indefinitely.
+            with self._lock:
+                crashed_while_measuring, self.is_measuring = self.is_measuring, False
+            if crashed_while_measuring:
+                self.acquisition_failed.emit(str(e))
         finally:
             if self.cam is not None:
                 self.cam.close()
@@ -219,10 +238,20 @@ class CameraThreadAndor(QThread):
         with self._lock:
             self.request_temp = True
 
-    def update_exposure(self, exp_time: float) -> None:
-        """露光時間を更新（スレッドセーフ）"""
+    def update_exposure(self, exp_time: float) -> int:
+        """露光時間を更新（スレッドセーフ）。この要求を識別するトークンを返す
+        （wait_for_exposure_applied()に渡すとハードウェアへ反映されるまでブロックできる）。"""
         with self._lock:
             self.new_exposure = exp_time
+            self._exposure_request_seq += 1
+            return self._exposure_request_seq
+
+    def wait_for_exposure_applied(self, seq: int, timeout: float = None) -> bool:
+        """update_exposure()が返したトークンで指定した要求をrun()が処理し終える
+        （成功・失敗いずれの場合も含む）か、timeout秒経過するまでブロックする。
+        適用されればTrue、タイムアウトすればFalseを返す。"""
+        with self._lock:
+            return self._lock.wait_for(lambda: self._exposure_applied_seq >= seq, timeout=timeout)
 
     def update_temperature(self, temp: float) -> None:
         """目標温度を更新（スレッドセーフ）"""
@@ -263,8 +292,16 @@ class CameraThreadAndor(QThread):
     def acquire_single_image(self, acq_time: float = None) -> np.ndarray:
         """Calibration UI等のために、スレッドをブロックして1枚だけ同期的に撮影する（疑似処理）"""
         if acq_time is not None:
-            self.update_exposure(acq_time)
-            time.sleep(0.1) # Wait for the new exposure setting to take effect
+            # run()が連続測定中の長い露光でsnap()にブロックされている間はrun()側のループが
+            # 露光要求を拾えないため、固定sleep(0.1)ではなく実際に適用されるまで待つ。
+            # タイムアウトは変更前の露光時間(その分run()がブロックされ得る)に余裕を足した値。
+            wait_timeout = self.current_exposure + 15
+            seq = self.update_exposure(acq_time)
+            if not self.wait_for_exposure_applied(seq, timeout=wait_timeout):
+                print(
+                    "Warning: timed out waiting for the new exposure to reach hardware; "
+                    "proceeding with acquisition anyway"
+                )
 
         if self.debug:
             x = np.arange(self.det_width)
@@ -280,10 +317,13 @@ class CameraThreadAndor(QThread):
         else:
             if self.cam is None: return None
 
-            if self.settings_changed:
+            with self._lock:
+                settings_changed = self.settings_changed
+            if settings_changed:
                 with self._hw_lock:
                     self._apply_camera_settings()
-                self.settings_changed = False
+                with self._lock:
+                    self.settings_changed = False
 
             try:
                 snap_timeout = self.current_exposure + 10

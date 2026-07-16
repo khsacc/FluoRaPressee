@@ -1,7 +1,6 @@
 import secrets
 import socket
 import threading
-import time
 from concurrent.futures import Future
 from datetime import datetime
 
@@ -48,8 +47,15 @@ class ApiMixin:
         actual_accum = accumulations if accumulations is not None else self.spin_accumulate.value()
 
         if exposure_s is not None:
-            self.thread.update_exposure(exposure_s)
-            time.sleep(0.1)  # let the camera thread pick up the new exposure, as acquire_single_image() does
+            # Block until the camera thread has actually pushed the new exposure to
+            # hardware rather than hoping a fixed sleep was long enough - if the thread
+            # is mid-snap() on a previous long exposure, a flat 0.1s sleep can elapse
+            # before it's picked up, and take_single_spectrum() below would then measure
+            # with the stale exposure still on the hardware.
+            wait_timeout = self.thread.current_exposure + 15
+            seq = self.thread.update_exposure(exposure_s)
+            if not self.thread.wait_for_exposure_applied(seq, timeout=wait_timeout):
+                print("Warning: timed out waiting for the new exposure to reach hardware before API acquisition")
 
         if accumulations is not None:
             self._active_target_accum = accumulations

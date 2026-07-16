@@ -1,7 +1,7 @@
 import os
 import time
 import numpy as np
-from threading import Lock
+from threading import Lock, Condition
 from PyQt5.QtCore import QThread, pyqtSignal
 
 # Wrapped in try-except so a missing SDK doesn't raise an error when running in debug (dummy) mode
@@ -36,7 +36,7 @@ class CameraThreadPI(QThread):
     em_gain_info_ready = pyqtSignal(bool, bool, int, int, int, int)
     em_gain_set_finished = pyqtSignal(int)
     temperature_set_finished = pyqtSignal(float)
-    acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors
+    acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors, or the thread crashes while measuring
     hardware_error = pyqtSignal(str)  # emitted when a settings write (exposure/temperature) fails on hardware
 
     def __init__(self, config=None, debug=False):
@@ -48,8 +48,10 @@ class CameraThreadPI(QThread):
         self.is_measuring = False
         self.cam = None
         self._dll_dir_cookie = None
-        self._lock = Lock()
+        self._lock = Condition()  # also used to wait for a pending exposure to actually reach hardware
         self._hw_lock = Lock()  # Lock for exclusive access to hardware (snap / applying settings)
+        self._exposure_request_seq = 0
+        self._exposure_applied_seq = 0
 
         # Defaults matching a PIXIS: 100F (overwritten by get_detector_size() once a real camera is connected)
         self.det_width = 1340
@@ -374,6 +376,7 @@ class CameraThreadPI(QThread):
                     # arrives while the old one is still being applied to hardware is
                     # not silently overwritten by an unconditional clear afterwards.
                     new_exposure, self.new_exposure = self.new_exposure, None
+                    exposure_request_seq = self._exposure_request_seq
                     new_em_gain, self.new_em_gain = self.new_em_gain, None
                     new_temperature, self.new_temperature = self.new_temperature, None
                     request_temp = self.request_temp
@@ -387,12 +390,20 @@ class CameraThreadPI(QThread):
                     else:
                         try:
                             # PICam converts seconds<->milliseconds internally and returns the actual
-                            # value applied after the device rounds it
-                            self.current_exposure = self.cam.set_exposure(new_exposure)
+                            # value applied after the device rounds it. Held under _hw_lock so this
+                            # never races a concurrent snap()/acquire_single_image() touching self.cam.
+                            with self._hw_lock:
+                                self.current_exposure = self.cam.set_exposure(new_exposure)
                         except Exception as e:
                             print(f"Failed to set exposure: {e}")
                             self.hardware_error.emit(f"Failed to set exposure: {e}")
                     self.exposure_set_finished.emit()
+                    # Wake anyone blocked in wait_for_exposure_applied() (e.g. acquire_single_image())
+                    # now that self.current_exposure reflects this request (applied or not - failure
+                    # still resolves the wait rather than hanging it).
+                    with self._lock:
+                        self._exposure_applied_seq = exposure_request_seq
+                        self._lock.notify_all()
 
                 if new_em_gain is not None:
                     actual_gain = self.current_em_gain
@@ -518,6 +529,15 @@ class CameraThreadPI(QThread):
                                 self.data_ready.emit("1d", self._extract_spectrum(data))
                         _consec_errors = 0
                     except Exception as e:
+                        if getattr(e, "code", None) == 27:  # PicamError_AcquisitionNotInProgress
+                            # Benign pylablib/PICam race: a fast single-frame snap() can finish between
+                            # pylablib's acquisition_in_progress() check and its next status poll, so the
+                            # poll raises this instead of reporting normal completion (see
+                            # PicamCamera._wait_for_acquisition_update in pylablib's picam.py, which only
+                            # checks acquisition_in_progress() once before several update polls). Not a
+                            # real camera fault; retry immediately without touching the error counter below.
+                            time.sleep(0.01)
+                            continue
                         print(f"Failed to acquire camera data: {e}")
                         _consec_errors += 1
                         if _consec_errors >= 5:
@@ -534,6 +554,13 @@ class CameraThreadPI(QThread):
 
         except Exception as e:
             print(f"An error occurred in the camera thread: {e}")
+            # Without this, an exception escaping the loop above (uncaught by any of the
+            # per-section try/except blocks) would kill the thread silently: the GUI never
+            # learns about it and stays stuck showing "measuring" indefinitely.
+            with self._lock:
+                crashed_while_measuring, self.is_measuring = self.is_measuring, False
+            if crashed_while_measuring:
+                self.acquisition_failed.emit(str(e))
         finally:
             if self.cam is not None:
                 self.cam.close()
@@ -561,8 +588,24 @@ class CameraThreadPI(QThread):
             self.request_temp = True
 
     def update_exposure(self, exp_time):
+        """Request an exposure change (thread-safe) and return a token identifying
+        this request. Pass the token to wait_for_exposure_applied() to block until
+        run() has actually pushed it to hardware (or a newer request superseded it)."""
         with self._lock:
             self.new_exposure = exp_time
+            self._exposure_request_seq += 1
+            return self._exposure_request_seq
+
+    def wait_for_exposure_applied(self, seq, timeout=None):
+        """Block until the exposure request identified by `seq` (the return value of
+        update_exposure()) has been applied by run(), or `timeout` seconds elapse.
+
+        Returns True if applied, False on timeout. Resolves as soon as run() finishes
+        processing the request, whether or not the hardware call itself succeeded, so
+        this never hangs waiting for a request that failed on hardware.
+        """
+        with self._lock:
+            return self._lock.wait_for(lambda: self._exposure_applied_seq >= seq, timeout=timeout)
 
     def update_em_gain(self, gain):
         with self._lock:
@@ -609,8 +652,18 @@ class CameraThreadPI(QThread):
 
     def acquire_single_image(self, acq_time=None):
         if acq_time is not None:
-            self.update_exposure(acq_time)
-            time.sleep(0.1)
+            # Block until run() has actually pushed the new exposure to hardware, rather
+            # than hoping a fixed sleep is long enough. If run() is mid-snap() on a
+            # long-running continuous measurement (holding _hw_lock for the old exposure's
+            # duration), it can't reach the top of its loop to apply the change until that
+            # snap finishes, so the wait must be bounded by the old exposure, not a flat 0.1s.
+            wait_timeout = self.current_exposure + 15
+            seq = self.update_exposure(acq_time)
+            if not self.wait_for_exposure_applied(seq, timeout=wait_timeout):
+                print(
+                    "Warning: timed out waiting for the new exposure to reach hardware; "
+                    "proceeding with acquisition anyway"
+                )
 
         if self.debug:
             x = np.arange(self.det_width)
@@ -626,14 +679,17 @@ class CameraThreadPI(QThread):
         else:
             if self.cam is None: return None
 
-            if self.settings_changed:
+            with self._lock:
+                settings_changed = self.settings_changed
+            if settings_changed:
                 try:
                     with self._hw_lock:
                         self._apply_camera_settings()
                 except Exception as e:
                     print(f"Failed to apply ROI settings: {e}")
                     return None
-                self.settings_changed = False
+                with self._lock:
+                    self.settings_changed = False
 
             try:
                 snap_timeout = self.current_exposure + 10
