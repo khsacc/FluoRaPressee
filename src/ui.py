@@ -646,6 +646,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.btn_start_api.clicked.connect(self.on_start_api_server_clicked)
         self.btn_stop_api.clicked.connect(self.on_stop_api_server_clicked)
 
+        settings_menu = self.menuBar().addMenu("Settings")
+        self.action_hardware_config = settings_menu.addAction("Hardware Configuration...")
+        self.action_hardware_config.triggered.connect(self.on_open_hardware_config_clicked)
+
         api_menu = self.menuBar().addMenu("API")
         self.action_regenerate_api_key = api_menu.addAction("Regenerate Key")
         self.action_regenerate_api_key.triggered.connect(self.on_regenerate_api_key_clicked)
@@ -667,12 +671,14 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.radio_spec_mode_raman.toggled.connect(self.sync_pressure_calculator_mode)
         
         self.spec_ctrl.initialize()
-        
+
         current_wl = self.spec_ctrl.get_wavelength()
+        print(f"[Init] Spectrometer centre wavelength readback: {current_wl} nm")
         self.physical_center_wl = current_wl
         self.spin_centre_wl.setValue(current_wl)
-        
+
         current_grating_idx = self.spec_ctrl.get_grating()
+        print(f"[Init] Spectrometer grating readback: index {current_grating_idx}")
         target_cb_idx = 0
         for i, g in enumerate(self.config.get("grating", [])):
             if g.get("index") == current_grating_idx:
