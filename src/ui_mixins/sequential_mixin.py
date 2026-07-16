@@ -52,6 +52,9 @@ class SequentialMixin:
         self.btn_save_data.setEnabled(enabled)
 
         self.spin_acq_time.setEnabled(enabled)
+        self.spin_em_gain.setEnabled(
+            enabled and self.spin_em_gain.isVisible() and self._em_gain_available
+        )
         self.spin_accumulate.setEnabled(enabled)
         self.chk_cosmic_ray_removal.setEnabled(enabled)
         self.spin_spike_threshold.setEnabled(enabled and self.chk_cosmic_ray_removal.isChecked())

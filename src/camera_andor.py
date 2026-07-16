@@ -18,6 +18,10 @@ class CameraThreadAndor(QThread):
     temperature_ready = pyqtSignal(float)
 
     exposure_set_finished = pyqtSignal()
+    # Keep the camera-backend interface uniform. This backend does not expose
+    # EM Gain through the application yet, so the GUI keeps the component hidden.
+    em_gain_info_ready = pyqtSignal(bool, bool, int, int, int, int)
+    em_gain_set_finished = pyqtSignal(int)
     temperature_set_finished = pyqtSignal()
     acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors
     hardware_error = pyqtSignal(str)  # emitted when a settings write (exposure/temperature) fails on hardware
@@ -61,6 +65,7 @@ class CameraThreadAndor(QThread):
             if self.debug:
                 print("[DEBUG MODE] Activating dummy camera...")
                 self.det_width, self.det_height = self.DEFAULT_DETECTOR_WIDTH, self.DEFAULT_DETECTOR_HEIGHT
+                self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
                 self.init_finished.emit()
             else:
                 try:
@@ -77,6 +82,7 @@ class CameraThreadAndor(QThread):
                     print(f"Failed to initialize Andor camera: {e}")
                     self.init_failed.emit(str(e))
                     return
+                self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
                 self.init_finished.emit()
             
             was_measuring = False

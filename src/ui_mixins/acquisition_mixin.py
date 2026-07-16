@@ -75,6 +75,47 @@ class AcquisitionMixin:
         self.spin_acq_time.setEnabled(False)
         self.thread.update_exposure(val)
 
+    def on_em_gain_info_ready(self, exists, available, minimum, maximum, increment, current):
+        """Render the EM Gain row only when PICam says the parameter exists."""
+        self.label_em_gain.setVisible(exists)
+        self.spin_em_gain.setVisible(exists)
+        self._em_gain_available = bool(exists and available)
+        if not exists:
+            self.spin_em_gain.setEnabled(False)
+            return
+
+        self.spin_em_gain.blockSignals(True)
+        if available:
+            self.spin_em_gain.setRange(minimum, maximum)
+            self.spin_em_gain.setSingleStep(max(1, increment))
+            self.spin_em_gain.setValue(current)
+            self.spin_em_gain.setToolTip(
+                "Electron-multiplication gain reported by the connected camera."
+            )
+        else:
+            self.spin_em_gain.setToolTip(
+                "The camera has an EM Gain parameter, but it is not available "
+                "with the current camera/readout settings."
+            )
+        self.spin_em_gain.blockSignals(False)
+        self.spin_em_gain.setEnabled(
+            self._em_gain_available and not self._ui_lock_reasons
+        )
+
+    def on_em_gain_changed(self):
+        if not self._em_gain_available:
+            return
+        self.spin_em_gain.setEnabled(False)
+        self.thread.update_em_gain(self.spin_em_gain.value())
+
+    def on_em_gain_set_finished(self, actual_gain):
+        self.spin_em_gain.blockSignals(True)
+        self.spin_em_gain.setValue(actual_gain)
+        self.spin_em_gain.blockSignals(False)
+        self.spin_em_gain.setEnabled(
+            self._em_gain_available and not self._ui_lock_reasons
+        )
+
     def on_temperature_changed(self):
         val = self.spin_cooler_temp.value()
         self.spin_cooler_temp.setEnabled(False)

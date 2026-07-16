@@ -258,6 +258,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spin_acq_time.setRange(0.001, 3600)
         self.spin_acq_time.setValue(0.1)
         self.spin_acq_time.setDecimals(3)
+
+        # PICam reports at runtime whether the connected camera actually has
+        # an EM Gain parameter. Keep this row hidden until exists=True is received.
+        self.label_em_gain = QLabel("EM Gain (×):")
+        self.spin_em_gain = CustomSpinBox()
+        self.label_em_gain.setVisible(False)
+        self.spin_em_gain.setVisible(False)
+        self.spin_em_gain.setEnabled(False)
+        self._em_gain_available = False
         
         self.spin_accumulate = CustomSpinBox()
         self.spin_accumulate.setRange(1, 99999)
@@ -304,14 +313,16 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         det_layout.addWidget(QLabel("Acquisition time (s):"), 0, 0)
         det_layout.addWidget(self.spin_acq_time, 0, 1)
-        det_layout.addWidget(QLabel("Accumulations:"), 1, 0)
-        det_layout.addWidget(self.spin_accumulate, 1, 1)
-        det_layout.addWidget(self.chk_cosmic_ray_removal, 2, 0)
-        det_layout.addWidget(self.spin_spike_threshold, 2, 1)
-        det_layout.addWidget(QLabel("Cooler target temp (°C):"), 3, 0)
-        det_layout.addWidget(self.spin_cooler_temp, 3, 1)
-        det_layout.addWidget(self.btn_read_temp, 4, 0)
-        det_layout.addWidget(self.label_current_temp, 4, 1)
+        det_layout.addWidget(self.label_em_gain, 1, 0)
+        det_layout.addWidget(self.spin_em_gain, 1, 1)
+        det_layout.addWidget(QLabel("Accumulations:"), 2, 0)
+        det_layout.addWidget(self.spin_accumulate, 2, 1)
+        det_layout.addWidget(self.chk_cosmic_ray_removal, 3, 0)
+        det_layout.addWidget(self.spin_spike_threshold, 3, 1)
+        det_layout.addWidget(QLabel("Cooler target temp (°C):"), 4, 0)
+        det_layout.addWidget(self.spin_cooler_temp, 4, 1)
+        det_layout.addWidget(self.btn_read_temp, 5, 0)
+        det_layout.addWidget(self.label_current_temp, 5, 1)
         det_sub_group.setLayout(det_layout)
         meas_layout.addWidget(det_sub_group)
 
@@ -621,6 +632,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
 
         self.spin_acq_time.editingFinished.connect(self.on_exposure_changed)
+        self.spin_em_gain.editingFinished.connect(self.on_em_gain_changed)
         self.spin_cooler_temp.editingFinished.connect(self.on_temperature_changed)
         
         self.combo_grating.currentIndexChanged.connect(self.check_spectrometer_changes)
@@ -700,8 +712,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.thread.hardware_error.connect(self.on_hardware_error)
         self.thread.temperature_ready.connect(self.on_temperature_read)
         self.thread.acquisition_failed.connect(self.on_acquisition_failed)
+        self.thread.em_gain_info_ready.connect(self.on_em_gain_info_ready)
         
         self.thread.exposure_set_finished.connect(lambda: self.spin_acq_time.setEnabled(True))
+        self.thread.em_gain_set_finished.connect(self.on_em_gain_set_finished)
         self.thread.temperature_set_finished.connect(lambda: self.spin_cooler_temp.setEnabled(True))
         
         self.thread.start()

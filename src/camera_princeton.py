@@ -32,6 +32,9 @@ class CameraThreadPI(QThread):
     temperature_ready = pyqtSignal(float)
 
     exposure_set_finished = pyqtSignal()
+    # exists, currently_available, minimum, maximum, increment, current
+    em_gain_info_ready = pyqtSignal(bool, bool, int, int, int, int)
+    em_gain_set_finished = pyqtSignal(int)
     temperature_set_finished = pyqtSignal()
     acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors
     hardware_error = pyqtSignal(str)  # emitted when a settings write (exposure/temperature) fails on hardware
@@ -59,11 +62,59 @@ class CameraThreadPI(QThread):
 
         self.request_temp = False
         self.new_exposure = None
+        self.new_em_gain = None
         self.new_temperature = None
 
         self.mock_exposure = 0.1
+        self.mock_em_gain = 1
         self.mock_temp = -70
         self.current_exposure = 0.1
+        self.current_em_gain = None
+
+    def _report_em_gain_capability(self):
+        """Inspect the connected PICam camera and report its EM-gain capability."""
+        if self.debug:
+            # Emulate a ProEM-like detector so the conditional GUI can be tested
+            # without hardware. This value is not persisted to the JSON config.
+            self.current_em_gain = self.mock_em_gain
+            self.em_gain_info_ready.emit(True, True, 1, 1000, 1, self.mock_em_gain)
+            return
+
+        try:
+            attr = self.cam.get_attribute("EM Gain", error_on_missing=False)
+        except Exception as e:
+            # EM Gain is optional. Failure to inspect it must not prevent the
+            # rest of the camera from initializing.
+            print(f"Failed to query EM Gain capability: {e}")
+            self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
+            return
+
+        exists = attr is not None and bool(attr.exists)
+        if not exists:
+            self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
+            return
+
+        try:
+            attr.update_limits(force=True)
+            available = bool(attr.relevant and attr.writable and not attr.cons_novalid)
+            minimum = int(attr.min) if attr.min is not None else 0
+            maximum = int(attr.max) if attr.max is not None else minimum
+            increment = max(1, int(attr.inc)) if attr.inc is not None else 1
+            current = int(self.cam.get_attribute_value("EM Gain"))
+            self.current_em_gain = current
+            print(
+                "EM Gain detected: "
+                f"current={current}, range={minimum}-{maximum}, increment={increment}, "
+                f"available={available}"
+            )
+            self.em_gain_info_ready.emit(
+                True, available, minimum, maximum, increment, current
+            )
+        except Exception as e:
+            # The parameter exists, so keep the component visible, but do not
+            # allow writes when its limits/current value could not be verified.
+            print(f"Failed to inspect EM Gain capability: {e}")
+            self.em_gain_info_ready.emit(True, False, 0, 0, 0, 0)
 
     def _connect_camera(self):
         """PICamカメラを列挙・選択して接続する。失敗時は CameraInitError を送出する。"""
@@ -115,6 +166,7 @@ class CameraThreadPI(QThread):
             if self.debug:
                 print("[DEBUG MODE] Activating dummy camera...")
                 time.sleep(1.0)
+                self._report_em_gain_capability()
                 self.init_finished.emit()
             else:
                 try:
@@ -122,6 +174,7 @@ class CameraThreadPI(QThread):
                     self.det_width, self.det_height = self.cam.get_detector_size()
                     print(f"Connected. Detector size: {self.det_width}x{self.det_height}")
                     self.current_exposure = self.cam.set_exposure(0.1)
+                    self._report_em_gain_capability()
                 except CameraInitError as e:
                     print(f"Camera initialization failed: {e}")
                     self.init_failed.emit(str(e))
@@ -139,6 +192,7 @@ class CameraThreadPI(QThread):
             while self.thread_active:
                 with self._lock:
                     new_exposure = self.new_exposure
+                    new_em_gain = self.new_em_gain
                     new_temperature = self.new_temperature
                     request_temp = self.request_temp
                     is_measuring = self.is_measuring
@@ -159,6 +213,33 @@ class CameraThreadPI(QThread):
                     with self._lock:
                         self.new_exposure = None
                     self.exposure_set_finished.emit()
+
+                if new_em_gain is not None:
+                    actual_gain = self.current_em_gain
+                    if self.debug:
+                        self.mock_em_gain = int(new_em_gain)
+                        self.current_em_gain = self.mock_em_gain
+                        actual_gain = self.mock_em_gain
+                        print(f"[DEBUG] EM Gain set to {actual_gain}x")
+                    else:
+                        try:
+                            with self._hw_lock:
+                                self.cam.set_attribute_value(
+                                    "EM Gain", int(new_em_gain), truncate=False
+                                )
+                                actual_gain = int(
+                                    self.cam.get_attribute_value("EM Gain")
+                                )
+                            self.current_em_gain = actual_gain
+                            print(f"EM Gain set to {actual_gain}x")
+                        except Exception as e:
+                            print(f"Failed to set EM Gain: {e}")
+                            self.hardware_error.emit(f"Failed to set EM Gain: {e}")
+                    with self._lock:
+                        self.new_em_gain = None
+                    self.em_gain_set_finished.emit(
+                        int(actual_gain) if actual_gain is not None else int(new_em_gain)
+                    )
 
                 if new_temperature is not None:
                     if self.debug:
@@ -284,6 +365,10 @@ class CameraThreadPI(QThread):
     def update_exposure(self, exp_time):
         with self._lock:
             self.new_exposure = exp_time
+
+    def update_em_gain(self, gain):
+        with self._lock:
+            self.new_em_gain = int(gain)
 
     def update_temperature(self, temp):
         with self._lock:
