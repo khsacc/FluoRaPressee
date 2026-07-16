@@ -71,7 +71,8 @@ class ConfigMixin:
                     "defaultROI": {"from": 100, "to": 140}
                 }
             ],
-            "flip_x": False
+            "flip_x": False,
+            "default_temperature": -65
         }
         try:
             with open(config_path, "r", encoding="utf-8") as f:

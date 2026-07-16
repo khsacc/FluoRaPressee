@@ -306,7 +306,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.spin_cooler_temp = CustomSpinBox()
         self.spin_cooler_temp.setRange(-100, 20)
-        self.spin_cooler_temp.setValue(-65)
+        self.spin_cooler_temp.setValue(self.config.get("default_temperature", -65))
         self.btn_read_temp = QPushButton("Read current temperature")
         self.label_current_temp = QLabel("-- °C")
         self.label_current_temp.setStyleSheet("font-weight: bold; color: #E91E63;")

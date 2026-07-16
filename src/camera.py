@@ -7,4 +7,4 @@ def CameraThread(config=None, debug=False):
         return CameraThreadPI(config=config, debug=debug)
     else:
         from src.camera_andor import CameraThreadAndor
-        return CameraThreadAndor(debug=debug)
+        return CameraThreadAndor(config=config, debug=debug)

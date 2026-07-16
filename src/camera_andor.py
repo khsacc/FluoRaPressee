@@ -34,9 +34,10 @@ class CameraThreadAndor(QThread):
     TEMP_TOLERANCE = 0.5  # Simulated temperature fluctuation in debug mode (C)
     SLEEP_INTERVAL = 0.05  # Sleep interval between iterations of the thread loop (s)
     
-    def __init__(self, debug=False):
+    def __init__(self, config=None, debug=False):
         super().__init__()
         self.debug = debug
+        self.config = config or {}
         self.thread_active = True
         self.is_measuring = False
         self.cam = None
@@ -57,7 +58,7 @@ class CameraThreadAndor(QThread):
         
         # Simulated setting values used in debug mode
         self.mock_exposure = self.DEFAULT_EXPOSURE
-        self.mock_temp = self.DEFAULT_TEMP
+        self.mock_temp = self.config.get("default_temperature", self.DEFAULT_TEMP)
         self.current_exposure = self.DEFAULT_EXPOSURE
 
     def run(self):
@@ -75,13 +76,15 @@ class CameraThreadAndor(QThread):
                     self.cam = Andor.AndorSDK2Camera()
                     self.det_width, self.det_height = self.cam.get_detector_size()
                     print(f"Connected to Andor camera. Detector size: {self.det_width}x{self.det_height}")
-                    self.cam.set_temperature(-65)
+                    target_temp = self.config.get("default_temperature", self.DEFAULT_TEMP)
+                    self.cam.set_temperature(target_temp)
                     self.cam.set_cooler(True)
                     self.cam.set_exposure(0.1)
                 except Exception as e:
                     print(f"Failed to initialize Andor camera: {e}")
                     self.init_failed.emit(str(e))
                     return
+                self.temperature_set_finished.emit(float(target_temp))
                 self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
                 self.init_finished.emit()
             

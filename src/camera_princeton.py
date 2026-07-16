@@ -67,7 +67,7 @@ class CameraThreadPI(QThread):
 
         self.mock_exposure = 0.1
         self.mock_em_gain = 1
-        self.mock_temp = -70
+        self.mock_temp = self.config.get("default_temperature", -70)
         self.current_exposure = 0.1
         self.current_em_gain = None
         self.current_temperature_setpoint = float(self.mock_temp)
@@ -230,17 +230,17 @@ class CameraThreadPI(QThread):
                 attr = self.cam.get_attribute(name, error_on_missing=False)
                 exists = attr is not None and bool(attr.exists)
                 if not exists:
-                    print(f"[Orientation調査/{context}] {name}: not present on this camera")
+                    print(f"[Orientation investigation/{context}] {name}: not present on this camera")
                     continue
                 current = self.cam.get_attribute_value(name)
                 print(
-                    f"[Orientation調査/{context}] {name}: exists={attr.exists}, "
+                    f"[Orientation investigation/{context}] {name}: exists={attr.exists}, "
                     f"relevant={attr.relevant}, writable={attr.writable}, current={current}"
                 )
             except Exception as e:
                 # This attribute group is optional/exploratory; a failure here must not
                 # prevent the rest of camera initialization from proceeding.
-                print(f"[Orientation調査/{context}] Failed to query {name}: {e}")
+                print(f"[Orientation investigation/{context}] Failed to query {name}: {e}")
 
     def _connect_camera(self):
         """PICamカメラを列挙・選択して接続する。失敗時は CameraInitError を送出する。"""
@@ -307,6 +307,11 @@ class CameraThreadPI(QThread):
                         self.cam.get_attribute_value("Sensor Temperature Set Point")
                     )
                     self.temperature_set_finished.emit(self.current_temperature_setpoint)
+                    default_temp = self.config.get("default_temperature")
+                    if default_temp is not None and abs(float(default_temp) - self.current_temperature_setpoint) > 1e-6:
+                        # Drive the cooler to the configured default; picked up and applied
+                        # by the main loop's normal new_temperature handling below.
+                        self.new_temperature = float(default_temp)
                 except CameraInitError as e:
                     print(f"Camera initialization failed: {e}")
                     self.init_failed.emit(str(e))

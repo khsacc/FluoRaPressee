@@ -25,6 +25,12 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 
+from src.ui_widgets import CustomSpinBox
+
+# Default cooler target temperature (°C) pre-filled in the wizard and used as the
+# fallback in spectrometerConfig.json / SpectrometerGUI when the key is absent.
+DEFAULT_TEMPERATURE = -65
+
 # ── Supplier model strings ────────────────────────────────────────────────────
 SUPPLIER_ANDOR = "Andor"
 SUPPLIER_PI    = "PrincetonInstruments"
@@ -398,7 +404,7 @@ class _PageGrating(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<b>Step 3 / 3 — Grating configuration</b>"))
+        layout.addWidget(QLabel("<b>Step 3 / 3 — Grating &amp; detector configuration</b>"))
         layout.addSpacing(8)
 
         layout.addWidget(QLabel(
@@ -412,6 +418,13 @@ class _PageGrating(QWidget):
 
         self._flip_x = QCheckBox("Flip spectrum horizontally  (flip_x)")
         layout.addWidget(self._flip_x)
+        layout.addSpacing(12)
+
+        layout.addWidget(QLabel("Default cooler target temperature (°C):"))
+        self._default_temp = CustomSpinBox()
+        self._default_temp.setRange(-100, 20)
+        self._default_temp.setValue(DEFAULT_TEMPERATURE)
+        layout.addWidget(self._default_temp)
         layout.addStretch()
 
     def grating_list(self) -> list[dict]:
@@ -430,6 +443,9 @@ class _PageGrating(QWidget):
 
     def flip_x(self) -> bool:
         return self._flip_x.isChecked()
+
+    def default_temperature(self) -> int:
+        return self._default_temp.value()
 
 
 # ── Main wizard dialog ────────────────────────────────────────────────────────
@@ -534,6 +550,7 @@ class ConfigWizard(QDialog):
             **self._p_paths.values(supplier),
             "grating": gratings,
             "flip_x": self._p_grating.flip_x(),
+            "default_temperature": self._p_grating.default_temperature(),
         }
         self.accept()
 

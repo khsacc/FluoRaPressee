@@ -19,6 +19,7 @@ _FALLBACK_CONFIG = {
         {"index": 3, "grooves": 1800, "defaultROI": {"from": 100, "to": 140}},
     ],
     "flip_x": False,
+    "default_temperature": -65,
 }
 
 def check_and_create_config():
