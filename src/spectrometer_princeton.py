@@ -78,7 +78,10 @@ class SpectrometerControllerPI:
 
             received.extend(chunk)
             normalized = bytes(received).replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-            if any(line.strip().lower() == b"ok" for line in normalized.split(b"\n")):
+            # Depending on the firmware/echo setting, completion may be sent
+            # either as its own line ("ok\r\n") or after the echoed command
+            # on the same line ("2 GRATING ok\r\n").
+            if re.search(rb"(?:^|\s)ok\s*$", normalized, flags=re.IGNORECASE):
                 break
         else:
             raise TimeoutError(
@@ -87,17 +90,19 @@ class SpectrometerControllerPI:
             )
 
         text = received.decode("ascii", errors="replace")
-        lines = [
-            line.strip()
-            for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-            if line.strip()
-        ]
+        lines = []
+        for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            # Remove an attached or standalone completion marker before
+            # filtering the command echo and returning response content.
+            line = re.sub(r"(?:^|\s)ok\s*$", "", line, flags=re.IGNORECASE).strip()
+            if line:
+                lines.append(line)
 
         # The RS-232 interface may echo the command before the response.
         return [
             line
             for line in lines
-            if line.lower() != "ok" and line != command
+            if line != command
         ]
 
     def _send_wavelength_command(self, command):
@@ -149,11 +154,15 @@ class SpectrometerControllerPI:
             return False
 
         print(f"Setting spectrometer wavelength to {wavelength_nm} nm...")
-        self._send_wavelength_command(f"{wavelength_nm:.3f} GOTO")
-
-        # Preserve the original fixed wait that worked on the actual unit.
-        time.sleep(2.0)
-        return True
+        try:
+            # As with GRATING, the SP2750 returns "ok" only after movement
+            # finishes.  _send_command accepts both a standalone "ok" and an
+            # echoed "<command> ok" response from the actual instrument.
+            self._send_command(f"{wavelength_nm:.3f} GOTO", timeout_s=30.0)
+            return True
+        except Exception as e:
+            print(f"Failed to set spectrometer wavelength: {e}")
+            return False
 
     def set_grating(self, grating_index):
         if not 1 <= grating_index <= 9:
