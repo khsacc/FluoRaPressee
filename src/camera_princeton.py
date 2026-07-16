@@ -187,45 +187,34 @@ class CameraThreadPI(QThread):
             self.em_gain_info_ready.emit(True, True, 1, 1000, 1, self.mock_em_gain)
             return
 
-        try:
-            attr = self.cam.get_attribute("EM Gain", error_on_missing=False)
-        except Exception as e:
-            # EM Gain is optional. Failure to inspect it must not prevent the
-            # rest of the camera from initializing.
-            print(f"Failed to query EM Gain capability: {e}")
+        cap = self._query_attribute_capability("EM Gain")
+        if not cap["exists"]:
             self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
             return
 
-        exists = attr is not None and bool(attr.exists)
-        if not exists:
-            self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
-            return
-
-        try:
-            attr.update_limits(force=True)
-            # A ProEM reports EM Gain as irrelevant while the Low Noise readout
-            # port is selected. It is still configurable: update_em_gain() will
-            # switch ADC Quality to Electron Multiplied before committing.
-            available = bool(attr.writable)
-            minimum = int(attr.min) if attr.min is not None else 0
-            maximum = int(attr.max) if attr.max is not None else minimum
-            increment = max(1, int(attr.inc)) if attr.inc is not None else 1
-            current = int(self.cam.get_attribute_value("EM Gain"))
-            self.current_em_gain = current
-            print(
-                "EM Gain detected: "
-                f"current={current}, range={minimum}-{maximum}, increment={increment}, "
-                f"relevant={attr.relevant}, writable={attr.writable}, "
-                f"no_valid_value={attr.cons_novalid}, available={available}"
-            )
-            self.em_gain_info_ready.emit(
-                True, available, minimum, maximum, increment, current
-            )
-        except Exception as e:
+        if cap["current"] is None:
             # The parameter exists, so keep the component visible, but do not
-            # allow writes when its limits/current value could not be verified.
-            print(f"Failed to inspect EM Gain capability: {e}")
+            # allow writes when its limits/current value could not be verified
+            # (_query_attribute_capability only leaves "current" unset when the
+            # inspection itself raised).
             self.em_gain_info_ready.emit(True, False, 0, 0, 0, 0)
+            return
+
+        # A ProEM reports EM Gain as irrelevant while the Low Noise readout port is
+        # selected. It is still configurable: update_em_gain() will switch ADC
+        # Quality to Electron Multiplied before committing.
+        available = cap["writable"]
+        minimum = int(cap["min"]) if cap["min"] is not None else 0
+        maximum = int(cap["max"]) if cap["max"] is not None else minimum
+        increment = max(1, int(cap["inc"])) if cap["inc"] is not None else 1
+        current = int(cap["current"])
+        self.current_em_gain = current
+        print(
+            "EM Gain detected: "
+            f"current={current}, range={minimum}-{maximum}, increment={increment}, "
+            f"relevant={cap['relevant']}, writable={cap['writable']}, available={available}"
+        )
+        self.em_gain_info_ready.emit(True, available, minimum, maximum, increment, current)
 
     def _report_orientation_capability(self, context):
         """Orientation関連PICamパラメータ(Orientation/Normalize Orientation/
@@ -368,15 +357,10 @@ class CameraThreadPI(QThread):
                     else:
                         try:
                             with self._hw_lock:
-                                self._ensure_em_readout_mode()
-                                self.cam.set_attribute_value(
-                                    "EM Gain", int(new_em_gain), truncate=False
-                                )
-                                self._commit_parameters()
-                                self._refresh_attributes()
-                                actual_gain = int(
-                                    self.cam.get_attribute_value("EM Gain")
-                                )
+                                actual_gain = int(self._apply_attribute_value(
+                                    "EM Gain", int(new_em_gain),
+                                    ensure_relevant=self._ensure_em_readout_mode,
+                                ))
                             self.current_em_gain = actual_gain
                             print(f"EM Gain set to {actual_gain}x")
                         except Exception as e:
