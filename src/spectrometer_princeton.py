@@ -1,10 +1,12 @@
-import time
-import serial
 import re
+import time
+
+import serial
 from PyQt5.QtCore import QThread, pyqtSignal
 
+
 class SpectrometerControllerPI:
-    """Acton SP2750 Spectrometer Controller (Serial Communication)"""
+    """Acton SpectraPro-2750 controller using its serial ASCII protocol."""
 
     def __init__(self, config=None, debug=False):
         self.debug = debug
@@ -23,102 +25,174 @@ class SpectrometerControllerPI:
 
         print("Spectrometer initialization...")
         try:
+            self.spec = serial.Serial(
+                port=self.com_port,
+                baudrate=9600,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=0.2,
+                write_timeout=2.0,
+                xonxoff=False,
+                rtscts=False,
+                dsrdtr=False,
+            )
 
-            self.spec = serial.Serial(self.com_port, 9600, timeout=1)
-            
-            # Connection test
-            self.spec.write(b'? NM\r\n')
-            response = self.spec.readline().decode('ascii').strip()
-            
+            # SP-series commands are terminated by CR only.  A command is not
+            # complete until the instrument returns an "ok" line.
+            response = self._send_command("?NM", timeout_s=5.0)
             if response:
-                print(f"Connected to SP2750 on {self.com_port}. (Response: {response})")
+                print(
+                    f"Connected to SP2750 on {self.com_port}. "
+                    f"(Response: {'; '.join(response)})"
+                )
                 self.is_initialized = True
                 return True
-            else:
-                print("Failed to get response from SP2750.")
-                return False
-                
-        except serial.SerialException as e:
-            print(f"[Warning] Failed to open {self.com_port}. Running in dummy mode. Error: {e}")
-            self.is_initialized = False
-            return False
-        except Exception as e:
-            print(f"An error occurred during initialization: {e}")
-            self.is_initialized = False
+
+            print("Failed to get a wavelength response from SP2750.")
+            self._close_serial()
             return False
 
-    def _send_command(self, cmd):
-        """SP2750へASCIIコマンドを送信し、応答を取得するヘルパー関数"""
-        if not self.is_initialized or not self.spec:
-            return ""
-        try:
-            self.spec.write((cmd + '\r').encode('ascii'))
-            return self.spec.readline().decode('ascii').strip()
+        except serial.SerialException as e:
+            print(
+                f"[Warning] Failed to open {self.com_port}. "
+                f"Running in dummy mode. Error: {e}"
+            )
         except Exception as e:
-            print(f"Serial communication error: {e}")
-            return ""
+            print(f"An error occurred during initialization: {e}")
+
+        self._close_serial()
+        self.is_initialized = False
+        return False
+
+    def _send_command(self, command, timeout_s=5.0):
+        """Send one command and return response lines after its ``ok`` reply."""
+        if not self.spec:
+            raise RuntimeError("Spectrometer serial port is not open")
+        if "\r" in command or "\n" in command:
+            raise ValueError("command must not contain CR or LF")
+
+        wire_command = command.encode("ascii") + b"\r"
+        self.spec.reset_input_buffer()
+        self.spec.write(wire_command)
+        self.spec.flush()
+
+        deadline = time.monotonic() + timeout_s
+        received = bytearray()
+
+        while time.monotonic() < deadline:
+            size = max(self.spec.in_waiting, 1)
+            chunk = self.spec.read(size)
+            if not chunk:
+                continue
+
+            received.extend(chunk)
+            normalized = bytes(received).replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+            if any(line.strip().lower() == b"ok" for line in normalized.split(b"\n")):
+                break
+        else:
+            raise TimeoutError(
+                "No completion response from spectrometer: "
+                f"command={command!r}, received={bytes(received)!r}"
+            )
+
+        text = received.decode("ascii", errors="replace")
+        lines = [
+            line.strip()
+            for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+            if line.strip()
+        ]
+
+        # The RS-232 interface may echo the command before the response.
+        return [
+            line
+            for line in lines
+            if line.lower() != "ok" and line != command
+        ]
 
     def get_wavelength(self):
         if not self.is_initialized:
-            return 694.0 # Dummy value (used when not initialized/connected)
-            
-        res = self._send_command('? NM')
+            return 694.0  # Dummy value (used when not initialized/connected)
+
         try:
-            # Extract just the numeric part from the response (e.g. "500.00 nm" -> 500.00)
-            match = re.search(r"[-+]?\d*\.\d+|\d+", res)
+            response = self._send_command("?NM", timeout_s=5.0)
+            match = re.search(r"[-+]?\d*\.\d+|\d+", " ".join(response))
             if match:
                 return float(match.group())
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Failed to read spectrometer wavelength: {e}")
         return 694.0
 
     def get_grating(self):
         if not self.is_initialized:
-            return 1 # Dummy value (used when not initialized/connected)
-            
-        res = self._send_command('? TURRET')
+            return 1  # Dummy value (used when not initialized/connected)
+
         try:
-            match = re.search(r"\d+", res)
-            if match:
-                return int(match.group())
-        except Exception:
-            pass
+            return self._read_grating()
+        except Exception as e:
+            print(f"Failed to read spectrometer grating: {e}")
         return 1
+
+    def _read_grating(self):
+        """Read the grating number, raising if the response cannot be parsed."""
+        response = self._send_command("?GRATING", timeout_s=5.0)
+        match = re.search(r"\d+", " ".join(response))
+        if not match:
+            raise RuntimeError(f"Invalid ?GRATING response: {response!r}")
+        return int(match.group())
 
     def set_wavelength(self, wavelength_nm):
         if not self.is_initialized:
             print(f"(Dummy) Setting spectrometer wavelength to {wavelength_nm} nm...")
-            time.sleep(1.5) 
+            time.sleep(1.5)
             return False
-            
-        print(f"Setting spectrometer wavelength to {wavelength_nm} nm...")
-        # Acton command: move to wavelength
-        self._send_command(f'{wavelength_nm:.3f} GOTO')
 
-        # Simple sleep to wait for the motor move to finish (some models support polling with '? DONE' instead)
-        time.sleep(2.0)
-        return True
+        print(f"Setting spectrometer wavelength to {wavelength_nm} nm...")
+        try:
+            self._send_command(f"{wavelength_nm:.3f} GOTO", timeout_s=30.0)
+            return True
+        except Exception as e:
+            print(f"Failed to set spectrometer wavelength: {e}")
+            return False
 
     def set_grating(self, grating_index):
+        if not 1 <= grating_index <= 9:
+            raise ValueError("grating_index must be between 1 and 9")
+
         if not self.is_initialized:
             print(f"(Dummy) Changing grating to index {grating_index}...")
-            time.sleep(2.0) 
+            time.sleep(2.0)
             return False
-            
-        print(f"Changing grating to index {grating_index}...")
-        # Acton command: switch turret (usually 1, 2, or 3)
-        self._send_command(f'{grating_index} TURRET')
-        time.sleep(3.0) # Wait longer since rotating the turret takes time
-        return True
 
-    def close(self):
-        if self.is_initialized and self.spec:
+        print(f"Changing grating to index {grating_index}...")
+        try:
+            # The parameter precedes GRATING; TURRET selects calibration data
+            # and does not move a grating into the optical path.
+            self._send_command(f"{grating_index} GRATING", timeout_s=30.0)
+            actual_grating = self._read_grating()
+            if actual_grating != grating_index:
+                print(
+                    "Failed to verify grating change: "
+                    f"requested={grating_index}, actual={actual_grating}"
+                )
+                return False
+            return True
+        except Exception as e:
+            print(f"Failed to set spectrometer grating: {e}")
+            return False
+
+    def _close_serial(self):
+        if self.spec:
             try:
                 self.spec.close()
             except Exception:
                 pass
             finally:
-                self.is_initialized = False
+                self.spec = None
+
+    def close(self):
+        self._close_serial()
+        self.is_initialized = False
 
 
 class SpectrometerMoveThread(QThread):
@@ -129,8 +203,22 @@ class SpectrometerMoveThread(QThread):
         self.spec_ctrl = spec_ctrl
         self.grating_index = grating_index
         self.wavelength = wavelength
+        self.success = None
+        self.error_message = ""
 
     def run(self):
-        self.spec_ctrl.set_grating(self.grating_index)
-        self.spec_ctrl.set_wavelength(self.wavelength)
+        if not self.spec_ctrl.is_initialized:
+            # Preserve the existing dummy/debug-mode behaviour.
+            self.spec_ctrl.set_grating(self.grating_index)
+            self.spec_ctrl.set_wavelength(self.wavelength)
+            self.success = True
+        else:
+            grating_ok = self.spec_ctrl.set_grating(self.grating_index)
+            wavelength_ok = grating_ok and self.spec_ctrl.set_wavelength(self.wavelength)
+            self.success = grating_ok and wavelength_ok
+            if not self.success:
+                self.error_message = (
+                    "The spectrometer did not confirm the requested grating "
+                    "and centre-wavelength settings."
+                )
         self.finished_signal.emit()

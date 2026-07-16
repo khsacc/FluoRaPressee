@@ -46,6 +46,8 @@ class SequentialMixin:
         self.lbl_seq_progress.setText(f"Progress: Acquired {self.seq_count} / {self.spin_max_num.value()}")
 
     def set_ui_enabled_during_seq(self, enabled):
+        self.action_hardware_config.setEnabled(enabled)
+
         self.btn_single.setEnabled(enabled)
         self.btn_commence.setEnabled(enabled)
         self.btn_terminate.setEnabled(enabled)

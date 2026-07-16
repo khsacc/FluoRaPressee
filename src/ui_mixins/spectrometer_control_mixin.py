@@ -155,7 +155,12 @@ class SpectrometerControlMixin:
         self.centralWidget().setEnabled(True)
 
     def on_apply_spectrometer(self):
-        grating_index = self.combo_grating.currentIndex() + 1
+        combo_index = self.combo_grating.currentIndex()
+        gratings = self.config.get("grating", [])
+        if 0 <= combo_index < len(gratings):
+            grating_index = int(gratings[combo_index].get("index", combo_index + 1))
+        else:
+            grating_index = combo_index + 1
         val = self.spin_centre_wl.value()
 
         if self.radio_spec_mode_raman.isChecked():
@@ -178,6 +183,18 @@ class SpectrometerControlMixin:
         self.spec_move_thread.start()
 
     def on_spectrometer_moved(self):
+        if getattr(self.spec_move_thread, "success", True) is False:
+            message = getattr(
+                self.spec_move_thread,
+                "error_message",
+                "The spectrometer setting change failed."
+            )
+            self._loading_config = False
+            self._close_spectrometer_moving_dialog()
+            self._set_spectrometer_controls_enabled(True)
+            QMessageBox.warning(self, "Spectrometer error", message)
+            return
+
         self.physical_grating = self.combo_grating.currentText()
         val = self.spin_centre_wl.value()
         if self.radio_spec_mode_raman.isChecked():

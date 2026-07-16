@@ -1,6 +1,43 @@
 import json
 
+from PyQt5.QtWidgets import QMessageBox
+
+from src.hardware_config_dialog import HardwareConfigDialog
+
 class ConfigMixin:
+    def on_open_hardware_config_clicked(self):
+        dialog = HardwareConfigDialog(self.config, parent=self)
+        dialog.applied.connect(self._on_hardware_config_applied)
+        dialog.exec_()
+
+    def _on_hardware_config_applied(self, new_config, changed_tabs):
+        self.config = new_config
+        self.save_config_to_file()
+
+        if "grating" in changed_tabs:
+            self._refresh_grating_combo()
+
+        if "display" in changed_tabs:
+            self.chk_flip_x.setChecked(self.config.get("flip_x", False))
+
+        if "hardware" in changed_tabs:
+            QMessageBox.information(
+                self, "Restart required",
+                "Hardware / connection settings have been saved to spectrometerConfig.json.\n"
+                "Please restart the application for these changes to take effect."
+            )
+
+    def _refresh_grating_combo(self):
+        self.grating_list = [str(g.get("grooves")) for g in self.config.get("grating", [])]
+        current = self.combo_grating.currentText()
+        self.combo_grating.blockSignals(True)
+        self.combo_grating.clear()
+        self.combo_grating.addItems(self.grating_list)
+        if current in self.grating_list:
+            self.combo_grating.setCurrentText(current)
+        self.combo_grating.blockSignals(False)
+        self.check_spectrometer_changes()
+
     def get_roi_for_grating(self, grating_str):
         for g in self.config.get("grating", []):
             if str(g.get("grooves")) == str(grating_str):

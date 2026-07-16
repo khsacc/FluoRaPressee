@@ -181,6 +181,12 @@ class _PathField(QWidget):
     def set_key(self, key: str):
         self._key = key
 
+    def set_value(self, text: str):
+        """Pre-fill with a known value (e.g. when editing an existing config), bypassing search."""
+        if text and self._combo.findText(text) < 0:
+            self._combo.insertItem(0, text)
+        self._combo.setCurrentText(text)
+
     def value(self) -> str:
         return self._combo.currentText().strip()
 
