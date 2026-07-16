@@ -1,6 +1,9 @@
 ﻿import sys
 import os
 
+sys.stdout.reconfigure(errors="replace")
+sys.stderr.reconfigure(errors="replace")
+
 os.environ["QT_OPENGL"] = "software"
 import gc
 gc.enable()
