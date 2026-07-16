@@ -89,18 +89,71 @@ class CameraThreadPI(QThread):
         if refresh is not None:
             refresh(replace=True)
 
+    def _query_attribute_capability(self, name):
+        """PICamパラメータの exists/relevant/writable/制約候補/現在値を1つの辞書で返す。
+
+        属性が存在しない・読めない場合も例外を伝播させず、
+        ``{"exists": False, ...}`` を返す(`_report_em_gain_capability`と同じ防御姿勢)。
+        制約が"Collection"の場合は`values`に候補値リスト、"Range"の場合は
+        `min`/`max`/`inc`を入れる(どちらでもない場合は両方とも空/Noneのまま)。
+        """
+        result = {
+            "exists": False, "relevant": False, "writable": False,
+            "values": None, "min": None, "max": None, "inc": None,
+            "current": None,
+        }
+        try:
+            attr = self.cam.get_attribute(name, error_on_missing=False)
+        except Exception as e:
+            print(f"Failed to query attribute capability for {name}: {e}")
+            return result
+
+        if attr is None or not attr.exists:
+            return result
+
+        result["exists"] = True
+        result["relevant"] = bool(attr.relevant)
+        result["writable"] = bool(attr.writable)
+        try:
+            attr.update_limits(force=True)
+            if attr.cons_type == "Collection":
+                result["values"] = list(attr.values)
+            elif attr.cons_type == "Range":
+                result["min"] = attr.min
+                result["max"] = attr.max
+                result["inc"] = attr.inc
+            result["current"] = self.cam.get_attribute_value(name)
+        except Exception as e:
+            print(f"Failed to inspect attribute capability for {name}: {e}")
+        return result
+
+    def _apply_attribute_value(self, name, value, *, ensure_relevant=None):
+        """PICamパラメータへ値を設定し、commit・relevance再取得の後、実際に適用された値を
+        読み戻して返す。
+
+        `ensure_relevant`が渡された場合、設定前提を整えるコールバック(例:
+        `_ensure_em_readout_mode`)を先に呼ぶ。
+        """
+        if ensure_relevant is not None:
+            ensure_relevant()
+        self.cam.set_attribute_value(name, value, truncate=False)
+        self._commit_parameters()
+        self._refresh_attributes()
+        return self.cam.get_attribute_value(name)
+
     def _select_valid_dependent_value(self, name):
         """Move a dependent collection parameter to a valid device-reported value."""
+        cap = self._query_attribute_capability(name)
+        if not cap["writable"] or not cap["values"]:
+            return
+        current = cap["current"]
+        if current in cap["values"]:
+            return
+        default = None
         attr = self.cam.get_attribute(name, error_on_missing=False)
-        if attr is None or not attr.writable:
-            return
-        attr.update_limits(force=True)
-        if attr.cons_type != "Collection" or not attr.values:
-            return
-        current = self.cam.get_attribute_value(name)
-        if current in attr.values:
-            return
-        selected = attr.default if attr.default in attr.values else attr.values[0]
+        if attr is not None:
+            default = attr.default
+        selected = default if default in cap["values"] else cap["values"][0]
         self.cam.set_attribute_value(name, selected, truncate=False)
         print(f"{name} adjusted for Electron Multiplied mode: {current} -> {selected}")
 
@@ -123,6 +176,7 @@ class CameraThreadPI(QThread):
         for name in ("ADC Speed", "ADC Analog Gain", "ADC Bit Depth"):
             self._select_valid_dependent_value(name)
         print(f"ADC Quality changed: {current_quality} -> Electron Multiplied")
+        self._report_orientation_capability("adc_quality_changed")
 
     def _report_em_gain_capability(self):
         """Inspect the connected PICam camera and report its EM-gain capability."""
@@ -172,6 +226,33 @@ class CameraThreadPI(QThread):
             # allow writes when its limits/current value could not be verified.
             print(f"Failed to inspect EM Gain capability: {e}")
             self.em_gain_info_ready.emit(True, False, 0, 0, 0, 0)
+
+    def _report_orientation_capability(self, context):
+        """Orientation関連PICamパラメータ(Orientation/Normalize Orientation/
+        Readout Orientation/Correct Pixel Bias)の存在・relevant・writable・現在値を
+        調査してログ出力するだけの調査コード(Step 1、work/work_princeton.md参照)。
+
+        TODO(実機確認待ち): ここで得られるログを基に、Low Noise/Electron Multiplied間で
+        画像方向が反転するかどうかの契約(a)/(b)/(c)を確定し、該当する分岐のみ実装する。
+        契約確定後は、Correct Pixel Biasが存在する場合にTrueへ設定する処理もここに追加する。
+        それまではこの属性群を読むだけで、値は一切変更しない。
+        """
+        for name in ("Orientation", "Normalize Orientation", "Readout Orientation", "Correct Pixel Bias"):
+            try:
+                attr = self.cam.get_attribute(name, error_on_missing=False)
+                exists = attr is not None and bool(attr.exists)
+                if not exists:
+                    print(f"[Orientation調査/{context}] {name}: not present on this camera")
+                    continue
+                current = self.cam.get_attribute_value(name)
+                print(
+                    f"[Orientation調査/{context}] {name}: exists={attr.exists}, "
+                    f"relevant={attr.relevant}, writable={attr.writable}, current={current}"
+                )
+            except Exception as e:
+                # This attribute group is optional/exploratory; a failure here must not
+                # prevent the rest of camera initialization from proceeding.
+                print(f"[Orientation調査/{context}] Failed to query {name}: {e}")
 
     def _connect_camera(self):
         """PICamカメラを列挙・選択して接続する。失敗時は CameraInitError を送出する。"""
@@ -231,6 +312,7 @@ class CameraThreadPI(QThread):
                     self._connect_camera()
                     self.det_width, self.det_height = self.cam.get_detector_size()
                     print(f"Connected. Detector size: {self.det_width}x{self.det_height}")
+                    self._report_orientation_capability("connect")
                     self.current_exposure = self.cam.set_exposure(0.1)
                     self._report_em_gain_capability()
                     self.current_temperature_setpoint = float(
