@@ -176,7 +176,6 @@ class CameraThreadPI(QThread):
         for name in ("ADC Speed", "ADC Analog Gain", "ADC Bit Depth"):
             self._select_valid_dependent_value(name)
         print(f"ADC Quality changed: {current_quality} -> Electron Multiplied")
-        self._report_orientation_capability("adc_quality_changed")
 
     def _report_em_gain_capability(self):
         """Inspect the connected PICam camera and report its EM-gain capability."""
@@ -361,6 +360,10 @@ class CameraThreadPI(QThread):
                                     "EM Gain", int(new_em_gain),
                                     ensure_relevant=self._ensure_em_readout_mode,
                                 ))
+                                # commit_parameters()/_refresh_attributes() above have already run
+                                # (inside _apply_attribute_value), so this reflects the post-switch
+                                # attribute state rather than a stale pre-commit cache.
+                                self._report_orientation_capability("adc_quality_changed")
                             self.current_em_gain = actual_gain
                             print(f"EM Gain set to {actual_gain}x")
                         except Exception as e:
