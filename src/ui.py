@@ -139,6 +139,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.physical_center_wl = 694.0
 
         self.pressure_window = None
+        self.camera_status_window = None
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -647,9 +648,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.btn_start_api.clicked.connect(self.on_start_api_server_clicked)
         self.btn_stop_api.clicked.connect(self.on_stop_api_server_clicked)
 
-        settings_menu = self.menuBar().addMenu("Settings")
-        self.action_hardware_config = settings_menu.addAction("Hardware Configuration...")
+        hardware_menu = self.menuBar().addMenu("Hardware")
+        self.action_hardware_config = hardware_menu.addAction("Hardware Configuration...")
         self.action_hardware_config.triggered.connect(self.on_open_hardware_config_clicked)
+
+        self.action_camera_status = hardware_menu.addAction("Check Camera Status...")
+        self.action_camera_status.triggered.connect(self.on_open_camera_status_clicked)
 
         api_menu = self.menuBar().addMenu("API")
         self.action_regenerate_api_key = api_menu.addAction("Regenerate Key")
@@ -692,7 +696,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
                         "spectrometerConfig.json does not match what the spectrometer "
                         "reports:\n\n" + "\n".join(mismatches) +
                         "\n\nIf a grating was physically swapped, update it via "
-                        "Settings > Hardware Configuration."
+                        "Hardware > Hardware Configuration."
                     )
 
         current_wl = self.spec_ctrl.get_wavelength()

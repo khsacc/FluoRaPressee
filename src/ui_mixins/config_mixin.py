@@ -2,13 +2,21 @@ import json
 
 from PyQt5.QtWidgets import QMessageBox
 
-from src.hardware_config_dialog import HardwareConfigDialog
+from src.menu.hardware_config_dialog import HardwareConfigDialog
+from src.menu.camera_status_dialog import CameraStatusDialog
 
 class ConfigMixin:
     def on_open_hardware_config_clicked(self):
         dialog = HardwareConfigDialog(self.config, parent=self)
         dialog.applied.connect(self._on_hardware_config_applied)
         dialog.exec_()
+
+    def on_open_camera_status_clicked(self):
+        if self.camera_status_window is None:
+            self.camera_status_window = CameraStatusDialog(self.thread, parent=self)
+        self.camera_status_window.show()
+        self.camera_status_window.raise_()
+        self.camera_status_window.activateWindow()
 
     def _on_hardware_config_applied(self, new_config, changed_tabs):
         self.config = new_config

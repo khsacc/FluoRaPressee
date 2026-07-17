@@ -1,4 +1,4 @@
-"""Settings > Hardware Configuration dialog — lets the operator edit spectrometerConfig.json
+"""Hardware > Hardware Configuration dialog — lets the operator edit spectrometerConfig.json
 from a running app.
 
 Edits happen on a private working copy; nothing touches the caller's config dict or

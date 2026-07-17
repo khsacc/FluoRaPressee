@@ -38,6 +38,8 @@ class CameraThreadPI(QThread):
     temperature_set_finished = pyqtSignal(float)
     acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors, or the thread crashes while measuring
     hardware_error = pyqtSignal(str)  # emitted when a settings write (exposure/temperature) fails on hardware
+    # emitted in response to request_status(): {section title: [(label, value_str), ...], ...}
+    status_ready = pyqtSignal(dict)
 
     def __init__(self, config=None, debug=False):
         super().__init__()
@@ -63,6 +65,7 @@ class CameraThreadPI(QThread):
         self.settings_changed = True
 
         self.request_temp = False
+        self.status_requested = False
         self.new_exposure = None
         self.new_em_gain = None
         self.new_temperature = None
@@ -128,6 +131,136 @@ class CameraThreadPI(QThread):
         except Exception as e:
             print(f"Failed to inspect attribute capability for {name}: {e}")
         return result
+
+    # Sections shown by the "Check Camera Status" dialog (src/menu/camera_status_dialog.py).
+    # Each entry is (display label, PICam attribute name) except "model"/"serial_number"/
+    # "sensor_name", which come from get_device_info() rather than a PICam attribute.
+    _STATUS_FIELDS = (
+        ("Camera identification", (
+            ("Model", "model"),
+            ("Serial number", "serial_number"),
+            ("Sensor name", "sensor_name"),
+            ("Sensor width (px)", "Sensor Active Width"),
+            ("Sensor height (px)", "Sensor Active Height"),
+            ("Pixel width (um)", "Pixel Width"),
+            ("Pixel height (um)", "Pixel Height"),
+            ("Sensor type", "Sensor Type"),
+            ("CCD characteristics", "CCD Characteristics"),
+            ("Readout port count", "Readout Port Count"),
+        )),
+        ("Exposure / acquisition", (
+            ("Exposure time (ms)", "Exposure Time"),
+            ("Readout count", "Readout Count"),
+            ("Accumulations", "Accumulations"),
+            ("Readout control mode", "Readout Control Mode"),
+            ("Kinetics window height", "Kinetics Window Height"),
+            ("Readout time calculation (ms)", "Readout Time Calculation"),
+            ("Frame rate calculation (fps)", "Frame Rate Calculation"),
+        )),
+        ("Readout amplifier / ADC / EM gain", (
+            ("Readout path", "ADC Quality"),
+            ("ADC speed (MHz)", "ADC Speed"),
+            ("Analog gain", "ADC Analog Gain"),
+            ("EM gain", "EM Gain"),
+            ("Pixel bias correction", "Correct Pixel Bias"),
+        )),
+        ("Shutter", (
+            ("Shutter timing mode", "Shutter Timing Mode"),
+            ("Shutter opening delay (ms)", "Shutter Opening Delay"),
+            ("Shutter closing delay (ms)", "Shutter Closing Delay"),
+            ("Internal shutter type", "Internal Shutter Type"),
+            ("Internal shutter status", "Internal Shutter Status"),
+            ("External shutter type", "External Shutter Type"),
+            ("External shutter status", "External Shutter Status"),
+        )),
+        ("Temperature / cooling", (
+            ("Target temperature (C)", "Sensor Temperature Set Point"),
+            ("Current temperature (C)", "Sensor Temperature Reading"),
+            ("Temperature status", "Sensor Temperature Status"),
+            ("Cooling fan disabled", "Disable Cooling Fan"),
+            ("Cooling fan status", "Cooling Fan Status"),
+            ("Sensor window heater enabled", "Enable Sensor Window Heater"),
+            ("Vacuum status", "Vacuum Status"),
+        )),
+    )
+
+    def _build_status_snapshot(self):
+        """Read every parameter in `_STATUS_FIELDS` off the connected camera.
+
+        Called only from run() (under `_hw_lock`), matching every other `self.cam` access
+        in this file. A parameter absent on this particular camera model (e.g. EM Gain on
+        a non-ProEM PICam camera) reads as "N/A" rather than raising.
+        """
+        info = self.cam.get_device_info()
+        device_fields = {"model": info.model, "serial_number": info.serial_number, "sensor_name": info.name}
+
+        snapshot = {}
+        for section, fields in self._STATUS_FIELDS:
+            rows = []
+            for label, key in fields:
+                if key in device_fields:
+                    rows.append((label, str(device_fields[key])))
+                    continue
+                cap = self._query_attribute_capability(key)
+                if not cap["exists"]:
+                    rows.append((label, "N/A (not supported on this camera)"))
+                elif cap["current"] is None:
+                    rows.append((label, "Unavailable"))
+                else:
+                    rows.append((label, str(cap["current"])))
+            snapshot[section] = rows
+        return snapshot
+
+    def _debug_status_snapshot(self):
+        """Fabricated status snapshot for --debug mode (no real camera connected)."""
+        return {
+            "Camera identification": [
+                ("Model", "ProEM:1600(2) [DEBUG]"),
+                ("Serial number", "DEBUG-0000000"),
+                ("Sensor name", "Simulated Sensor"),
+                ("Sensor width (px)", str(self.det_width)),
+                ("Sensor height (px)", str(self.det_height)),
+                ("Pixel width (um)", "16.0"),
+                ("Pixel height (um)", "16.0"),
+                ("Sensor type", "CCD"),
+                ("CCD characteristics", "Back Illuminated"),
+                ("Readout port count", "1"),
+            ],
+            "Exposure / acquisition": [
+                ("Exposure time (ms)", f"{self.mock_exposure * 1000:.3f}"),
+                ("Readout count", "1"),
+                ("Accumulations", "1"),
+                ("Readout control mode", "Full Frame"),
+                ("Kinetics window height", "N/A (not supported on this camera)"),
+                ("Readout time calculation (ms)", f"{self.mock_exposure * 1000:.3f}"),
+                ("Frame rate calculation (fps)", f"{(1.0 / self.mock_exposure):.3f}" if self.mock_exposure else "N/A"),
+            ],
+            "Readout amplifier / ADC / EM gain": [
+                ("Readout path", "Electron Multiplied"),
+                ("ADC speed (MHz)", "10"),
+                ("Analog gain", "Low"),
+                ("EM gain", str(self.mock_em_gain)),
+                ("Pixel bias correction", "True"),
+            ],
+            "Shutter": [
+                ("Shutter timing mode", "Normal"),
+                ("Shutter opening delay (ms)", "0.0"),
+                ("Shutter closing delay (ms)", "0.0"),
+                ("Internal shutter type", "Vincent Uniblitz"),
+                ("Internal shutter status", "Open"),
+                ("External shutter type", "None"),
+                ("External shutter status", "N/A (not supported on this camera)"),
+            ],
+            "Temperature / cooling": [
+                ("Target temperature (C)", f"{self.mock_temp:.1f}"),
+                ("Current temperature (C)", f"{self.mock_temp:.1f}"),
+                ("Temperature status", "Locked"),
+                ("Cooling fan disabled", "False"),
+                ("Cooling fan status", "On"),
+                ("Sensor window heater enabled", "False"),
+                ("Vacuum status", "Sufficient"),
+            ],
+        }
 
     def _apply_attribute_value(self, name, value, *, ensure_relevant=None, rollback_names=()):
         """PICamパラメータへ値を設定し、commit・relevance再取得の後、実際に適用された値を
@@ -380,6 +513,7 @@ class CameraThreadPI(QThread):
                     new_em_gain, self.new_em_gain = self.new_em_gain, None
                     new_temperature, self.new_temperature = self.new_temperature, None
                     request_temp = self.request_temp
+                    status_requested = self.status_requested
                     is_measuring = self.is_measuring
                     settings_changed = self.settings_changed
 
@@ -475,6 +609,20 @@ class CameraThreadPI(QThread):
                             self.temperature_ready.emit(-999.0)
                     with self._lock:
                         self.request_temp = False
+
+                if status_requested:
+                    if self.debug:
+                        self.status_ready.emit(self._debug_status_snapshot())
+                    else:
+                        try:
+                            with self._hw_lock:
+                                snapshot = self._build_status_snapshot()
+                            self.status_ready.emit(snapshot)
+                        except Exception as e:
+                            print(f"Failed to query camera status: {e}")
+                            self.status_ready.emit({"Error": [("Failed to query camera status", str(e))]})
+                    with self._lock:
+                        self.status_requested = False
 
                 if is_measuring:
                     if not was_measuring:
@@ -586,6 +734,14 @@ class CameraThreadPI(QThread):
     def read_temperature(self):
         with self._lock:
             self.request_temp = True
+
+    def request_status(self):
+        """Request a camera status snapshot (thread-safe); result arrives via status_ready.
+
+        Only meaningful while idle: the GUI is expected to keep the triggering button
+        disabled whenever `is_measuring` is True (see CameraStatusDialog)."""
+        with self._lock:
+            self.status_requested = True
 
     def update_exposure(self, exp_time):
         """Request an exposure change (thread-safe) and return a token identifying
