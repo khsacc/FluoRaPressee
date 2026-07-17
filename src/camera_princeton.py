@@ -8,12 +8,22 @@ from PyQt5.QtCore import QThread, pyqtSignal
 try:
     import pylablib
     from pylablib.devices import PrincetonInstruments
+    from pylablib.devices.PrincetonInstruments import picam as picam_module
 except ImportError:
     pylablib = None
     PrincetonInstruments = None
+    picam_module = None
 
 # Default install location for the PICam Runtime
 _DEFAULT_PICAM_RUNTIME_PATH = r"C:\Program Files\Princeton Instruments\PICam\Runtime"
+
+# A real ProEM CCD frame always contains a bias pedestal and read noise, even
+# with the shutter closed.  An ndarray whose every pixel is exactly zero is
+# therefore an unfilled/invalid PICam receive buffer, not a dark exposure.
+_ZERO_FRAMES_BEFORE_RECOVERY = 3
+_ERRORS_BEFORE_RECOVERY = 2
+_MAX_ACQUISITION_RECOVERIES = 2
+_ACQUISITION_ERRORS_BEFORE_STOP = 5
 
 
 def _get_picam_runtime_path(config):
@@ -76,6 +86,31 @@ class CameraThreadPI(QThread):
         self.current_exposure = 0.1
         self.current_em_gain = None
         self.current_temperature_setpoint = float(self.mock_temp)
+
+    @staticmethod
+    def _is_all_zero_frame(data):
+        """Return True only for a non-empty frame whose values are all exactly zero."""
+        array = np.asarray(data)
+        return array.size > 0 and not np.any(array)
+
+    def _frame_diagnostics(self, data):
+        """Build a compact hardware-oriented description for acquisition logs."""
+        array = np.asarray(data)
+        try:
+            roi = self.cam.get_roi() if self.cam is not None else None
+        except Exception as e:
+            roi = f"unavailable ({e})"
+        try:
+            in_progress = (
+                self.cam.acquisition_in_progress() if self.cam is not None else None
+            )
+        except Exception as e:
+            in_progress = f"unavailable ({e})"
+        return (
+            f"shape={array.shape}, dtype={array.dtype}, roi={roi}, "
+            f"exposure={self.current_exposure:.6g}s, "
+            f"acquisition_in_progress={in_progress}"
+        )
 
     def _commit_parameters(self):
         """Commit pending PICam parameters immediately.
@@ -195,6 +230,20 @@ class CameraThreadPI(QThread):
         device_fields = {"model": info.model, "serial_number": info.serial_number, "sensor_name": info.name}
 
         snapshot = {}
+        try:
+            firmware_details = picam_module.lib.Picam_GetFirmwareDetails_ByHandle(
+                self.cam.handle
+            )
+            snapshot["Camera firmware"] = [
+                (
+                    detail.name.decode(errors="replace"),
+                    detail.detail.decode(errors="replace"),
+                )
+                for detail in firmware_details
+            ]
+        except Exception as e:
+            snapshot["Camera firmware"] = [("Firmware details", f"Unavailable ({e})")]
+
         for section, fields in self._STATUS_FIELDS:
             rows = []
             for label, key in fields:
@@ -214,6 +263,12 @@ class CameraThreadPI(QThread):
     def _debug_status_snapshot(self):
         """Fabricated status snapshot for --debug mode (no real camera connected)."""
         return {
+            "Camera firmware": [
+                ("Config", "DEBUG"),
+                ("Logic", "DEBUG"),
+                ("ADC", "DEBUG"),
+                ("Power", "DEBUG"),
+            ],
             "Camera identification": [
                 ("Model", "ProEM:1600(2) [DEBUG]"),
                 ("Serial number", "DEBUG-0000000"),
@@ -425,7 +480,7 @@ class CameraThreadPI(QThread):
             raise CameraInitError("pylablib is not installed; cannot access PICam cameras.")
 
         runtime_path = _get_picam_runtime_path(self.config)
-        if hasattr(os, 'add_dll_directory'):
+        if hasattr(os, 'add_dll_directory') and self._dll_dir_cookie is None:
             try:
                 self._dll_dir_cookie = os.add_dll_directory(runtime_path)
             except Exception as e:
@@ -463,6 +518,124 @@ class CameraThreadPI(QThread):
 
         print(f"Connecting to PICam camera: {target.model} / {target.serial_number} / {target.interface}")
         self.cam = PrincetonInstruments.PicamCamera(serial_number=target.serial_number)
+
+    def _stop_and_clear_acquisition(self):
+        """Bring pylablib/PICam back to a known idle state.
+
+        PICam can race between its running-status query and the following wait,
+        producing error 27 even though the acquisition has already stopped.  It
+        can also briefly report error 20 while the previous readout is winding
+        down.  Treat error 27 as an idle indication here only; it is no longer
+        ignored indefinitely in the main acquisition loop.
+        """
+        if self.cam is None:
+            return
+
+        try:
+            self.cam.stop_acquisition()
+        except Exception as e:
+            if getattr(e, "code", None) != 27:
+                raise
+            print(f"PICam recovery: stop reported already idle (error 27): {e}")
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            try:
+                if not self.cam.acquisition_in_progress():
+                    break
+            except Exception:
+                break
+            time.sleep(0.02)
+        else:
+            raise RuntimeError("PICam acquisition did not become idle within 2 seconds")
+
+        try:
+            self.cam.clear_acquisition()
+        except Exception as e:
+            if getattr(e, "code", None) != 27:
+                raise
+            print(f"PICam recovery: clear reported already idle (error 27): {e}")
+
+    def _reset_acquisition_state(self):
+        """Clear the current acquisition and re-apply the intended ROI/binning."""
+        with self._hw_lock:
+            self._stop_and_clear_acquisition()
+            self._apply_camera_settings()
+        with self._lock:
+            self.settings_changed = False
+
+    def _reopen_camera_connection(self):
+        """Reopen PICam once and restore settings owned by this application."""
+        with self._hw_lock:
+            previous_exposure = self.current_exposure
+            previous_temperature = self.current_temperature_setpoint
+            previous_quality = None
+            previous_em_gain = self.current_em_gain
+
+            if self.cam is not None:
+                try:
+                    previous_quality = self.cam.get_attribute_value("ADC Quality")
+                except Exception as e:
+                    print(f"PICam recovery: failed to snapshot ADC Quality: {e}")
+                try:
+                    self._stop_and_clear_acquisition()
+                except Exception as e:
+                    print(f"PICam recovery: best-effort acquisition clear failed: {e}")
+                try:
+                    self.cam.close()
+                finally:
+                    self.cam = None
+
+            # Give the GigE/PICam device session a short interval to release its
+            # old handle before enumerating and opening it again.
+            time.sleep(0.25)
+            self._connect_camera()
+            self.det_width, self.det_height = self.cam.get_detector_size()
+            self.current_exposure = self.cam.set_exposure(previous_exposure)
+
+            if previous_quality == "Electron Multiplied" and previous_em_gain is not None:
+                self.current_em_gain = int(self._apply_attribute_value(
+                    "EM Gain", int(previous_em_gain),
+                    ensure_relevant=self._ensure_em_readout_mode,
+                    rollback_names=(
+                        "ADC Quality", "ADC Speed", "ADC Analog Gain", "ADC Bit Depth",
+                    ),
+                ))
+
+            temp_attr = self.cam.get_attribute(
+                "Sensor Temperature Set Point", error_on_missing=False
+            )
+            if temp_attr is not None and temp_attr.writable:
+                self.cam.set_attribute_value(
+                    "Sensor Temperature Set Point", previous_temperature, truncate=False
+                )
+                self._commit_parameters()
+                self.current_temperature_setpoint = float(
+                    self.cam.get_attribute_value("Sensor Temperature Set Point")
+                )
+
+            self._apply_camera_settings()
+
+        with self._lock:
+            self.settings_changed = False
+        print(
+            "PICam recovery: camera connection reopened and application settings restored"
+        )
+
+    def _recover_acquisition(self, reason, recovery_number):
+        """Run one bounded recovery stage; callers stop after the configured maximum."""
+        if recovery_number == 1:
+            action = "clear acquisition state and re-apply ROI"
+            print(f"PICam recovery 1/{_MAX_ACQUISITION_RECOVERIES}: {action}; reason: {reason}")
+            self._reset_acquisition_state()
+        elif recovery_number == 2:
+            action = "reopen camera connection"
+            print(f"PICam recovery 2/{_MAX_ACQUISITION_RECOVERIES}: {action}; reason: {reason}")
+            self._reopen_camera_connection()
+        else:
+            raise RuntimeError(
+                f"PICam recovery limit exceeded ({_MAX_ACQUISITION_RECOVERIES}): {reason}"
+            )
 
     def run(self):
         try:
@@ -502,6 +675,8 @@ class CameraThreadPI(QThread):
 
             was_measuring = False
             _consec_errors = 0
+            _consec_zero_frames = 0
+            _recovery_attempts = 0
 
             while self.thread_active:
                 with self._lock:
@@ -669,34 +844,88 @@ class CameraThreadPI(QThread):
                             with self._hw_lock:
                                 data = self.cam.snap(timeout=snap_timeout)
                             if data is None:
-                                time.sleep(0.05)
+                                raise RuntimeError("PICam snap returned no frame")
+                            if self._is_all_zero_frame(data):
+                                _consec_zero_frames += 1
+                                print(
+                                    "Invalid all-zero PICam frame rejected "
+                                    f"({_consec_zero_frames}/{_ZERO_FRAMES_BEFORE_RECOVERY}); "
+                                    f"{self._frame_diagnostics(data)}"
+                                )
+                                if _consec_zero_frames < _ZERO_FRAMES_BEFORE_RECOVERY:
+                                    time.sleep(0.05)
+                                    continue
+
+                                if _recovery_attempts >= _MAX_ACQUISITION_RECOVERIES:
+                                    error_msg = (
+                                        "PICam repeatedly returned all-zero frames after "
+                                        f"{_MAX_ACQUISITION_RECOVERIES} recovery attempts. "
+                                        "Check the GigE NIC/eBUS driver and camera firmware."
+                                    )
+                                    print(error_msg)
+                                    with self._lock:
+                                        self.is_measuring = False
+                                    self.acquisition_failed.emit(error_msg)
+                                    _consec_zero_frames = 0
+                                    _recovery_attempts = 0
+                                    continue
+
+                                _recovery_attempts += 1
+                                self._recover_acquisition(
+                                    "three consecutive all-zero frames", _recovery_attempts
+                                )
+                                _consec_zero_frames = 0
+                                _consec_errors = 0
                                 continue
+
+                            _consec_zero_frames = 0
+                            _recovery_attempts = 0
                             if self.roi_mode == "2d":
                                 self.data_ready.emit("2d", data)
                             else:
                                 self.data_ready.emit("1d", self._extract_spectrum(data))
                         _consec_errors = 0
                     except Exception as e:
-                        if getattr(e, "code", None) == 27:  # PicamError_AcquisitionNotInProgress
-                            # Benign pylablib/PICam race: a fast single-frame snap() can finish between
-                            # pylablib's acquisition_in_progress() check and its next status poll, so the
-                            # poll raises this instead of reporting normal completion (see
-                            # PicamCamera._wait_for_acquisition_update in pylablib's picam.py, which only
-                            # checks acquisition_in_progress() once before several update polls). Not a
-                            # real camera fault; retry immediately without touching the error counter below.
-                            time.sleep(0.01)
-                            continue
-                        print(f"Failed to acquire camera data: {e}")
+                        error_code = getattr(e, "code", None)
+                        print(
+                            "Failed to acquire camera data"
+                            f" (PICam error code={error_code}): {e}"
+                        )
                         _consec_errors += 1
-                        if _consec_errors >= 5:
-                            print("Stopping acquisition after 5 consecutive camera errors.")
+                        if (
+                            _consec_errors >= _ERRORS_BEFORE_RECOVERY
+                            and _recovery_attempts < _MAX_ACQUISITION_RECOVERIES
+                        ):
+                            _recovery_attempts += 1
+                            try:
+                                self._recover_acquisition(
+                                    f"{_consec_errors} consecutive acquisition errors "
+                                    f"(last PICam code={error_code})",
+                                    _recovery_attempts,
+                                )
+                                _consec_errors = 0
+                                _consec_zero_frames = 0
+                                continue
+                            except Exception as recovery_error:
+                                print(f"PICam recovery failed: {recovery_error}")
+
+                        if _consec_errors >= _ACQUISITION_ERRORS_BEFORE_STOP:
+                            error_msg = (
+                                "Stopping acquisition after "
+                                f"{_consec_errors} consecutive camera errors. Last error: {e}"
+                            )
+                            print(error_msg)
                             with self._lock:
                                 self.is_measuring = False
-                            self.acquisition_failed.emit(str(e))
+                            self.acquisition_failed.emit(error_msg)
                             _consec_errors = 0
+                            _consec_zero_frames = 0
+                            _recovery_attempts = 0
                         time.sleep(0.05)
                 else:
                     _consec_errors = 0
+                    _consec_zero_frames = 0
+                    _recovery_attempts = 0
                     was_measuring = False
                     time.sleep(0.05)
 
@@ -849,9 +1078,21 @@ class CameraThreadPI(QThread):
 
             try:
                 snap_timeout = self.current_exposure + 10
-                with self._hw_lock:
-                    data = self.cam.snap(timeout=snap_timeout)
-                return data
+                for attempt in range(2):
+                    with self._hw_lock:
+                        data = self.cam.snap(timeout=snap_timeout)
+                    if data is not None and not self._is_all_zero_frame(data):
+                        return data
+                    detail = (
+                        "no frame" if data is None else self._frame_diagnostics(data)
+                    )
+                    print(
+                        "Invalid PICam frame rejected during single-image acquisition "
+                        f"(attempt {attempt + 1}/2): {detail}"
+                    )
+                    if attempt == 0:
+                        self._reset_acquisition_state()
+                return None
             except Exception as e:
                 print(f"Failed to acquire single image: {e}")
                 return None

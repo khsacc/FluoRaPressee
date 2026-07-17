@@ -1,5 +1,5 @@
 @echo off
-REM Launch the app using the .venv virtual environment (requires real hardware + Andor SDK).
+REM Launch the app using the .venv virtual environment (requires real hardware + PICam Runtime).
 
 cd /d "%~dp0"
 
