@@ -1,10 +1,24 @@
-Caution: This program is under active development!
+# FluoRaPressée: Spectroscopic measurements and analysis platform designed for efficient high-pressure experiments
 
-[Japanese version available here](./README_ja.md)
+This program is designed to
+- control spectrometers and cameras, and acquire spectroscopic data
+- instantly fit the data
+- calculate pressure by using an established fluorescence/Raman pressure sensors
 
-# FluoraPressée: Spectroscopic measurements and analysis designed for high-pressure experiments
+The name FluoRaPressée combines **Flu**orescence, **Ra**man, and the French adjective **« pressée »** ('pressed', and also 'in hurry'), a playful nod to rapid spectroscopic measurements and analyses under pressure.
 
 Author: Hiroki Kobayashi (Geochemical Research Center, The University of Tokyo). https://orcid.org/0000-0002-3682-7558 E-mail as of 2026: hiroki (at) eqchem.s.u-tokyo.ac.jp
+
+> [!NOTE]
+> This program is under active development, and README.md will be completed once the fundamental development is completed. [Japanese version available here](./README_ja.md), which is updated more frequently.
+
+
+## Acknowledgements
+
+This software was developed in the Geochemical Research Center (GcRC), Graduate School of Science, the University of Tokyo, with the support from Profs. K. Komatsu and H. Kagi. I thank the members of the group who helped me with testing and improving the software, especially K. Komatsu and S. Koyano.
+
+The design of FluoraPressée was inspired by [Rubycond](https://github.com/CelluleProjet/Rubycond), an open-source software for ruby fluorescence measurements and pressure determination, which I used every day during my 1-year stay at l'Institut de minéralogie, de physique des matériaux et de cosmochimie (IMPMC), Paris, France. The experience of using Rubycond motivated the development of this more general-purpose platform, which extends the scope towards the use of Raman sensors for high-temperature experiments and API-based remote operation. I gratefully acknowledge the Rubycond developers (Yiuri Garino and Silvia Boccato).
+
 
 <!-- ## ✨ Features
 
