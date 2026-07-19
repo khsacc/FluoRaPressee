@@ -48,6 +48,9 @@ Andor製のカメラ（検出器）および分光器を制御し、スペクト
     * ルビー（Cr<sup>3+</sup>:Al<sub>2</sub>O<sub>3</sub>）
         * 圧力シフト
             * Shen et al., <i>High Press. Res.</i> (2020) [DOI: 10.1080/08957959.2020.1791107](https://doi.org/10.1080/08957959.2020.1791107)
+            * Kraus et al., <i>Phys. Rev. B.</i> (2016) [DOI: 10.1103/PhysRevB.93.134105](https://doi.org/10.1103/PhysRevB.93.134105)
+            * Sokolova et al., <i>Russ. Geol. Geophys.</i> (2013) [DOI: 10.1016/j.rgg.2013.01.005](https://doi.org/10.1016/j.rgg.2013.01.005)
+            * Jacobsen et al., <i>Am. Min.</i> (2008) [for helium pressure medium, calibrated against the MgO scale] [DOI: 10.2138/am.2008.2988](https://doi.org/10.2138/am.2008.2988)
             * Dorogokupets and Oganov, <i>Phys. Rev. B.</i> (2007) [DOI: 10.1103/PhysRevB.75.024115](https://doi.org/10.1103/PhysRevB.75.024115)
             * Holzapfel, <i>J. Appl. Phys.</i> (2003) [DOI: 10.1063/1.1525856](https://doi.org/10.1063/1.1525856)
             * Mao et al., <i>J. Geophys. Res.</i> (1986) [DOI: 10.1029/JB091iB05p04673](https://doi.org/10.1029/JB091iB05p04673)
@@ -61,6 +64,13 @@ Andor製のカメラ（検出器）および分光器を制御し、スペクト
             * Datchi et al., <i>High Press. Res.</i> (2007) [calibrated using the DO2007 ruby scale] [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
         * 温度シフト
             * Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
+    * Sm<sup>2+</sup>:SrFCl
+        * 圧力シフト
+            * Lorenz et al., <i>High Press. Res.</i> (1994) [DOI: 10.1080/08957959408203170](https://doi.org/10.1080/08957959408203170)
+            * Shen et al., <i>High Press. Res.</i> (2021) [DOI: 10.1080/08957959.2021.1931168](https://doi.org/10.1080/08957959.2021.1931168)
+            * Shen et al., <i>High Press. Res.</i> (1991) [DOI: 10.1080/08957959108245510](https://doi.org/10.1080/08957959108245510)
+        * 温度シフト
+            * 20 - 650 K, Lorenz et al., <i>High Press. Res.</i> (1994) [DOI: 10.1080/08957959408203170](https://doi.org/10.1080/08957959408203170)
 * Raman スケール
     * <sup>13</sup>C diamond first order
         * Schiferl et al., <i>J. Appl. Phys.</i> (1997) [DOI: 10.1063/1.366268](https://doi.org/10.1063/1.366268)

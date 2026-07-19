@@ -35,6 +35,12 @@ Key convention: `<sensor>_<firstauthor>_<year>[_variant]` (e.g. `ruby_shen_2020`
 "ruby_newauthor_2025": {"label": "Newauthor et al. 2025", "temperature_mode": "none"},
 ```
 
+**Ordering — ruby pressure scales only**: `PRESSURE_SCALES["ruby"]` (and the mirrored 圧力シフト list
+under ルビー in `README_ja.md`, step 4) is kept sorted **newest first** by publication year. Insert
+your new key at the position matching its year — don't just append to the end. This convention
+currently applies only to ruby's pressure-shift (`PRESSURE_SCALES`) entries; other sensors' dicts and
+ruby's own 温度シフト/`TEMPERATURE_SCALES` list are not required to follow it unless asked.
+
 `temperature_mode` is the key decision:
 
 - **`"none"`** (the common case): the formula only needs `peak` and a zero-pressure reference

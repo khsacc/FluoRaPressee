@@ -27,6 +27,12 @@ class PressureCalculator:
             "unit": "nm",
             "initial_value": 685.410,
         },
+        "sm_srfcl": {
+            "label": "Sm2+:SrFCl",
+            "kind": "fluorescence",
+            "unit": "nm",
+            "initial_value": 690.300,
+        },
         "diamond_13c_1st_order": {
             "label": "13C diamond 1st order",
             "kind": "raman",
@@ -50,6 +56,9 @@ class PressureCalculator:
     PRESSURE_SCALES = {
         "ruby": {
             "ruby_shen_2020": {"label": "Shen et al. 2020", "temperature_mode": "none"},
+            "ruby_kraus_2016": {"label": "Kraus et al. 2016", "temperature_mode": "none"},
+            "ruby_sokolova_2013": {"label": "Sokolova et al. 2013", "temperature_mode": "none"},
+            "ruby_jacobsen_2008": {"label": "Jacobsen et al. 2008", "temperature_mode": "none"},
             "ruby_dorogokupets_oganov_2007": {"label": "Dorogokupets and Oganov 2007", "temperature_mode": "none"},
             "ruby_holzapfel_2003": {"label": "Holzapfel 2003", "temperature_mode": "none"},
             "ruby_mao_1986": {"label": "Mao et al. 1986", "temperature_mode": "none"},
@@ -62,6 +71,11 @@ class PressureCalculator:
             "sm_srb4o7_rashchenko_2015_lam12": {"label": "0-1 line (lam2): Rashchenko et al. 2015", "temperature_mode": "none"},
             "sm_srb4o7_rashchenko_2015_lam13": {"label": "0-1 line (lam3): Rashchenko et al. 2015", "temperature_mode": "none"},
             "sm_srb4o7_rashchenko_2015_lam14": {"label": "0-1 line (lam4): Rashchenko et al. 2015", "temperature_mode": "none"},
+        },
+        "sm_srfcl": {
+            "sm_srfcl_lorenz_1994": {"label": "Lorenz et al. 1994", "temperature_mode": "none"},
+            "sm_srfcl_shen_2021": {"label": "Shen et al. 2021", "temperature_mode": "none"},
+            "sm_srfcl_shen_1991": {"label": "Shen et al. 1991", "temperature_mode": "none"},
         },
         "diamond_13c_1st_order": {
             "diamond_13c_schiferl_1997": {
@@ -100,6 +114,9 @@ class PressureCalculator:
         },
         "sm_srb4o7": {
             "sm_srb4o7_datchi_2007": {"label": "Datchi et al. 2007", "valid_range": (296, 900.0)},
+        },
+        "sm_srfcl": {
+            "sm_srfcl_lorenz_1994": {"label": "Lorenz et al. 1994", "valid_range": (20, 650)},
         },
         "cubic_bn_to": {
             "cubic_bn_kawamoto_2004": {"label": "Kawamoto et al. 2004", "valid_range": (300, 1000)},
@@ -338,6 +355,24 @@ class PressureCalculator:
                 )
                 return p, dp, None
 
+            if p_scale == "ruby_kraus_2016":
+                p, dp = PressureCalculator._calc_mao_type(
+                    wavelength, wavelength0, wavelength_err, 1915.1, 10.603, 0, 0
+                )
+                return p, dp, None
+
+            if p_scale == "ruby_jacobsen_2008":
+                p, dp = PressureCalculator._calc_mao_type(
+                    wavelength, wavelength0, wavelength_err, 1904.0, 10.32, 0, 0.07
+                )
+                return p, dp, None
+
+            if p_scale == "ruby_sokolova_2013":
+                p, dp = PressureCalculator._calc_kunk_type(
+                    wavelength, wavelength0, wavelength_err, 1870.0, 6.0, 0, 0
+                )
+                return p, dp, None
+
         if sensor == "sm_srb4o7":
             def datchi_borate_calc(C, a, b, d_wavelength, C_err, a_err, b_err):
                 p = C * d_wavelength * (1 + a * d_wavelength) / (1 + b * d_wavelength)
@@ -375,6 +410,39 @@ class PressureCalculator:
                 return p, dp, None
             if p_scale == "sm_srb4o7_rashchenko_2015_lam14":
                 p, dp = PressureCalculator._calc_mao_type(wavelength, wavelength0, wavelength_err, 2988, 35.7, 36, 1.5)
+                return p, dp, None
+
+        if sensor == "sm_srfcl":
+            if p_scale == "sm_srfcl_lorenz_1994":
+                # P = (A * lam0 / B) * ((lam / lam0)^B - 1), split at the 10 GPa boundary
+                # between the two literature B values; select branch from the low-pressure
+                # result since P(lam) is monotonic in this range.
+                A = 0.904
+                A_err = 0.004
+                A_eff = A * wavelength0
+                A_eff_err = A_err * wavelength0
+                p, dp = PressureCalculator._calc_mao_type(
+                    wavelength, wavelength0, wavelength_err, A_eff, -11.6, A_eff_err, 0.7
+                )
+                if p > 10.0:
+                    p, dp = PressureCalculator._calc_mao_type(
+                        wavelength, wavelength0, wavelength_err, A_eff, -13.6, A_eff_err, 0.6
+                    )
+                return p, dp, None
+
+            if p_scale == "sm_srfcl_shen_2021":
+                C = 1.123
+                C_err = 0.002
+                d_wavelength = wavelength - wavelength0
+                p = d_wavelength / C
+                dp = np.sqrt((wavelength_err / C) ** 2 + (d_wavelength / C**2 * C_err) ** 2)
+                return p, dp, None
+
+            if p_scale == "sm_srfcl_shen_1991":
+                C = 1.10
+                d_wavelength = wavelength - wavelength0
+                p = d_wavelength / C
+                dp = wavelength_err / C
                 return p, dp, None
 
         return None, None, None
@@ -440,6 +508,21 @@ class PressureCalculator:
         return None, None, None
 
     @staticmethod
+    def _calc_debye_shift(alpha: float, theta: float, temperature: float) -> float:
+        """Debye-model line-shift term: alpha * (T/theta)^4 * integral_0^(theta/T) x^3/(e^x-1) dx."""
+        def integrand(x):
+            if x == 0:
+                return 0.0
+            if x > 700:  # Avoid overflow for large x
+                return 0.0
+            return x ** 3 / (np.exp(x) - 1)
+
+        if temperature == 0:
+            return 0.0
+        integral, _ = quad(integrand, 0, theta / temperature)
+        return alpha * (temperature / theta) ** 4 * integral
+
+    @staticmethod
     def get_corrected_zero_peak(*, sensor: str, t_scale: str, current_t: float, t0: float,
                                 zero_peak_at_t0: float) -> float:
         """温度補正されたゼロ圧力ピーク位置を計算する。
@@ -458,19 +541,6 @@ class PressureCalculator:
         """
         if sensor == "ruby":
 
-            def calculate_debye_model(alpha, theta, temperature):
-                def integrand(x):
-                    if x > 700:  # Avoid overflow for large x
-                        return 0
-                    else:
-                        return x ** 3 / (np.exp(x) - 1)
-                
-                if temperature == 0:
-                    integral = 0
-                else:
-                    integral, _ = quad(integrand, 0, theta / temperature)
-                return alpha * (temperature / theta)**4 * integral  
-            
             def datchi_ruby_temp(temp, a1, a2, a3):
                     # Note: this function returns the absolute wavelength reported in the literature, not the shift from the input lam0_at_t0.
                     if temp < 50:
@@ -501,24 +571,54 @@ class PressureCalculator:
                 wn_at_t0 = 10 ** 7 / zero_peak_at_t0
                 alpha = -458.9
                 theta = 794.0
-                wn_at_current_t = wn_at_t0 + calculate_debye_model(alpha, theta, current_t) - calculate_debye_model(alpha, theta, t0)
+                wn_at_current_t = wn_at_t0 + PressureCalculator._calc_debye_shift(alpha, theta, current_t) - PressureCalculator._calc_debye_shift(alpha, theta, t0)
                 return 10 ** 7 / wn_at_current_t
-            
+
             elif t_scale == "ruby_yen_nicol_1992":
                 wn_at_t0 = 10 ** 7 / zero_peak_at_t0
                 alpha = -419
                 theta = 760
-                wn_at_current_t = wn_at_t0 + calculate_debye_model(alpha, theta, current_t) - calculate_debye_model(alpha, theta, t0)
+                wn_at_current_t = wn_at_t0 + PressureCalculator._calc_debye_shift(alpha, theta, current_t) - PressureCalculator._calc_debye_shift(alpha, theta, t0)
                 return 10 ** 7 / wn_at_current_t
             
 
-        if sensor == "sm_srb4o7": 
+        if sensor == "sm_srb4o7":
             if t_scale == "sm_srb4o7_datchi_2007":
                 def datchi_borate_temp(temp):
                     deltat = temp - 296
-                    return -8.7 * 10**-5 * deltat + 4.62 * 10**-6 * deltat**2 -2.38 * 10**-9 * deltat**3  
+                    return -8.7 * 10**-5 * deltat + 4.62 * 10**-6 * deltat**2 -2.38 * 10**-9 * deltat**3
                 offset = datchi_borate_temp(t0) - zero_peak_at_t0
                 return datchi_borate_temp(current_t) - offset
+
+        if sensor == "sm_srfcl":
+            if t_scale == "sm_srfcl_lorenz_1994":
+                # Electron-phonon line-shift model, Eqs. (4)+(5) of Lorenz et al. 1994,
+                # jointly fitted: Theta_D = 538(81) K, alpha = 97(15) cm^-1, beta = 2.4(4) cm^-1,
+                # T_e = 412 K (= dE(7F1-7F0)/k). Model is defined in wavenumber, not wavelength.
+                theta_d = 538.0
+                alpha = 97.0
+                beta = 2.4
+                t_e = 412.0
+
+                def one_phonon_shift(temperature):
+                    if temperature == 0:
+                        return 0.0
+                    c = t_e / theta_d
+
+                    def integrand(x):
+                        if x == 0:
+                            return 0.0
+                        return x**3 / (np.exp(x) - 1) / (x + c)
+                    # Cauchy principal value integral (pole at x = T_e/Theta_D).
+                    integral, _ = quad(integrand, 0, theta_d / temperature, weight="cauchy", wvar=c)
+                    return beta * (temperature / t_e)**2 * integral
+
+                def wavenumber_shift(temperature):
+                    return PressureCalculator._calc_debye_shift(alpha, theta_d, temperature) + one_phonon_shift(temperature)
+
+                wn_at_t0 = 10 ** 7 / zero_peak_at_t0
+                wn_at_current_t = wn_at_t0 + wavenumber_shift(current_t) - wavenumber_shift(t0)
+                return 10 ** 7 / wn_at_current_t
             
         if sensor == "zircon_b1g":
             if t_scale == "zircon_schmidt_2013":
