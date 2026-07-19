@@ -58,10 +58,10 @@ class PressureCalculator:
         "sm_srb4o7": {
             "sm_srb4o7_datchi_1997_mxb1986": {"label": "0-0 line: Datchi et al. 1997 (MXB1986)", "temperature_mode": "none"},
             "sm_srb4o7_datchi_2007_do2007": {"label": "0-0 line: Datchi et al. 2007 (DO2007)", "temperature_mode": "none"},
-            "sm_srb4o7_rashchenko_2018_lam1": {"label": "0-0 line (lam1): Rashchenko et al. 2018", "temperature_mode": "none"},
-            "sm_srb4o7_rashchenko_2018_lam2": {"label": "0-1 line (lam2): Rashchenko et al. 2018", "temperature_mode": "none"},
-            "sm_srb4o7_rashchenko_2018_lam3": {"label": "0-1 line (lam3): Rashchenko et al. 2018", "temperature_mode": "none"},
-            "sm_srb4o7_rashchenko_2018_lam4": {"label": "0-1 line (lam4): Rashchenko et al. 2018", "temperature_mode": "none"},
+            "sm_srb4o7_rashchenko_2015_lam11": {"label": "0-0 line (lam1): Rashchenko et al. 2015", "temperature_mode": "none"},
+            "sm_srb4o7_rashchenko_2015_lam12": {"label": "0-1 line (lam2): Rashchenko et al. 2015", "temperature_mode": "none"},
+            "sm_srb4o7_rashchenko_2015_lam13": {"label": "0-1 line (lam3): Rashchenko et al. 2015", "temperature_mode": "none"},
+            "sm_srb4o7_rashchenko_2015_lam14": {"label": "0-1 line (lam4): Rashchenko et al. 2015", "temperature_mode": "none"},
         },
         "diamond_13c_1st_order": {
             "diamond_13c_schiferl_1997": {
@@ -364,16 +364,16 @@ class PressureCalculator:
             if p_scale == "sm_srb4o7_datchi_2007_do2007":
                 p, dp = datchi_borate_calc(3.989, 0.006915, 0.0166, wavelength-wavelength0, 0.006, 0.000074, 0.001)
                 return p, dp, None
-            if p_scale == "sm_srb4o7_rashchenko_2018_lam1":
+            if p_scale == "sm_srb4o7_rashchenko_2015_lam11":
                 p, dp = PressureCalculator._calc_mao_type(wavelength, wavelength0, wavelength_err, 2836, 14.3, 21, 0.9)
                 return p, dp, None
-            if p_scale == "sm_srb4o7_rashchenko_2018_lam2":
+            if p_scale == "sm_srb4o7_rashchenko_2015_lam12":
                 p, dp = PressureCalculator._calc_mao_type(wavelength, wavelength0, wavelength_err, 3259, -19.6, 20, 1.2)
                 return p, dp, None
-            if p_scale == "sm_srb4o7_rashchenko_2018_lam3":
+            if p_scale == "sm_srb4o7_rashchenko_2015_lam13":
                 p, dp = PressureCalculator._calc_mao_type(wavelength, wavelength0, wavelength_err, 2389, -0.9, 15, 0.7)
                 return p, dp, None
-            if p_scale == "sm_srb4o7_rashchenko_2018_lam4":
+            if p_scale == "sm_srb4o7_rashchenko_2015_lam14":
                 p, dp = PressureCalculator._calc_mao_type(wavelength, wavelength0, wavelength_err, 2988, 35.7, 36, 1.5)
                 return p, dp, None
 

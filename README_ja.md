@@ -48,6 +48,7 @@ Andor製のカメラ（検出器）および分光器を制御し、スペクト
     * ルビー（Cr<sup>3+</sup>:Al<sub>2</sub>O<sub>3</sub>）
         * 圧力シフト
             * Shen et al., <i>High Press. Res.</i> (2020) [DOI: 10.1080/08957959.2020.1791107](https://doi.org/10.1080/08957959.2020.1791107)
+            * Dorogokupets and Oganov, <i>Phys. Rev. B.</i> (2007) [DOI: 10.1103/PhysRevB.75.024115](https://doi.org/10.1103/PhysRevB.75.024115)
             * Holzapfel, <i>J. Appl. Phys.</i> (2003) [DOI: 10.1063/1.1525856](https://doi.org/10.1063/1.1525856)
             * Mao et al., <i>J. Geophys. Res.</i> (1986) [DOI: 10.1029/JB091iB05p04673](https://doi.org/10.1029/JB091iB05p04673)
             * Piermarini et al., <i>J. Appl. Phys.</i> (1975) [DOI: 10.1063/1.321957](10.1063/1.321957)
