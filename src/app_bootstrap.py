@@ -7,7 +7,7 @@ def print_software_and_author_info():
     print(
         "\n================================================================================\n================================================================================\n"\
         "FluoraPressée: Spectrometer Control & Analysis for high-pressure experiments\nHiroki Kobayashi (The University of Tokyo), 2026\n"\
-        "https://github.com/khsacc/AndorPy\n"\
+        "https://github.com/khsacc/FluoraPressee\n"\
         "================================================================================\n================================================================================\n"
     )
 
