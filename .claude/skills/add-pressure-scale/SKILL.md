@@ -1,6 +1,6 @@
 ---
 name: add-pressure-scale
-description: Use when adding a new pressure calibration scale (or a new sensor material/line) to FluoraPressée's PressureCalculator — e.g. "add the XYZ 2024 ruby scale", "add a new temperature-correction scale for zircon", "add support for a new pressure sensor". Covers what must change in src/pressureCalc.py, what does NOT need to change (UI, API, file I/O are all data-driven), the temperature-mode gotchas, and how to verify without an automated test suite.
+description: Use when adding a new pressure calibration scale (or a new sensor material/line) to FluoraPressée's PressureCalculator — e.g. "add the XYZ 2024 ruby scale", "add a new temperature-correction scale for zircon", "add support for a new pressure sensor". Covers what must change in src/pressureCalc.py, what does NOT need to change (UI, API, file I/O are all data-driven), the temperature-mode gotchas, the required README_ja.md citation-list update, and how to verify without an automated test suite.
 ---
 
 # Adding a pressure scale to PressureCalculator
@@ -10,8 +10,9 @@ touches pressure calculation — `src/pressureCalc_ui.py` (the calculator dialog
 + `src/api/schemas.py`/`server.py` (the HTTP API), and `src/file_io.py` (saving results) — reads the
 `SENSORS` / `PRESSURE_SCALES` / `TEMPERATURE_SCALES` dicts generically (combo boxes populated from the
 dicts; API `sensor`/`pressure_scale`/`scale` fields are plain `str` passed straight through). **In the
-common case, adding a scale means editing only `src/pressureCalc.py`.** Don't touch the UI or API layers
-unless you're doing something the checklist below calls out explicitly.
+common case, the only code file to edit is `src/pressureCalc.py`** — but the change isn't done until
+`README_ja.md`'s scale list is updated too (step 4 below), since that's the only place citations live.
+Don't touch the UI or API layers unless you're doing something the checklist below calls out explicitly.
 
 There is no test suite in this repo (see root `CLAUDE.md`) — verification is manual, via `--debug` mode.
 
@@ -57,7 +58,7 @@ Key convention: `<sensor>_<firstauthor>_<year>[_variant]` (e.g. `ruby_shen_2020`
     temperature as fixed rather than user-adjustable (locks/greys out the T0 spinbox in the UI via
     `resolve_t0`/`_apply_t0_constraint`)
 
-/ **Gotcha**: the two range keys are named differently depending on where they live —
+**Gotcha**: the two range keys are named differently depending on where they live —
 `PRESSURE_SCALES[...]["valid_temp_range"]` for an `embedded_pt` pressure scale, vs.
 `TEMPERATURE_SCALES[...]["valid_range"]` for a temperature-correction scale. Mixing these names up
 silently disables the range warning (`get_temp_valid_range` just returns `(None, None)`).
@@ -107,7 +108,29 @@ returning the corrected zero-pressure peak at `current_t` given `zero_peak_at_t0
 dict is independent of `PRESSURE_SCALES` — any pressure scale with `temperature_mode == "none"` for
 that sensor can be combined with any temperature scale for that sensor; they're not paired 1:1.
 
-### 4. What you do NOT need to touch
+### 4. Document it in README_ja.md (required, not optional)
+
+`PRESSURE_SCALES`/`TEMPERATURE_SCALES` in code have no citation info — `README_ja.md`'s
+**### 圧力計算画面（「Open pressure calculator」ボタンをクリックして開く）** section (currently around
+line 42) is the only place in the repo that records *which paper* each scale key implements, and it is
+the actively-maintained doc (the note at the top of `README.md` says it "is updated more frequently";
+`README.md`'s own feature list is HTML-commented out and not rendered, so don't bother mirroring
+changes there). Treat updating this section as part of the change, not an afterthought.
+
+Match the existing structure exactly:
+- Top-level split: `蛍光スケール` (fluorescence) vs `Raman スケール`, each a bullet list of sensors.
+- Under each sensor bullet (e.g. `ルビー（Cr³⁺:Al₂O₃）`), two sub-lists where applicable: `圧力シフト`
+  (pressure scales) and `温度シフト` (temperature scales) — this mirrors `PRESSURE_SCALES[sensor]` vs
+  `TEMPERATURE_SCALES[sensor]` respectively. A brand-new sensor needs a new top-level sensor bullet
+  under the right fluorescence/Raman group (matching `SENSORS[sensor]["kind"]`).
+- Each citation line format: `Author et al., <i>Journal</i> (year) [DOI: xxx](https://doi.org/xxx)`
+  (or `[calibrated using the ... scale]` qualifiers where the original list uses them, e.g. the
+  Sm²⁺:SrB₄O₇ entries). Temperature-shift lines additionally prefix the valid range, e.g.
+  `0 - 600 K, Ragan et al., ...` — keep that prefix in sync with the `valid_range`/`valid_temp_range`
+  tuple you set in step 1.
+- Use the actual DOI, not a placeholder — look it up rather than guessing.
+
+### 5. What you do NOT need to touch
 
 - `src/pressureCalc_ui.py` — combo boxes, mandatory-T banner, T0-fixed banner, and range warnings are
   all driven by the dicts/static methods above. No edits needed unless you're changing dialog *layout*.
@@ -118,6 +141,10 @@ that sensor can be combined with any temperature scale for that sensor; they're 
 - `src/file_io.py` — `save_fitting_results`/etc. take a generic `pressure_info` dict (`pressure`,
   `pressure_err`, `scale`, `sensor`, `lam0`) built from whatever the UI/API already resolved; nothing
   sensor-specific.
+- `manuals/API.md` — intentionally doesn't enumerate individual scale keys, just points at
+  `src/pressureCalc.py`.
+- `README.md` — its scale-related bullet lives inside a `<!-- ## ✨ Features ... -->` HTML comment and
+  isn't rendered; it's stale and not the maintained doc (see step 4).
 
 ## Case B: new sensor
 
@@ -158,12 +185,5 @@ without it the user's current peak-count setting is left alone.
    `POST /acquire/pressure` with `"sensor"`/`"pressure_scale"` set to your new keys (see
    `manuals/API.md`) — but this only re-exercises the same `PressureCalculator.calculate()` call, so
    step 4 is the one that actually matters.
-
-## Optional: docs
-
-- `manuals/API.md` intentionally does *not* enumerate individual scale keys (it just says "see
-  `SENSORS`/`PRESSURE_SCALES` in `src/pressureCalc.py`") — no edit needed there for a new key.
-- `README.md`'s feature bullet ("Pressure calculation based on Ruby fluorescence shift (supports
-  Piermarini, Mao, and Shen scales)") is already stale relative to `pressureCalc.py` (missing
-  Dorogokupets/Holzapfel, and the non-ruby sensors entirely). Not this skill's job to fix, but if you're
-  touching that bullet's sensor anyway, consider updating it.
+6. Confirm `README_ja.md`'s scale list was updated (step 4 of Case A, which Case B inherits) and that
+   its citation format matches the surrounding entries.
