@@ -189,10 +189,14 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         
         self.stacked_widget.addWidget(self.plot_widget) 
 
-        self.image_view = pg.ImageView()
-        self.image_view.ui.roiBtn.hide() 
+        self.image_view = pg.ImageView(view=pg.PlotItem())
+        self.image_view.ui.roiBtn.hide()
         self.image_view.ui.menuBtn.hide()
-        self.stacked_widget.addWidget(self.image_view) 
+        self.image_view.getImageItem().setBorder(pg.mkPen('w', width=1))
+        self.image_view.getView().setDefaultPadding(0)
+        self.image_view.getView().setLabel('bottom', 'Pixel')
+        self.image_view.getView().setLabel('left', 'Pixel')
+        self.stacked_widget.addWidget(self.image_view)
 
         self.plot_content_layout.addWidget(self.stacked_widget)
         plot_layout.addLayout(self.plot_content_layout)
@@ -503,9 +507,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.combo_fit_func.addItems(["Pseudo Voigt", "Moffat", "Gauss", "Lorentz"])
         self.combo_fit_func.setCurrentText("Pseudo Voigt")
 
-        self.spin_fit_peak_count = CustomSpinBox()
-        self.spin_fit_peak_count.setRange(1, 5)
-        self.spin_fit_peak_count.setValue(2)
+        self.combo_fit_peak_count = CustomComboBox()
+        for count in range(1, 6):
+            self.combo_fit_peak_count.addItem(str(count), count)
+        self.combo_fit_peak_count.setCurrentIndex(self.combo_fit_peak_count.findData(2))
 
         self.combo_peak_sort = CustomComboBox()
         self.combo_peak_sort.addItem("x descending", "x_desc")
@@ -528,7 +533,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         fit_layout.addWidget(QLabel("Function:"), 1, 0)
         fit_layout.addWidget(self.combo_fit_func, 1, 1)
         fit_layout.addWidget(QLabel("Fit Peaks:"), 2, 0)
-        fit_layout.addWidget(self.spin_fit_peak_count, 2, 1)
+        fit_layout.addWidget(self.combo_fit_peak_count, 2, 1)
         fit_layout.addWidget(QLabel("Sort peaks:"), 3, 0)
         fit_layout.addWidget(self.combo_peak_sort, 3, 1)
         fit_layout.addWidget(QLabel("Range Start:"), 4, 0)
@@ -623,7 +628,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.radio_fit_on.toggled.connect(self.toggle_fitting_panel)
         self.radio_fit_off.toggled.connect(self.toggle_fitting_panel)
         self.combo_fit_func.currentTextChanged.connect(self.on_fit_settings_changed)
-        self.spin_fit_peak_count.valueChanged.connect(self.on_fit_peak_count_changed)
+        self.combo_fit_peak_count.currentIndexChanged.connect(self.on_fit_peak_count_changed)
         self.combo_peak_sort.currentIndexChanged.connect(self.on_fit_settings_changed)
         self.spin_fit_start.valueChanged.connect(self.on_fit_settings_changed)
         self.spin_fit_end.valueChanged.connect(self.on_fit_settings_changed)

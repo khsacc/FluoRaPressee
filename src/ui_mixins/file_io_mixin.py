@@ -76,6 +76,7 @@ class FileIOMixin:
         self.calib_file_name = filename
         self.lbl_loaded_calib.setText(f"Loaded: {filename}")
         self.update_plot_labels()
+        self.sync_fit_range_to_spectrum(force=True)
 
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
             self.update_display(is_new_data=False)

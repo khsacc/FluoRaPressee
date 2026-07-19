@@ -283,9 +283,9 @@ class PressureCalculatorWindow(QDialog):
             return
 
         parent = self.parent()
-        if parent is not None and hasattr(parent, "spin_fit_peak_count"):
-            if parent.spin_fit_peak_count.value() != recommended:
-                parent.spin_fit_peak_count.setValue(recommended)
+        if parent is not None and hasattr(parent, "combo_fit_peak_count"):
+            if parent.combo_fit_peak_count.currentData() != recommended:
+                parent.combo_fit_peak_count.setCurrentIndex(parent.combo_fit_peak_count.findData(recommended))
             else:
                 self.set_fit_peak_count(recommended, reset_selection=True)
         else:

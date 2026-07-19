@@ -50,11 +50,14 @@ class SpectrometerControlMixin:
     def update_plot_labels(self):
         if self.calib_coeffs is not None:
             if self.radio_spec_mode_raman.isChecked():
-                self.plot_widget.setLabel('bottom', 'Raman shift (cm⁻¹)')
+                x_label = 'Raman shift (cm⁻¹)'
             else:
-                self.plot_widget.setLabel('bottom', 'Wavelength (nm)')
+                x_label = 'Wavelength (nm)'
         else:
-            self.plot_widget.setLabel('bottom', 'Pixel')
+            x_label = 'Pixel'
+
+        self.plot_widget.setLabel('bottom', x_label)
+        self.image_view.getView().setLabel('bottom', x_label)
 
     def check_spectrometer_changes(self, *args):
         curr_g = self.combo_grating.currentText()

@@ -92,7 +92,7 @@ class SequentialMixin:
         self.radio_fit_on.setEnabled(enabled)
         self.radio_fit_off.setEnabled(enabled)
         self.combo_fit_func.setEnabled(enabled)
-        self.spin_fit_peak_count.setEnabled(enabled)
+        self.combo_fit_peak_count.setEnabled(enabled)
         self.combo_peak_sort.setEnabled(enabled)
         self.spin_fit_start.setEnabled(enabled)
         self.spin_fit_end.setEnabled(enabled)
@@ -145,7 +145,7 @@ class SequentialMixin:
             func = self.combo_fit_func.currentText()
             fit_start = self.spin_fit_start.value()
             fit_end = self.spin_fit_end.value()
-            peak_count = self.spin_fit_peak_count.value()
+            peak_count = self.combo_fit_peak_count.currentData()
             peak_sort = self.combo_peak_sort.currentText()
 
 

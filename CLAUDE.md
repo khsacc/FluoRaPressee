@@ -26,6 +26,8 @@ spectrometer control), but `--debug` mode runs fine cross-platform for UI develo
 There are no automated tests, build step, or lint config in this repo. Verify changes by running the
 app in `--debug` mode and exercising the relevant UI flow.
 
+It is not required to verify screenshots once you made changes to GUI. If something is needed to be checked, ask the user. 
+
 ## Architecture
 
 **Entry point**: `main.py` sets `QT_OPENGL=software`, prints startup info, ensures

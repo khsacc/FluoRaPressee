@@ -31,24 +31,36 @@ class DisplayMixin:
             if self.pressure_window is not None:
                 self.pressure_window.set_fit_peaks([])
         else:
-            if getattr(self, 'raw_1d_data', None) is not None:
-                x_data = self.get_x_axis(len(self.raw_1d_data))
-                min_x = np.min(x_data)
-                max_x = np.max(x_data)
-
-                curr_start = self.spin_fit_start.value()
-                curr_end = self.spin_fit_end.value()
-
-                if curr_start < min_x or curr_end > max_x:
-                    self.spin_fit_start.blockSignals(True)
-                    self.spin_fit_end.blockSignals(True)
-                    self.spin_fit_start.setValue(float(min_x))
-                    self.spin_fit_end.setValue(float(max_x))
-                    self.spin_fit_start.blockSignals(False)
-                    self.spin_fit_end.blockSignals(False)
+            self.sync_fit_range_to_spectrum()
 
             if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
                 self.update_display(is_new_data=False)
+
+    def sync_fit_range_to_spectrum(self, force=False):
+        """Recompute Range Start/Range End from the currently displayed spectrum's x-axis.
+
+        With force=False, only clamps when the current range falls outside the
+        new bounds (used when fitting is switched on). With force=True, always
+        resets to the full new bounds — used when the pixel-to-x-axis calibration
+        changes, since the previous range values are meaningless under the new mapping.
+        """
+        if getattr(self, 'raw_1d_data', None) is None:
+            return
+
+        x_data = self.get_x_axis(len(self.raw_1d_data))
+        min_x = np.min(x_data)
+        max_x = np.max(x_data)
+
+        curr_start = self.spin_fit_start.value()
+        curr_end = self.spin_fit_end.value()
+
+        if force or curr_start < min_x or curr_end > max_x:
+            self.spin_fit_start.blockSignals(True)
+            self.spin_fit_end.blockSignals(True)
+            self.spin_fit_start.setValue(float(min_x))
+            self.spin_fit_end.setValue(float(max_x))
+            self.spin_fit_start.blockSignals(False)
+            self.spin_fit_end.blockSignals(False)
 
     def on_fit_settings_changed(self):
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
@@ -56,7 +68,7 @@ class DisplayMixin:
 
     def on_fit_peak_count_changed(self):
         if self.pressure_window is not None:
-            self.pressure_window.set_fit_peak_count(self.spin_fit_peak_count.value(), reset_selection=True)
+            self.pressure_window.set_fit_peak_count(self.combo_fit_peak_count.currentData(), reset_selection=True)
         self.on_fit_settings_changed()
 
     def update_display(self, is_new_data=False, mode="1d"):
@@ -115,7 +127,7 @@ class DisplayMixin:
 
             if do_fit:
                 func = self.combo_fit_func.currentText()
-                peak_count = self.spin_fit_peak_count.value()
+                peak_count = self.combo_fit_peak_count.currentData()
                 peak_sort_order = self.combo_peak_sort.currentData()
                 fit_start = self.spin_fit_start.value()
                 fit_end = self.spin_fit_end.value()
@@ -216,6 +228,11 @@ class DisplayMixin:
             self.stacked_widget.setCurrentIndex(1)
             self.image_view.setImage(disp_data.T)
 
+            h, w = disp_data.shape
+            view = self.image_view.getView()
+            vb = view.vb if hasattr(view, 'vb') else view
+            vb.setLimits(xMin=0, xMax=w, yMin=0, yMax=h)
+
         if getattr(self, 'is_sequential_running', False) and is_new_data:
             if self.current_skip_count >= self.spin_skip_frames.value():
                 now_dt = datetime.now()
@@ -229,7 +246,7 @@ class DisplayMixin:
                     self.seq_log_data.append([filename, now_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]])
 
                     if self.radio_fit_on.isChecked() and getattr(self, 'seq_fitting_summary_path', None):
-                        peak_count = self.spin_fit_peak_count.value()
+                        peak_count = self.combo_fit_peak_count.currentData()
                         pw = self.pressure_window
                         pressure_info = None
                         if pw is not None and pw.isVisible():
