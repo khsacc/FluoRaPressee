@@ -29,7 +29,7 @@ There is no test suite in this repo (see root `CLAUDE.md`) — verification is m
 ### 1. Pick a key and add the `PRESSURE_SCALES` entry
 
 Key convention: `<sensor>_<firstauthor>_<year>[_variant]` (e.g. `ruby_shen_2020`,
-`sm_srb4o7_rashchenko_2018_lam2`). Add it to `PressureCalculator.PRESSURE_SCALES[sensor]`:
+`sm_srb4o7_rashchenko_2015_lam12`). Add it to `PressureCalculator.PRESSURE_SCALES[sensor]`:
 
 ```python
 "ruby_newauthor_2025": {"label": "Newauthor et al. 2025", "temperature_mode": "none"},
