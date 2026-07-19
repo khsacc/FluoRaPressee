@@ -106,7 +106,14 @@ class CalibrationWindow(QDialog):
         self.btn_acquire.setDefault(False)
         self.btn_acquire.clicked.connect(self.acquire_spectrum)
         self.btn_acquire.setStyleSheet("font-weight: bold; padding: 5px;")
-        
+
+        self.btn_use_displayed = QPushButton("Use displayed data")
+        self.btn_use_displayed.setAutoDefault(False)
+        self.btn_use_displayed.setDefault(False)
+        self.btn_use_displayed.setToolTip("Use the spectrum currently shown in the main window's 1D plot instead of acquiring a new one.")
+        self.btn_use_displayed.clicked.connect(self.use_displayed_data)
+        self.btn_use_displayed.setStyleSheet("padding: 5px;")
+
         acq_time_layout = QHBoxLayout()
         acq_time_layout.addWidget(QLabel("Acquisition time (s):"))
         self.spin_acq_time = CustomDoubleSpinBox()
@@ -208,6 +215,7 @@ class CalibrationWindow(QDialog):
         self.btn_save_apply.clicked.connect(self.save_and_apply)
         
         controls_layout.addWidget(self.btn_acquire)
+        controls_layout.addWidget(self.btn_use_displayed)
         controls_layout.addLayout(acq_time_layout)
         controls_layout.addLayout(unit_layout) 
         controls_layout.addLayout(find_peaks_layout)
@@ -313,7 +321,25 @@ class CalibrationWindow(QDialog):
             self.btn_acquire.setEnabled(True)
             self.btn_acquire.setText("Acquire a spectrum")
             self.find_peaks()
-            
+
+    def use_displayed_data(self):
+        # main_window.latest_1d_data already has background subtraction / X-flip applied, matching the on-screen plot.
+        main_window = self.parent()
+        if main_window is None or not hasattr(main_window, 'latest_1d_data'):
+            QMessageBox.warning(self, "Warning", "No main window data available.")
+            return
+        if self.is_acquiring:
+            QMessageBox.warning(self, "Warning", "An acquisition is already in progress.")
+            return
+        if (main_window.latest_1d_data is None
+                or not hasattr(main_window, 'stacked_widget')
+                or main_window.stacked_widget.currentIndex() != 0):
+            QMessageBox.warning(self, "Warning", "No 1D spectrum is currently displayed in the main window.")
+            return
+        self.current_spectrum = main_window.latest_1d_data.copy()
+        self.plot_scatter.setData(self.current_spectrum)
+        self.find_peaks()
+
     def find_peaks(self):
         if self.current_spectrum is None:
             return
