@@ -103,6 +103,8 @@ class CameraThreadPI(QThread):
         self.current_exposure = 0.1
         self.current_em_gain = None
         self.current_temperature_setpoint = float(self.mock_temp)
+        self._metadata_identity = {"model": None, "serial_number": None}
+        self._metadata_pixel_pitch_um = {"width": None, "height": None}
 
         # --debug convergence simulation for Sensor Temperature Status (see
         # _debug_temperature_sample()); lets the GUI's Locked/Stabilised path be
@@ -771,12 +773,23 @@ class CameraThreadPI(QThread):
                 # Fabricated so --debug mode can exercise the hardware_identity check;
                 # matches _debug_status_snapshot()'s "Camera identification" values.
                 self.identity_ready.emit("ProEM:1600(2) [DEBUG]", "DEBUG-0000000")
+                self._metadata_identity = {
+                    "model": "ProEM:1600(2) [DEBUG]",
+                    "serial_number": "DEBUG-0000000",
+                }
+                self._metadata_pixel_pitch_um = {"width": 16.0, "height": 16.0}
                 self.init_finished.emit()
             else:
                 try:
                     self._connect_camera()
                     self.det_width, self.det_height = self.cam.get_detector_size()
                     print(f"Connected. Detector size: {self.det_width}x{self.det_height}")
+                    pixel_width = self._query_attribute_capability("Pixel Width").get("current")
+                    pixel_height = self._query_attribute_capability("Pixel Height").get("current")
+                    self._metadata_pixel_pitch_um = {
+                        "width": pixel_width,
+                        "height": pixel_height,
+                    }
                     self._report_orientation_capability("connect")
                     self._report_shutter_capability("connect")
                     self.current_exposure = self.cam.set_exposure(0.1)
@@ -812,6 +825,10 @@ class CameraThreadPI(QThread):
                 try:
                     device_info = self.cam.get_device_info()
                     identity_model, identity_serial = device_info.model, device_info.serial_number
+                    self._metadata_identity = {
+                        "model": identity_model,
+                        "serial_number": identity_serial,
+                    }
                 except Exception as e:
                     print(f"Failed to read camera identity: {e}")
                     identity_model, identity_serial = "", ""
@@ -1134,6 +1151,17 @@ class CameraThreadPI(QThread):
         disabled whenever `is_measuring` is True (see CameraStatusDialog)."""
         with self._lock:
             self.status_requested = True
+
+    def get_cached_hardware_metadata(self):
+        """Return acquisition metadata without touching the PICam SDK."""
+        with self._lock:
+            return {
+                "identity": dict(self._metadata_identity),
+                "detector_size_px": {"width": self.det_width, "height": self.det_height},
+                "pixel_pitch_um": dict(self._metadata_pixel_pitch_um),
+                "exposure_s": float(self.current_exposure),
+                "temperature": {"setpoint_c": float(self.current_temperature_setpoint)},
+            }
 
     def update_exposure(self, exp_time):
         """Request an exposure change (thread-safe) and return a token identifying

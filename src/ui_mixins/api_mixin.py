@@ -270,7 +270,11 @@ class ApiMixin:
         """Must run on the GUI thread (updates self.lbl_loaded_calib etc. via
         FileIOMixin.apply_calibration()).
         """
-        self.apply_calibration((c0, c1, c2), label, calib_unit=unit, calib_laser_wl=laser_wavelength_nm)
+        self.apply_calibration(
+            (c0, c1, c2), label, calib_unit=unit,
+            calib_laser_wl=laser_wavelength_nm,
+            axis_source="loaded_calibration",
+        )
         return {
             "applied": True,
             "unit": self.calib_unit,

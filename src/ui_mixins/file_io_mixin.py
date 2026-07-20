@@ -3,29 +3,14 @@ from datetime import datetime
 import numpy as np
 from PyQt5.QtWidgets import QFileDialog, QMessageBox
 
+from src.measurement_metadata import background_mismatch_fields, build_hardware_metadata
+
 class FileIOMixin:
     def check_bg_mismatch(self):
         if not self.radio_bg_on.isChecked() or getattr(self, 'loaded_bg_metadata', None) is None:
             return False
 
-        bg_meta = self.loaded_bg_metadata
-        curr_acq = self.spin_acq_time.value()
-        curr_accum = self.spin_accumulate.value()
-        curr_mode = "1D Spectrum (Custom ROI)" if self.radio_1d_roi.isChecked() else "1D Spectrum (Full Range Binning)"
-
-        mismatch = False
-        if abs(curr_acq - bg_meta.get("acquisition_time", 0)) > 1e-4:
-            mismatch = True
-        if curr_accum != bg_meta.get("accumulations", 1):
-            mismatch = True
-        if curr_mode != bg_meta.get("mode"):
-            mismatch = True
-        if curr_mode == "1D Spectrum (Custom ROI)":
-            curr_start = self.spin_vstart.value()
-            curr_end = self.spin_vend.value()
-            if curr_start != bg_meta.get("roi_start") or curr_end != bg_meta.get("roi_end"):
-                mismatch = True
-        return mismatch
+        return bool(background_mismatch_fields(self))
 
     def handle_bg_mismatch_and_run(self, callback) -> bool:
         """Returns True if callback was actually invoked, False if the user declined (Quit)."""
@@ -69,11 +54,15 @@ class FileIOMixin:
         if not self.handle_bg_mismatch_and_run(self.start_sequential):
             self._release_acquisition_gate()
 
-    def apply_calibration(self, coeffs, filename, calib_unit='Wavelength', calib_laser_wl=None):
+    def apply_calibration(
+        self, coeffs, filename, calib_unit='Wavelength', calib_laser_wl=None,
+        axis_source="loaded_calibration",
+    ):
         self.calib_coeffs = coeffs
         self.calib_unit = calib_unit
         self.calib_laser_wl = calib_laser_wl
         self.calib_file_name = filename
+        self.axis_source = axis_source
         self.lbl_loaded_calib.setText(f"Loaded: {filename}")
         self.update_plot_labels()
         self.sync_fit_range_to_spectrum(force=True)
@@ -93,6 +82,7 @@ class FileIOMixin:
         except Exception as e:
             self._loading_config = False
             self._pending_calib_coeffs = None
+            self._pending_axis_source = None
             QMessageBox.warning(self, "Error", f"Failed to load configuration:\n{e}")
             return
 
@@ -162,6 +152,7 @@ class FileIOMixin:
         self._pending_calib_laser_wl = (cfg.get("exc_wl")
                                         if cfg.get("calibration_unit") == "Raman shift"
                                         else None)
+        self._pending_axis_source = "loaded_calibration"
 
         self.on_apply_spectrometer()
 
@@ -204,7 +195,12 @@ class FileIOMixin:
                 file_path, self.raw_1d_data,
                 acq_time, accum, mode_str,
                 self.spin_vstart.value(), self.spin_vend.value(),
-                self.label_current_temp.text()
+                self.label_current_temp.text(),
+                hardware_metadata=build_hardware_metadata(
+                    self,
+                    self._hardware_capture_by_mode.get("1d", self._latest_hardware_capture),
+                    include_background=False,
+                ),
             )
             QMessageBox.information(self, "Success", "Background saved successfully.")
             self.loaded_bg_data = bg_arr
@@ -254,6 +250,10 @@ class FileIOMixin:
             return False
 
         try:
+            capture_mode = "1d" if is_1d else "2d"
+            hardware_capture = self._hardware_capture_by_mode.get(
+                capture_mode, self._latest_hardware_capture
+            )
             metadata = {
                 "grating":      self.combo_grating.currentText(),
                 "center_wl":    self.spin_centre_wl.value(),
@@ -265,6 +265,9 @@ class FileIOMixin:
                 "mode":         "2D" if self.radio_2d.isChecked() else "1D (Full)" if self.radio_1d_full.isChecked() else "1D (ROI)",
                 "spec_mode":    "Raman shift" if self.radio_spec_mode_raman.isChecked() else "Wavelength",
                 "exc_wl":       self.spin_exc_wl.value(),
+                "hardware_metadata": build_hardware_metadata(
+                    self, hardware_capture
+                ),
             }
 
             if is_1d:

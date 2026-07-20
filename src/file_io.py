@@ -6,6 +6,7 @@ enabling reuse from external scripts and other applications.
 
 import csv
 import json
+import os
 import numpy as np
 from datetime import datetime
 
@@ -43,6 +44,10 @@ class DataFileIO:
         h += f"ROI Start (Vertical Pixel): {roi_s}\n"
         h += f"ROI End (Vertical Pixel): {roi_e}\n"
         h += f"Measurement Mode: {mode}\n"
+        hardware_metadata = metadata.get("hardware_metadata")
+        if hardware_metadata is not None:
+            encoded = json.dumps(hardware_metadata, ensure_ascii=True, separators=(",", ":"))
+            h += f"hardware_metadata: {encoded}\n"
         return h
 
     def save_spectrum_1d(self, file_path, x_data, display_data, metadata,
@@ -118,7 +123,8 @@ class DataFileIO:
             f.write(",".join(vals) + "\n")
 
     def save_background(self, file_path, signal, acquisition_time, accumulations,
-                        mode_str, roi_start, roi_end, detector_temperature):
+                        mode_str, roi_start, roi_end, detector_temperature,
+                        hardware_metadata=None):
         """
         Save background data as JSON.
         Returns (bg_array, metadata_dict) so the caller can immediately update its state.
@@ -128,6 +134,7 @@ class DataFileIO:
             "acquisition_time": f"{acquisition_time:.3f}",
             "accumulations": accumulations,
             "detector_temperature": detector_temperature,
+            "hardware_metadata": hardware_metadata,
             "signal": signal.tolist(),
         }
         with open(file_path, "w", encoding="utf-8") as f:
@@ -139,6 +146,8 @@ class DataFileIO:
             "mode": mode_str,
             "roi_start": roi_start,
             "roi_end": roi_end,
+            "hardware_metadata": hardware_metadata,
+            "source_file": os.path.basename(file_path),
         }
         return np.array(signal, dtype=np.float64), metadata
 
@@ -160,6 +169,8 @@ class DataFileIO:
             "mode": det.get("mode", ""),
             "roi_start": det.get("roi_start", 0),
             "roi_end": det.get("roi_end", 0),
+            "hardware_metadata": data.get("hardware_metadata"),
+            "source_file": os.path.basename(file_path),
         }
         return bg_array, metadata
 

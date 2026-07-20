@@ -540,7 +540,8 @@ class CalibrationWindow(QDialog):
                     self.calib_coeffs,
                     os.path.basename(file_path),
                     calib_unit="Raman shift" if is_raman_calib else "Wavelength",
-                    calib_laser_wl=calib_laser_wl
+                    calib_laser_wl=calib_laser_wl,
+                    axis_source="neon_polynomial",
                 )
             self.accept()
         except Exception as e:

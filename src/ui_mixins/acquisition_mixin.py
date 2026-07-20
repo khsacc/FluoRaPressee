@@ -3,6 +3,7 @@ import numpy as np
 from PyQt5.QtWidgets import QMessageBox
 
 from src.accumulation import AccumulationCombiner
+from src.measurement_metadata import capture_hardware_state
 
 # Cap on how many raw frames we buffer in memory for spike rejection (list of
 # individual frames instead of an O(1) running sum). ~16MB worst case for a
@@ -82,6 +83,25 @@ class AcquisitionMixin:
         val = self.spin_acq_time.value()
         self.spin_acq_time.setEnabled(False)
         self.thread.update_exposure(val)
+
+    def on_exposure_applied(self, actual_exposure, success, error):
+        """Reflect the exposure accepted by Andor, including SDK rounding."""
+        self.spin_acq_time.blockSignals(True)
+        self.spin_acq_time.setValue(actual_exposure)
+        self.spin_acq_time.blockSignals(False)
+        if success:
+            self.status_label.setText(f"Exposure set to {actual_exposure:g} s")
+
+    def on_roi_applied(self, applied):
+        """Cache and display the ROI/read mode actually accepted by Andor."""
+        self._last_applied_camera_roi = dict(applied)
+        if applied.get("mode") == "1d_roi":
+            self.spin_vstart.blockSignals(True)
+            self.spin_vend.blockSignals(True)
+            self.spin_vstart.setValue(applied["vertical_start"])
+            self.spin_vend.setValue(applied["vertical_end"])
+            self.spin_vstart.blockSignals(False)
+            self.spin_vend.blockSignals(False)
 
     def on_em_gain_info_ready(self, exists, available, minimum, maximum, increment, current):
         """Render the EM Gain row only when PICam says the parameter exists."""
@@ -227,10 +247,12 @@ class AcquisitionMixin:
         triggered by the timer or by the manual button, so the two trigger paths
         can never leave the timer running when auto polling was already disabled.
         """
+        self._last_temperature_status = status
         if temp == -999.0:
             self.label_current_temp.setText("Error")
             self._restart_temp_poll_timer_if_enabled()
             return
+        self._last_temperature_c = float(temp)
 
         if status == "unsupported":
             # No status enum on this hardware: infer stabilisation from spread +
@@ -289,6 +311,7 @@ class AcquisitionMixin:
     def on_camera_identity_ready(self, model, serial_number):
         """CameraThread reports the connected camera's model/serial once after connecting;
         cross-check it against spectrometerConfig.json's recorded identity (see ConfigMixin)."""
+        self._camera_identity = {"model": model or None, "serial_number": serial_number or None}
         self.check_and_record_hardware_identity("camera", model, serial_number)
 
     def on_hardware_error(self, message):
@@ -465,6 +488,8 @@ class AcquisitionMixin:
                 final_data = self.accumulated_data.copy()
                 self.accumulated_data = None
 
+            self._latest_hardware_capture = capture_hardware_state(self, target_accum)
+            self._hardware_capture_by_mode[mode] = self._latest_hardware_capture
             self._process_completed_data(mode, final_data)
 
     def _process_completed_data(self, mode, data):

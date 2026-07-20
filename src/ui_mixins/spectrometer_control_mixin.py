@@ -240,6 +240,7 @@ class SpectrometerControlMixin:
 
             # Position no longer matches whatever the pixel calibration was taken at.
             self.calib_coeffs = None
+            self.axis_source = "pixel"
             self.calib_unit = 'Wavelength'
             self.calib_laser_wl = None
             self.calib_file_name = "None"
@@ -282,18 +283,21 @@ class SpectrometerControlMixin:
                     self._pending_calib_coeffs,
                     self._pending_calib_filename,
                     calib_unit=getattr(self, '_pending_calib_unit', 'Wavelength'),
-                    calib_laser_wl=getattr(self, '_pending_calib_laser_wl', None)
+                    calib_laser_wl=getattr(self, '_pending_calib_laser_wl', None),
+                    axis_source=getattr(self, '_pending_axis_source', 'loaded_calibration'),
                 )
                 self._pending_calib_coeffs = None
                 self._pending_calib_filename = None
                 self._pending_calib_unit = None
                 self._pending_calib_laser_wl = None
+                self._pending_axis_source = None
             self._loading_config = False
         else:
             # Grating/centre-wavelength changes invalidate the pixel calibration (it was only
             # valid at the previous physical position), but must NOT touch the ROI: ROI is set
             # independently via config load, calibration-file load, or direct user edits only.
             self.calib_coeffs = None
+            self.axis_source = "pixel"
             self.calib_unit = 'Wavelength'
             self.calib_laser_wl = None
             self.calib_file_name = "None"

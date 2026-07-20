@@ -88,6 +88,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.calib_unit = 'Wavelength'   # 'Wavelength' (pixel→nm) or 'Raman shift' (pixel→cm⁻¹)
         self.calib_laser_wl = None       # excitation wavelength (nm) used when calib_unit=='Raman shift'
         self.calib_file_name = "None"
+        self.axis_source = "pixel"
+        self._latest_hardware_capture = None
+        self._hardware_capture_by_mode = {}
+        self._camera_identity = {"model": None, "serial_number": None}
+        self._last_temperature_c = None
+        self._last_temperature_status = None
         self.current_w_peak1 = None
         
         self.loaded_bg_data = None
@@ -139,7 +145,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.physical_center_wl = 694.0
 
         self.pressure_window = None
-        self.camera_status_window = None
+        self.instrument_status_window = None
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -678,7 +684,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.action_hardware_config = hardware_menu.addAction("Hardware Configuration...")
         self.action_hardware_config.triggered.connect(self.on_open_hardware_config_clicked)
 
-        self.action_camera_status = hardware_menu.addAction("Check Camera Status...")
+        self.action_camera_status = hardware_menu.addAction("Instrument Status...")
         self.action_camera_status.triggered.connect(self.on_open_camera_status_clicked)
 
         api_menu = self.menuBar().addMenu("API")
@@ -783,6 +789,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.thread.acquisition_failed.connect(self.on_acquisition_failed)
         self.thread.em_gain_info_ready.connect(self.on_em_gain_info_ready)
         self.thread.identity_ready.connect(self.on_camera_identity_ready)
+        if hasattr(self.thread, "exposure_applied"):
+            self.thread.exposure_applied.connect(self.on_exposure_applied)
+        if hasattr(self.thread, "roi_applied"):
+            self.thread.roi_applied.connect(self.on_roi_applied)
 
         self.thread.exposure_set_finished.connect(lambda: self.spin_acq_time.setEnabled(True))
         self.thread.em_gain_set_finished.connect(self.on_em_gain_set_finished)
@@ -807,6 +817,18 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         if reply == QMessageBox.StandardButton.Yes:
             if getattr(self, '_api_server', None) is not None:
                 self.stop_api_server()
+            if (
+                self.instrument_status_window is not None
+                and not self.instrument_status_window.shutdown()
+            ):
+                QMessageBox.warning(
+                    self,
+                    "Instrument status is busy",
+                    "The instrument status query is still using the spectrograph. "
+                    "Please wait a moment and close the application again.",
+                )
+                event.ignore()
+                return
             self.thread.stop_thread()
             self.spec_ctrl.close()
             event.accept()

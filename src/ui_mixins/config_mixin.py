@@ -3,7 +3,7 @@ import json
 from PyQt5.QtWidgets import QMessageBox
 
 from src.menu.hardware_config_dialog import HardwareConfigDialog
-from src.menu.camera_status_dialog import CameraStatusDialog
+from src.menu.instrument_status_dialog import InstrumentStatusDialog
 
 class ConfigMixin:
     def on_open_hardware_config_clicked(self):
@@ -12,11 +12,22 @@ class ConfigMixin:
         dialog.exec_()
 
     def on_open_camera_status_clicked(self):
-        if self.camera_status_window is None:
-            self.camera_status_window = CameraStatusDialog(self.thread, parent=self)
-        self.camera_status_window.show()
-        self.camera_status_window.raise_()
-        self.camera_status_window.activateWindow()
+        if self.instrument_status_window is None:
+            self.instrument_status_window = InstrumentStatusDialog(
+                self.thread,
+                self.spec_ctrl,
+                busy_check=self._instrument_status_busy,
+                parent=self,
+            )
+        self.instrument_status_window.show()
+        self.instrument_status_window.raise_()
+        self.instrument_status_window.activateWindow()
+
+    def _instrument_status_busy(self):
+        camera_busy = bool(getattr(self.thread, "is_measuring", False))
+        move_thread = getattr(self, "spec_move_thread", None)
+        spectrograph_busy = move_thread is not None and move_thread.isRunning()
+        return camera_busy or spectrograph_busy
 
     def _on_hardware_config_applied(self, new_config, changed_tabs):
         self.config = new_config
