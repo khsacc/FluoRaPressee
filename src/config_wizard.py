@@ -30,6 +30,9 @@ from src.ui_widgets import CustomSpinBox
 # Default cooler target temperature (°C) pre-filled in the wizard and used as the
 # fallback in spectrometerConfig.json / SpectrometerGUI when the key is absent.
 DEFAULT_TEMPERATURE = -65
+# Default cooling fan mode (Andor SDK2 only) pre-filled in the wizard and used as the
+# fallback in spectrometerConfig.json / camera_andor.py when the key is absent.
+DEFAULT_FAN_MODE = "full"
 
 # ── Supplier model strings ────────────────────────────────────────────────────
 SUPPLIER_ANDOR = "Andor"
@@ -467,7 +470,22 @@ class _PageGrating(QWidget):
         self._default_temp.setRange(-100, 20)
         self._default_temp.setValue(DEFAULT_TEMPERATURE)
         layout.addWidget(self._default_temp)
+        layout.addSpacing(12)
+
+        # Fan mode is an Andor SDK2 concept (set_fan_mode/get_fan_mode); hidden for
+        # Princeton Instruments via show_supplier().
+        self._fan_mode_label = QLabel("Default cooling fan mode:")
+        self._fan_mode = QComboBox()
+        self._fan_mode.addItems(["full", "low", "off"])
+        self._fan_mode.setCurrentText(DEFAULT_FAN_MODE)
+        layout.addWidget(self._fan_mode_label)
+        layout.addWidget(self._fan_mode)
         layout.addStretch()
+
+    def show_supplier(self, supplier: str):
+        is_andor = supplier == SUPPLIER_ANDOR
+        self._fan_mode_label.setVisible(is_andor)
+        self._fan_mode.setVisible(is_andor)
 
     def start_detection(self, com_port: str):
         """Try ?GRATINGS against com_port once and pre-fill the field on success.
@@ -520,6 +538,9 @@ class _PageGrating(QWidget):
     def default_temperature(self) -> int:
         return self._default_temp.value()
 
+    def fan_mode(self) -> str:
+        return self._fan_mode.currentText()
+
 
 # ── Main wizard dialog ────────────────────────────────────────────────────────
 
@@ -568,6 +589,7 @@ class ConfigWizard(QDialog):
         if page == 0:
             supplier = self._p_supplier.supplier()
             self._p_paths.show_supplier(supplier)
+            self._p_grating.show_supplier(supplier)
             if not self._search_started:
                 self._p_paths.start_search()
                 self._search_started = True
@@ -627,7 +649,17 @@ class ConfigWizard(QDialog):
             "grating": gratings,
             "flip_x": self._p_grating.flip_x(),
             "default_temperature": self._p_grating.default_temperature(),
+            # Not yet known at wizard time -- populated from the actual hardware on
+            # the first successful connection (see ConfigMixin.check_and_record_hardware_identity()),
+            # then used on every later connection to warn if the config doesn't match
+            # what's plugged in.
+            "hardware_identity": {
+                "spectrometer": {"model": None, "serial_number": None},
+                "camera": {"model": None, "serial_number": None},
+            },
         }
+        if supplier == SUPPLIER_ANDOR:
+            self._result["default_fan_mode"] = self._p_grating.fan_mode()
         self.accept()
 
     def result_config(self) -> Optional[dict]:

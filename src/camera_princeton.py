@@ -25,6 +25,14 @@ _ERRORS_BEFORE_RECOVERY = 2
 _MAX_ACQUISITION_RECOVERIES = 2
 _ACQUISITION_ERRORS_BEFORE_STOP = 5
 
+# Fallback settable-temperature range reported by temperature_capability_ready: in --debug
+# mode (no real camera to query), and on real hardware in the unlikely case the "Sensor
+# Temperature Set Point" attribute's Range constraint can't be determined even though
+# has_control is True. Matches the pre-existing hardcoded spin_cooler_temp range in
+# ui.py / config_wizard.py.
+_FALLBACK_TEMP_MIN = -100.0
+_FALLBACK_TEMP_MAX = 20.0
+
 
 def _get_picam_runtime_path(config):
     # Keep using the existing "PIcam_dll_path" config key (may be renamed to "picam_runtime_path" later)
@@ -41,8 +49,14 @@ class CameraThreadPI(QThread):
     init_failed = pyqtSignal(str)  # emitted when hardware initialization fails, with a human-readable reason
     # (temperature_C, status) where status in {"locked", "unlocked", "faulted", "unknown", "unsupported"}
     temperature_ready = pyqtSignal(float, str)
-    # (has_temperature_control, has_status_enum), emitted once after connecting
-    temperature_capability_ready = pyqtSignal(bool, bool)
+    # (has_temperature_control, has_status_enum, min_temp_C, max_temp_C), emitted once after
+    # connecting. min/max come from the "Sensor Temperature Set Point" PICam attribute's Range
+    # constraint and are used to clamp spin_cooler_temp's input range in acquisition_mixin.py.
+    temperature_capability_ready = pyqtSignal(bool, bool, float, float)
+    # (model, serial_number), emitted once after connecting, so the GUI can cross-check it
+    # against spectrometerConfig.json's recorded "hardware_identity.camera" (see
+    # ConfigMixin.check_and_record_hardware_identity()).
+    identity_ready = pyqtSignal(str, str)
 
     exposure_set_finished = pyqtSignal()
     # exists, currently_available, minimum, maximum, increment, current
@@ -487,11 +501,14 @@ class CameraThreadPI(QThread):
             and reading_cap["current"] is not None
         )
         self._temp_status_supported = status_cap["exists"]
+        temp_min = setpoint_cap["min"] if setpoint_cap["min"] is not None else _FALLBACK_TEMP_MIN
+        temp_max = setpoint_cap["max"] if setpoint_cap["max"] is not None else _FALLBACK_TEMP_MAX
         print(
             "Temperature capability detected: "
-            f"has_control={has_control}, has_status={self._temp_status_supported}"
+            f"has_control={has_control}, has_status={self._temp_status_supported}, "
+            f"range={temp_min}..{temp_max}"
         )
-        self.temperature_capability_ready.emit(has_control, self._temp_status_supported)
+        self.temperature_capability_ready.emit(has_control, self._temp_status_supported, temp_min, temp_max)
         return has_control, setpoint_cap
 
     def _debug_temperature_sample(self):
@@ -749,8 +766,11 @@ class CameraThreadPI(QThread):
                 print("[DEBUG MODE] Activating dummy camera...")
                 time.sleep(1.0)
                 self._report_em_gain_capability()
-                self.temperature_capability_ready.emit(True, True)
+                self.temperature_capability_ready.emit(True, True, _FALLBACK_TEMP_MIN, _FALLBACK_TEMP_MAX)
                 self.temperature_set_finished.emit(self.current_temperature_setpoint)
+                # Fabricated so --debug mode can exercise the hardware_identity check;
+                # matches _debug_status_snapshot()'s "Camera identification" values.
+                self.identity_ready.emit("ProEM:1600(2) [DEBUG]", "DEBUG-0000000")
                 self.init_finished.emit()
             else:
                 try:
@@ -766,10 +786,20 @@ class CameraThreadPI(QThread):
                         self.current_temperature_setpoint = float(setpoint_cap["current"])
                         self.temperature_set_finished.emit(self.current_temperature_setpoint)
                         default_temp = self.config.get("default_temperature")
-                        if default_temp is not None and abs(float(default_temp) - self.current_temperature_setpoint) > 1e-6:
-                            # Drive the cooler to the configured default; picked up and applied
-                            # by the main loop's normal new_temperature handling below.
-                            self.new_temperature = float(default_temp)
+                        if default_temp is not None:
+                            temp_min = setpoint_cap["min"] if setpoint_cap["min"] is not None else _FALLBACK_TEMP_MIN
+                            temp_max = setpoint_cap["max"] if setpoint_cap["max"] is not None else _FALLBACK_TEMP_MAX
+                            clamped_temp = min(max(float(default_temp), temp_min), temp_max)
+                            if clamped_temp != float(default_temp):
+                                print(
+                                    f"Warning: configured default_temperature {default_temp}C is outside "
+                                    f"the camera's settable range ({temp_min}..{temp_max}C); "
+                                    f"clamping to {clamped_temp}C"
+                                )
+                            if abs(clamped_temp - self.current_temperature_setpoint) > 1e-6:
+                                # Drive the cooler to the configured default; picked up and applied
+                                # by the main loop's normal new_temperature handling below.
+                                self.new_temperature = clamped_temp
                 except CameraInitError as e:
                     print(f"Camera initialization failed: {e}")
                     self.init_failed.emit(str(e))
@@ -778,6 +808,14 @@ class CameraThreadPI(QThread):
                     print(f"Unexpected error during camera initialization: {e}")
                     self.init_failed.emit(str(e))
                     return
+
+                try:
+                    device_info = self.cam.get_device_info()
+                    identity_model, identity_serial = device_info.model, device_info.serial_number
+                except Exception as e:
+                    print(f"Failed to read camera identity: {e}")
+                    identity_model, identity_serial = "", ""
+                self.identity_ready.emit(identity_model or "", identity_serial or "")
 
                 self.init_finished.emit()
 

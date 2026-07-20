@@ -60,6 +60,57 @@ class ConfigMixin:
         except Exception as e:
             print(f"Failed to save config: {e}")
 
+    def check_and_record_hardware_identity(self, category, model, serial_number):
+        """Cross-check a detected hardware model/serial number against the one recorded
+        in spectrometerConfig.json's "hardware_identity" (category is "spectrometer" or
+        "camera"), so a config left over from a different instrument can be spotted.
+
+        If nothing could be detected (both fields empty), do nothing. On the first
+        successful connection (nothing recorded yet) just record what was detected,
+        silently. On a mismatch, warn -- like the grating-mismatch check in ui.py, this
+        never auto-edits the config; it only offers to update the recorded identity if
+        the user confirms the new hardware is intentional.
+        """
+        if not model and not serial_number:
+            return
+
+        recorded = self.config.setdefault("hardware_identity", {}).setdefault(category, {})
+        recorded_model = recorded.get("model")
+        recorded_serial = recorded.get("serial_number")
+
+        if not recorded_model and not recorded_serial:
+            recorded["model"] = model or None
+            recorded["serial_number"] = serial_number or None
+            self.save_config_to_file()
+            print(f"Recorded {category} identity in spectrometerConfig.json: "
+                  f"model={model!r}, serial_number={serial_number!r}")
+            return
+
+        mismatches = []
+        if recorded_serial and serial_number and recorded_serial != serial_number:
+            mismatches.append(f"Serial number: config has '{recorded_serial}', detected '{serial_number}'")
+        if recorded_model and model and recorded_model != model:
+            mismatches.append(f"Model: config has '{recorded_model}', detected '{model}'")
+
+        if not mismatches:
+            return
+
+        reply = QMessageBox.warning(
+            self, f"{category.capitalize()} identity mismatch",
+            f"spectrometerConfig.json's recorded {category} identity does not match the "
+            "currently connected hardware:\n\n" + "\n".join(mismatches) +
+            f"\n\nThis config may have been created for a different {category}, so its "
+            "calibration/grating/ROI settings may not apply here.\n\n"
+            "If this hardware was intentionally connected (e.g. a permanent replacement), "
+            "update the recorded identity to match it now?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            recorded["model"] = model or recorded_model
+            recorded["serial_number"] = serial_number or recorded_serial
+            self.save_config_to_file()
+
     def _load_local_cache(self):
         try:
             with open("local_cache.json", "r", encoding="utf-8") as f:
@@ -117,7 +168,11 @@ class ConfigMixin:
                 }
             ],
             "flip_x": False,
-            "default_temperature": -65
+            "default_temperature": -65,
+            "hardware_identity": {
+                "spectrometer": {"model": None, "serial_number": None},
+                "camera": {"model": None, "serial_number": None},
+            },
         }
         try:
             with open(config_path, "r", encoding="utf-8") as f:

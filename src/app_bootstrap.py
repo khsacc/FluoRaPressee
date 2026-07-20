@@ -20,6 +20,11 @@ _FALLBACK_CONFIG = {
     ],
     "flip_x": False,
     "default_temperature": -65,
+    "default_fan_mode": "full",
+    "hardware_identity": {
+        "spectrometer": {"model": None, "serial_number": None},
+        "camera": {"model": None, "serial_number": None},
+    },
 }
 
 def check_and_create_config():

@@ -1,3 +1,4 @@
+import math
 import numpy as np
 from PyQt5.QtWidgets import QMessageBox
 
@@ -154,7 +155,7 @@ class AcquisitionMixin:
             self.label_current_temp.setText("Reading...")
             self._poll_temperature()
 
-    def on_temperature_capability_ready(self, has_control, has_status):
+    def on_temperature_capability_ready(self, has_control, has_status, temp_min, temp_max):
         """Show/hide the temperature GUI based on whether this camera actually has
         temperature control (mirrors on_em_gain_info_ready's exists-driven show/hide)."""
         for widget in (self.label_cooler_target, self.spin_cooler_temp,
@@ -166,6 +167,16 @@ class AcquisitionMixin:
             self._temp_auto_poll_enabled = False
             self.temp_poll_timer.stop()
             return
+
+        # ceil()/floor() (not round()) so the spinbox's integer bounds never fall outside
+        # the camera-reported float range - rounding outward could let the user pick a
+        # value the hardware would then reject or silently clamp further.
+        self.spin_cooler_temp.blockSignals(True)
+        self.spin_cooler_temp.setRange(math.ceil(temp_min), math.floor(temp_max))
+        self.spin_cooler_temp.blockSignals(False)
+        self.spin_cooler_temp.setToolTip(
+            f"Settable range for this camera: {temp_min:.1f} to {temp_max:.1f} °C"
+        )
 
         self._temp_status_supported = has_status
         self._temp_history = []
@@ -241,6 +252,15 @@ class AcquisitionMixin:
         elif status == "faulted":
             self.label_current_temp.setText(f"{temp:.1f} °C (Cooling Fault)")
             self._restart_temp_poll_timer_if_enabled()
+        elif status == "drifted":
+            # Was previously locked/stabilised and has since moved off the set point
+            # (Andor SDK2 DRV_TEMP_DRIFT) - worth calling out distinctly rather than
+            # showing a plain reading that looks identical to "still converging".
+            self.label_current_temp.setText(f"{temp:.1f} °C (Drifted)")
+            self._restart_temp_poll_timer_if_enabled()
+        elif status == "off":
+            self.label_current_temp.setText(f"{temp:.1f} °C (Cooler Off)")
+            self._restart_temp_poll_timer_if_enabled()
         else:
             # "unlocked", or "unknown" (status-capable hardware whose status read
             # failed just this once) - neither is a settled state, so keep polling.
@@ -265,6 +285,11 @@ class AcquisitionMixin:
 
         self.radio_2d.setText(f"2D Image View ({self.thread.det_width}x{self.thread.det_height})")
         self.apply_roi_settings()
+
+    def on_camera_identity_ready(self, model, serial_number):
+        """CameraThread reports the connected camera's model/serial once after connecting;
+        cross-check it against spectrometerConfig.json's recorded identity (see ConfigMixin)."""
+        self.check_and_record_hardware_identity("camera", model, serial_number)
 
     def on_hardware_error(self, message):
         self.status_label.setText(f"Camera error: {message}")

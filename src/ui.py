@@ -728,6 +728,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
                         "Hardware > Hardware Configuration."
                     )
 
+        if hasattr(self.spec_ctrl, "get_device_identity"):
+            spec_identity = self.spec_ctrl.get_device_identity()
+            self.check_and_record_hardware_identity(
+                "spectrometer", spec_identity.get("model"), spec_identity.get("serial_number")
+            )
+
         current_wl = self.spec_ctrl.get_wavelength()
         print(f"[Init] Spectrometer centre wavelength readback: {current_wl} nm")
         self.physical_center_wl = current_wl
@@ -776,6 +782,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.thread.temperature_capability_ready.connect(self.on_temperature_capability_ready)
         self.thread.acquisition_failed.connect(self.on_acquisition_failed)
         self.thread.em_gain_info_ready.connect(self.on_em_gain_info_ready)
+        self.thread.identity_ready.connect(self.on_camera_identity_ready)
 
         self.thread.exposure_set_finished.connect(lambda: self.spin_acq_time.setEnabled(True))
         self.thread.em_gain_set_finished.connect(self.on_em_gain_set_finished)

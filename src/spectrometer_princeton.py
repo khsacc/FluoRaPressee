@@ -181,6 +181,33 @@ class SpectrometerControllerPI:
             raise RuntimeError(f"Invalid ?GRATING response: {response!r}")
         return int(match.group())
 
+    def get_device_identity(self):
+        """Return {"model": str|None, "serial_number": str|None} for hardware_identity
+        cross-checking (see ConfigMixin.check_and_record_hardware_identity()).
+
+        Uses the SP2750's "MODEL" / "SERIAL" RS-232 commands (confirmed against the
+        SpectraPro-series command set, shared with the older Acton controllers).
+        """
+        if self.debug:
+            # Fabricated so --debug mode can exercise the identity check without hardware.
+            return {"model": "SP-2750 [DEBUG]", "serial_number": "DEBUG-SP2750-0000000"}
+        if not self.is_initialized:
+            return {"model": None, "serial_number": None}
+
+        model = None
+        try:
+            model = " ".join(self._send_command("MODEL", timeout_s=3.0)).strip() or None
+        except Exception as e:
+            print(f"Failed to read spectrometer model: {e}")
+
+        serial = None
+        try:
+            serial = " ".join(self._send_command("SERIAL", timeout_s=3.0)).strip() or None
+        except Exception as e:
+            print(f"Failed to read spectrometer serial number: {e}")
+
+        return {"model": model, "serial_number": serial}
+
     def get_gratings(self):
         """Query all grating slots via ?GRATINGS.
 

@@ -15,15 +15,20 @@ class CameraThreadAndor(QThread):
     data_ready = pyqtSignal(str, np.ndarray)
     init_finished = pyqtSignal()
     init_failed = pyqtSignal(str)  # emitted when hardware initialization fails, with a human-readable reason
-    # (temperature_C, status) where status in {"locked", "unlocked", "faulted", "unknown", "unsupported"}.
-    # This backend does not wire up Andor SDK2's own get_temperature_status() (STABILIZED/
-    # NOT_STABILIZED/DRIFT/...) yet - not because the hardware lacks it, just out of scope for
-    # now - so it always reports "unsupported" and leaves the GUI's spread-based fallback to
-    # infer stabilisation instead.
+    # (temperature_C, status) where status in {"locked", "unlocked", "drifted", "off", "unknown"}.
+    # Wired to Andor SDK2's get_temperature_status() (see _read_temperature_status()). Andor
+    # has no fault-equivalent status, so "faulted" is never emitted by this backend (it still
+    # exists in the shared vocabulary for camera_princeton.py's PICam cooling faults).
     temperature_ready = pyqtSignal(float, str)
-    # (has_temperature_control, has_status_enum), emitted once after connecting. Andor cameras
-    # used by this app always have a cooler, so this is unconditionally (True, False).
-    temperature_capability_ready = pyqtSignal(bool, bool)
+    # (has_temperature_control, has_status_enum, min_temp_C, max_temp_C), emitted once after
+    # connecting. Andor cameras used by this app always have a cooler and always expose
+    # get_temperature_status(), so the first two are unconditionally (True, True); the range
+    # comes from get_temperature_range() and is used to clamp spin_cooler_temp's input range.
+    temperature_capability_ready = pyqtSignal(bool, bool, float, float)
+    # (model, serial_number), emitted once after connecting, so the GUI can cross-check it
+    # against spectrometerConfig.json's recorded "hardware_identity.camera" (see
+    # ConfigMixin.check_and_record_hardware_identity()).
+    identity_ready = pyqtSignal(str, str)
 
     exposure_set_finished = pyqtSignal()
     # Keep the camera-backend interface uniform. This backend does not expose
@@ -38,14 +43,26 @@ class CameraThreadAndor(QThread):
     DEFAULT_DETECTOR_WIDTH = 1024
     DEFAULT_DETECTOR_HEIGHT = 127
     DEFAULT_TEMP = -65
+    DEFAULT_FAN_MODE = "full"
     DEFAULT_EXPOSURE = 0.1
-    # Simulated temperature fluctuation in debug mode (C). Kept comfortably under the
-    # GUI's spread-based "Stabilised" threshold (_TEMP_STABLE_SPREAD_C in
-    # acquisition_mixin.py, 0.3C) so --debug mode can actually reach that state instead
-    # of drifting outside the window on every reading.
-    TEMP_TOLERANCE = 0.1
     SLEEP_INTERVAL = 0.05  # Sleep interval between iterations of the thread loop (s)
-    
+    # Fallback settable-temperature range reported in --debug mode (no real camera to query
+    # get_temperature_range() from). Matches the pre-existing hardcoded spin_cooler_temp
+    # range in ui.py / config_wizard.py.
+    DEBUG_TEMP_MIN = -100.0
+    DEBUG_TEMP_MAX = 20.0
+
+    # Maps AndorSDK2's get_temperature_status() strings to the status vocabulary shared with
+    # camera_princeton.py's on_temperature_read() consumer in acquisition_mixin.py. Andor SDK2
+    # has no fault-equivalent status, so "faulted" is never produced by this map.
+    _TEMP_STATUS_MAP = {
+        "stabilized": "locked",
+        "not_reached": "unlocked",
+        "not_stabilized": "unlocked",
+        "drifted": "drifted",
+        "off": "off",
+    }
+
     def __init__(self, config=None, debug=False):
         super().__init__()
         self.debug = debug
@@ -75,14 +92,24 @@ class CameraThreadAndor(QThread):
         self.mock_temp = self.config.get("default_temperature", self.DEFAULT_TEMP)
         self.current_exposure = self.DEFAULT_EXPOSURE
 
+        # --debug convergence simulation for temperature status (mirrors
+        # camera_princeton.py's _debug_temperature_sample()); lets the GUI's
+        # Locked/Drifted/... stabilisation UI be exercised without hardware.
+        self._debug_sim_temp = self.mock_temp + 10.0
+        self._debug_forced_temp_status = (
+            str(self.config.get("debug_force_temperature_status") or "").strip().lower() or None
+        )
+
     def run(self):
         try:
             if self.debug:
                 print("[DEBUG MODE] Activating dummy camera...")
                 self.det_width, self.det_height = self.DEFAULT_DETECTOR_WIDTH, self.DEFAULT_DETECTOR_HEIGHT
                 self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
-                self.temperature_capability_ready.emit(True, False)
+                self.temperature_capability_ready.emit(True, True, self.DEBUG_TEMP_MIN, self.DEBUG_TEMP_MAX)
                 self.temperature_set_finished.emit(float(self.mock_temp))
+                # Fabricated so --debug mode can exercise the hardware_identity check.
+                self.identity_ready.emit("Andor Camera [DEBUG]", "DEBUG-0000000")
                 self.init_finished.emit()
             else:
                 try:
@@ -92,17 +119,33 @@ class CameraThreadAndor(QThread):
                     self.cam = Andor.AndorSDK2Camera()
                     self.det_width, self.det_height = self.cam.get_detector_size()
                     print(f"Connected to Andor camera. Detector size: {self.det_width}x{self.det_height}")
+                    temp_min, temp_max = self.cam.get_temperature_range()
                     target_temp = self.config.get("default_temperature", self.DEFAULT_TEMP)
-                    self.cam.set_temperature(target_temp)
+                    applied_temp = min(max(target_temp, temp_min), temp_max)
+                    if applied_temp != target_temp:
+                        print(
+                            f"Warning: configured default_temperature {target_temp}C is outside "
+                            f"the camera's settable range ({temp_min}..{temp_max}C); "
+                            f"clamping to {applied_temp}C"
+                        )
+                    self.cam.set_temperature(applied_temp)
                     self.cam.set_cooler(True)
+                    self.cam.set_fan_mode(self.config.get("default_fan_mode", self.DEFAULT_FAN_MODE))
                     self.cam.set_exposure(0.1)
                 except Exception as e:
                     print(f"Failed to initialize Andor camera: {e}")
                     self.init_failed.emit(str(e))
                     return
-                self.temperature_set_finished.emit(float(target_temp))
+                self.temperature_set_finished.emit(float(applied_temp))
                 self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
-                self.temperature_capability_ready.emit(True, False)
+                self.temperature_capability_ready.emit(True, True, float(temp_min), float(temp_max))
+                try:
+                    device_info = self.cam.get_device_info()
+                    identity_model, identity_serial = device_info.head_model, str(device_info.serial_number)
+                except Exception as e:
+                    print(f"Failed to read camera identity: {e}")
+                    identity_model, identity_serial = "", ""
+                self.identity_ready.emit(identity_model or "", identity_serial or "")
                 self.init_finished.emit()
             
             was_measuring = False
@@ -158,19 +201,20 @@ class CameraThreadAndor(QThread):
 
                 if request_temp:
                     if self.debug:
-                        temp = self.mock_temp + np.random.uniform(-self.TEMP_TOLERANCE, self.TEMP_TOLERANCE)
-                        self.temperature_ready.emit(temp, "unsupported")
+                        temp, status = self._debug_temperature_sample()
+                        self.temperature_ready.emit(temp, status)
                     else:
                         try:
                             if self.cam is None:
                                 print("Warning: Camera not initialized, returning default temp")
-                                self.temperature_ready.emit(self.DEFAULT_TEMP, "unsupported")
+                                self.temperature_ready.emit(self.DEFAULT_TEMP, "unknown")
                             else:
                                 temp = self.cam.get_temperature()
-                                self.temperature_ready.emit(temp, "unsupported")
+                                status = self._read_temperature_status()
+                                self.temperature_ready.emit(temp, status)
                         except Exception as e:
                             print(f"Error reading temperature: {e}")
-                            self.temperature_ready.emit(-999.0, "unsupported")
+                            self.temperature_ready.emit(-999.0, "unknown")
                     with self._lock:
                         self.request_temp = False
 
@@ -253,6 +297,30 @@ class CameraThreadAndor(QThread):
         """温度読み込みをリクエスト（スレッドセーフ）"""
         with self._lock:
             self.request_temp = True
+
+    def _read_temperature_status(self) -> str:
+        """Read and normalize AndorSDK2's get_temperature_status() via _TEMP_STATUS_MAP."""
+        try:
+            raw = self.cam.get_temperature_status()
+            return self._TEMP_STATUS_MAP.get(str(raw).strip().lower(), "unknown")
+        except Exception as e:
+            print(f"Failed to read temperature status: {e}")
+            return "unknown"
+
+    def _debug_temperature_sample(self):
+        """Simulate temperature convergence and locked/unlocked status for --debug mode
+        (mirrors camera_princeton.py's _debug_temperature_sample()), so the GUI's
+        stabilisation UI can be exercised without hardware. `debug_force_temperature_status`
+        in spectrometerConfig.json (e.g. "drifted") pins the status for manual verification
+        of that path.
+        """
+        diff = self.mock_temp - self._debug_sim_temp
+        self._debug_sim_temp += diff * 0.3 + np.random.uniform(-0.15, 0.15)
+        if self._debug_forced_temp_status in ("locked", "unlocked", "drifted", "off"):
+            status = self._debug_forced_temp_status
+        else:
+            status = "locked" if abs(self._debug_sim_temp - self.mock_temp) < 0.3 else "unlocked"
+        return self._debug_sim_temp, status
 
     def update_exposure(self, exp_time: float) -> int:
         """露光時間を更新（スレッドセーフ）。この要求を識別するトークンを返す

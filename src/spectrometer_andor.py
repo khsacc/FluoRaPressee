@@ -88,6 +88,29 @@ class SpectrometerControllerAndor:
             pass
         return 1
 
+    def get_device_identity(self):
+        """Return {"model": None, "serial_number": str|None} for hardware_identity
+        cross-checking (see ConfigMixin.check_and_record_hardware_identity()).
+
+        The ShamrockCIF SDK has no call to read back a model designation, only
+        ShamrockGetSerialNumber -- so "model" is always None here.
+        """
+        if self.debug:
+            # Fabricated so --debug mode can exercise the identity check; kept out of
+            # "model" since real Shamrock hardware never reports one either.
+            return {"model": None, "serial_number": "DEBUG-SHAMROCK-0000000"}
+        if not self.is_initialized or not self.shamrock:
+            return {"model": None, "serial_number": None}
+        try:
+            serial_buf = ctypes.create_string_buffer(256)
+            ret = self.shamrock.ShamrockGetSerialNumber(self.device_id, serial_buf)
+            if ret == self.SHAMROCK_SUCCESS:
+                serial = serial_buf.value.decode(errors="replace").strip()
+                return {"model": None, "serial_number": serial or None}
+        except Exception as e:
+            print(f"Failed to read spectrometer serial number: {e}")
+        return {"model": None, "serial_number": None}
+
     def set_wavelength(self, wavelength_nm):
         if not self.is_initialized:
             print(f"(Dummy) Setting spectrometer wavelength to {wavelength_nm} nm...")
