@@ -277,6 +277,14 @@ class AcquisitionMixin:
         self.btn_commence.setEnabled(False)
         self.btn_single.setEnabled(False)
 
+        # temperature_capability_ready can fire (and start the poll timer) before a
+        # later init step fails, since capability reporting happens partway through
+        # the same try block as the rest of connect (see camera_princeton.py's
+        # run()). Stop it defensively so it doesn't keep sending read requests to a
+        # thread whose run() has already returned.
+        self._temp_auto_poll_enabled = False
+        self.temp_poll_timer.stop()
+
         self.status_label.setText("Camera initialization failed")
         QMessageBox.critical(
             self, "Camera Initialization Failed",
