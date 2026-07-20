@@ -15,7 +15,15 @@ class CameraThreadAndor(QThread):
     data_ready = pyqtSignal(str, np.ndarray)
     init_finished = pyqtSignal()
     init_failed = pyqtSignal(str)  # emitted when hardware initialization fails, with a human-readable reason
-    temperature_ready = pyqtSignal(float)
+    # (temperature_C, status) where status in {"locked", "unlocked", "faulted", "unknown", "unsupported"}.
+    # This backend does not wire up Andor SDK2's own get_temperature_status() (STABILIZED/
+    # NOT_STABILIZED/DRIFT/...) yet - not because the hardware lacks it, just out of scope for
+    # now - so it always reports "unsupported" and leaves the GUI's spread-based fallback to
+    # infer stabilisation instead.
+    temperature_ready = pyqtSignal(float, str)
+    # (has_temperature_control, has_status_enum), emitted once after connecting. Andor cameras
+    # used by this app always have a cooler, so this is unconditionally (True, False).
+    temperature_capability_ready = pyqtSignal(bool, bool)
 
     exposure_set_finished = pyqtSignal()
     # Keep the camera-backend interface uniform. This backend does not expose
@@ -31,7 +39,11 @@ class CameraThreadAndor(QThread):
     DEFAULT_DETECTOR_HEIGHT = 127
     DEFAULT_TEMP = -65
     DEFAULT_EXPOSURE = 0.1
-    TEMP_TOLERANCE = 0.5  # Simulated temperature fluctuation in debug mode (C)
+    # Simulated temperature fluctuation in debug mode (C). Kept comfortably under the
+    # GUI's spread-based "Stabilised" threshold (_TEMP_STABLE_SPREAD_C in
+    # acquisition_mixin.py, 0.3C) so --debug mode can actually reach that state instead
+    # of drifting outside the window on every reading.
+    TEMP_TOLERANCE = 0.1
     SLEEP_INTERVAL = 0.05  # Sleep interval between iterations of the thread loop (s)
     
     def __init__(self, config=None, debug=False):
@@ -69,6 +81,8 @@ class CameraThreadAndor(QThread):
                 print("[DEBUG MODE] Activating dummy camera...")
                 self.det_width, self.det_height = self.DEFAULT_DETECTOR_WIDTH, self.DEFAULT_DETECTOR_HEIGHT
                 self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
+                self.temperature_capability_ready.emit(True, False)
+                self.temperature_set_finished.emit(float(self.mock_temp))
                 self.init_finished.emit()
             else:
                 try:
@@ -88,6 +102,7 @@ class CameraThreadAndor(QThread):
                     return
                 self.temperature_set_finished.emit(float(target_temp))
                 self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
+                self.temperature_capability_ready.emit(True, False)
                 self.init_finished.emit()
             
             was_measuring = False
@@ -143,18 +158,19 @@ class CameraThreadAndor(QThread):
 
                 if request_temp:
                     if self.debug:
-                        self.temperature_ready.emit(self.mock_temp + np.random.uniform(-self.TEMP_TOLERANCE, self.TEMP_TOLERANCE))
+                        temp = self.mock_temp + np.random.uniform(-self.TEMP_TOLERANCE, self.TEMP_TOLERANCE)
+                        self.temperature_ready.emit(temp, "unsupported")
                     else:
                         try:
                             if self.cam is None:
                                 print("Warning: Camera not initialized, returning default temp")
-                                self.temperature_ready.emit(self.DEFAULT_TEMP)
+                                self.temperature_ready.emit(self.DEFAULT_TEMP, "unsupported")
                             else:
                                 temp = self.cam.get_temperature()
-                                self.temperature_ready.emit(temp)
+                                self.temperature_ready.emit(temp, "unsupported")
                         except Exception as e:
                             print(f"Error reading temperature: {e}")
-                            self.temperature_ready.emit(-999.0)
+                            self.temperature_ready.emit(-999.0, "unsupported")
                     with self._lock:
                         self.request_temp = False
 

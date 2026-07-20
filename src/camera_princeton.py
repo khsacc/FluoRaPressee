@@ -39,7 +39,10 @@ class CameraThreadPI(QThread):
     data_ready = pyqtSignal(str, np.ndarray)
     init_finished = pyqtSignal()
     init_failed = pyqtSignal(str)  # emitted when hardware initialization fails, with a human-readable reason
-    temperature_ready = pyqtSignal(float)
+    # (temperature_C, status) where status in {"locked", "unlocked", "faulted", "unknown", "unsupported"}
+    temperature_ready = pyqtSignal(float, str)
+    # (has_temperature_control, has_status_enum), emitted once after connecting
+    temperature_capability_ready = pyqtSignal(bool, bool)
 
     exposure_set_finished = pyqtSignal()
     # exists, currently_available, minimum, maximum, increment, current
@@ -86,6 +89,19 @@ class CameraThreadPI(QThread):
         self.current_exposure = 0.1
         self.current_em_gain = None
         self.current_temperature_setpoint = float(self.mock_temp)
+
+        # --debug convergence simulation for Sensor Temperature Status (see
+        # _debug_temperature_sample()); lets the GUI's Locked/Stabilised path be
+        # exercised without hardware.
+        self._debug_sim_temp = self.mock_temp + 10.0
+        self._debug_temp_status = "unlocked"
+        self._debug_forced_temp_status = (
+            str(self.config.get("debug_force_temperature_status") or "").strip().lower() or None
+        )
+
+        # Set by _report_temperature_capability(); cached so read_temperature() doesn't
+        # re-check attribute existence on every poll.
+        self._temp_status_supported = False
 
     @staticmethod
     def _is_all_zero_frame(data):
@@ -200,9 +216,11 @@ class CameraThreadPI(QThread):
             ("Pixel bias correction", "Correct Pixel Bias"),
         )),
         ("Shutter", (
+            ("Active shutter", "Active Shutter"),
             ("Shutter timing mode", "Shutter Timing Mode"),
             ("Shutter opening delay (ms)", "Shutter Opening Delay"),
             ("Shutter closing delay (ms)", "Shutter Closing Delay"),
+            ("Shutter delay resolution (us)", "Shutter Delay Resolution"),
             ("Internal shutter type", "Internal Shutter Type"),
             ("Internal shutter status", "Internal Shutter Status"),
             ("External shutter type", "External Shutter Type"),
@@ -298,9 +316,11 @@ class CameraThreadPI(QThread):
                 ("Pixel bias correction", "True"),
             ],
             "Shutter": [
+                ("Active shutter", "Internal"),
                 ("Shutter timing mode", "Normal"),
                 ("Shutter opening delay (ms)", "0.0"),
                 ("Shutter closing delay (ms)", "0.0"),
+                ("Shutter delay resolution (us)", "1000"),
                 ("Internal shutter type", "Vincent Uniblitz"),
                 ("Internal shutter status", "Open"),
                 ("External shutter type", "None"),
@@ -447,6 +467,49 @@ class CameraThreadPI(QThread):
         )
         self.em_gain_info_ready.emit(True, available, minimum, maximum, increment, current)
 
+    def _report_temperature_capability(self):
+        """Inspect the connected PICam camera and report whether it has temperature
+        control, and whether it exposes a Locked/Unlocked/Faulted status enum.
+
+        Unlike EM Gain, a temperature set point has no "irrelevant but recoverable"
+        path (no `ensure_relevant` callback to switch modes and retry), so a set
+        point that exists but can't currently be read/written is treated as no
+        control at all, not as a visible-but-disabled component.
+        """
+        setpoint_cap = self._query_attribute_capability("Sensor Temperature Set Point")
+        reading_cap = self._query_attribute_capability("Sensor Temperature Reading")
+        status_cap = self._query_attribute_capability("Sensor Temperature Status")
+
+        has_control = (
+            setpoint_cap["exists"] and setpoint_cap["relevant"] and setpoint_cap["writable"]
+            and setpoint_cap["current"] is not None
+            and reading_cap["exists"] and reading_cap["relevant"]
+            and reading_cap["current"] is not None
+        )
+        self._temp_status_supported = status_cap["exists"]
+        print(
+            "Temperature capability detected: "
+            f"has_control={has_control}, has_status={self._temp_status_supported}"
+        )
+        self.temperature_capability_ready.emit(has_control, self._temp_status_supported)
+        return has_control, setpoint_cap
+
+    def _debug_temperature_sample(self):
+        """Simulate PICam temperature convergence and Locked/Unlocked/Faulted status
+        for --debug mode, so the GUI's stabilisation UI can be exercised without
+        hardware. `debug_force_temperature_status` in spectrometerConfig.json
+        (e.g. "faulted") pins the status for manual verification of that path.
+        """
+        diff = self.mock_temp - self._debug_sim_temp
+        self._debug_sim_temp += diff * 0.3 + np.random.uniform(-0.15, 0.15)
+        if self._debug_forced_temp_status in ("locked", "unlocked", "faulted"):
+            self._debug_temp_status = self._debug_forced_temp_status
+        else:
+            self._debug_temp_status = (
+                "locked" if abs(self._debug_sim_temp - self.mock_temp) < 0.3 else "unlocked"
+            )
+        return self._debug_sim_temp, self._debug_temp_status
+
     def _report_orientation_capability(self, context):
         """Orientation関連PICamパラメータ(Orientation/Normalize Orientation/
         Readout Orientation/Correct Pixel Bias)の存在・relevant・writable・現在値を
@@ -473,6 +536,48 @@ class CameraThreadPI(QThread):
                 # This attribute group is optional/exploratory; a failure here must not
                 # prevent the rest of camera initialization from proceeding.
                 print(f"[Orientation investigation/{context}] Failed to query {name}: {e}")
+
+    # Attributes inspected by _report_shutter_capability(), in the order given in
+    # work/work_PI_shutter.md Section 5.
+    _SHUTTER_CAPABILITY_ATTRIBUTES = (
+        "Active Shutter",
+        "Shutter Timing Mode",
+        "Shutter Opening Delay",
+        "Shutter Closing Delay",
+        "Shutter Delay Resolution",
+        "Internal Shutter Type",
+        "Internal Shutter Status",
+        "External Shutter Type",
+        "External Shutter Status",
+    )
+
+    def _report_shutter_capability(self, context):
+        """Shutter関連PICamパラメータ(Active Shutter/Shutter Timing Mode/Opening・
+        Closing Delay/Shutter Delay Resolution/Internal・External Shutter Type・
+        Status)の存在・relevant・writable・候補値(またはRange)・現在値を調査して
+        ログ出力するだけの調査コード(Step 1、work/work_PI_shutter.md Section 5/17参照)。
+
+        値の書き込み(set_attribute_value)は一切行わない。Section 6の自動判定
+        (automation_ready等)やspectrometerConfig.jsonへの保存は後続のStepで実装する。
+        属性ごとの例外はログに残すだけでカメラ接続全体を落とさない。
+        """
+        for name in self._SHUTTER_CAPABILITY_ATTRIBUTES:
+            try:
+                cap = self._query_attribute_capability(name)
+                if not cap["exists"]:
+                    print(f"[Shutter investigation/{context}] {name}: not present on this camera")
+                    continue
+                details = (
+                    f"exists={cap['exists']}, relevant={cap['relevant']}, "
+                    f"writable={cap['writable']}, current={cap['current']}"
+                )
+                if cap["values"] is not None:
+                    details += f", values={cap['values']}"
+                elif cap["min"] is not None or cap["max"] is not None or cap["inc"] is not None:
+                    details += f", min={cap['min']}, max={cap['max']}, inc={cap['inc']}"
+                print(f"[Shutter investigation/{context}] {name}: {details}")
+            except Exception as e:
+                print(f"[Shutter investigation/{context}] Failed to query {name}: {e}")
 
     def _connect_camera(self):
         """PICamカメラを列挙・選択して接続する。失敗時は CameraInitError を送出する。"""
@@ -591,6 +696,7 @@ class CameraThreadPI(QThread):
             time.sleep(0.25)
             self._connect_camera()
             self.det_width, self.det_height = self.cam.get_detector_size()
+            self._report_shutter_capability("reconnect")
             self.current_exposure = self.cam.set_exposure(previous_exposure)
 
             if previous_quality == "Electron Multiplied" and previous_em_gain is not None:
@@ -643,6 +749,7 @@ class CameraThreadPI(QThread):
                 print("[DEBUG MODE] Activating dummy camera...")
                 time.sleep(1.0)
                 self._report_em_gain_capability()
+                self.temperature_capability_ready.emit(True, True)
                 self.temperature_set_finished.emit(self.current_temperature_setpoint)
                 self.init_finished.emit()
             else:
@@ -651,17 +758,18 @@ class CameraThreadPI(QThread):
                     self.det_width, self.det_height = self.cam.get_detector_size()
                     print(f"Connected. Detector size: {self.det_width}x{self.det_height}")
                     self._report_orientation_capability("connect")
+                    self._report_shutter_capability("connect")
                     self.current_exposure = self.cam.set_exposure(0.1)
                     self._report_em_gain_capability()
-                    self.current_temperature_setpoint = float(
-                        self.cam.get_attribute_value("Sensor Temperature Set Point")
-                    )
-                    self.temperature_set_finished.emit(self.current_temperature_setpoint)
-                    default_temp = self.config.get("default_temperature")
-                    if default_temp is not None and abs(float(default_temp) - self.current_temperature_setpoint) > 1e-6:
-                        # Drive the cooler to the configured default; picked up and applied
-                        # by the main loop's normal new_temperature handling below.
-                        self.new_temperature = float(default_temp)
+                    has_temp_control, setpoint_cap = self._report_temperature_capability()
+                    if has_temp_control:
+                        self.current_temperature_setpoint = float(setpoint_cap["current"])
+                        self.temperature_set_finished.emit(self.current_temperature_setpoint)
+                        default_temp = self.config.get("default_temperature")
+                        if default_temp is not None and abs(float(default_temp) - self.current_temperature_setpoint) > 1e-6:
+                            # Drive the cooler to the configured default; picked up and applied
+                            # by the main loop's normal new_temperature handling below.
+                            self.new_temperature = float(default_temp)
                 except CameraInitError as e:
                     print(f"Camera initialization failed: {e}")
                     self.init_failed.emit(str(e))
@@ -751,6 +859,10 @@ class CameraThreadPI(QThread):
                         self.mock_temp = float(new_temperature)
                         self.current_temperature_setpoint = self.mock_temp
                         actual_temperature = self.mock_temp
+                        # A new set point invalidates any previous lock; let the
+                        # convergence simulation run again (unless a status is forced).
+                        if self._debug_forced_temp_status is None:
+                            self._debug_temp_status = "unlocked"
                     else:
                         try:
                             with self._hw_lock:
@@ -774,14 +886,27 @@ class CameraThreadPI(QThread):
 
                 if request_temp:
                     if self.debug:
-                        self.temperature_ready.emit(self.mock_temp + np.random.uniform(-0.5, 0.5))
+                        temp, status = self._debug_temperature_sample()
+                        self.temperature_ready.emit(temp, status)
                     else:
                         try:
-                            temp = self.cam.get_attribute_value("Sensor Temperature Reading")
-                            self.temperature_ready.emit(float(temp))
+                            with self._hw_lock:
+                                temp = float(self.cam.get_attribute_value("Sensor Temperature Reading"))
+                                status = "unsupported"
+                                if self._temp_status_supported:
+                                    status = "unknown"
+                                    try:
+                                        raw_status = self.cam.get_attribute_value("Sensor Temperature Status")
+                                        normalized = str(raw_status).strip().lower()
+                                        if normalized in ("locked", "unlocked", "faulted"):
+                                            status = normalized
+                                    except Exception as e:
+                                        print(f"Failed to read temperature status: {e}")
+                            self.temperature_ready.emit(temp, status)
                         except Exception as e:
                             print(f"Failed to read temperature: {e}")
-                            self.temperature_ready.emit(-999.0)
+                            fallback_status = "unknown" if self._temp_status_supported else "unsupported"
+                            self.temperature_ready.emit(-999.0, fallback_status)
                     with self._lock:
                         self.request_temp = False
 

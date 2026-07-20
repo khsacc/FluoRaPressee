@@ -10,6 +10,13 @@ from src.accumulation import AccumulationCombiner
 # since spin_accumulate allows values up to 99999.
 MAX_BUFFERED_FRAMES = 2000
 
+# Detector temperature polling/stabilisation (used only for the "unsupported" status -
+# i.e. hardware with no Locked/Unlocked/Faulted enum, see on_temperature_read()).
+_TEMP_STABLE_WINDOW = 6          # number of recent readings considered
+_TEMP_STABLE_SPREAD_C = 0.3      # max peak-to-peak spread over that window, in °C
+_TEMP_TARGET_TOLERANCE_C = 1.0   # max distance from the accepted set point, in °C
+_TEMP_POLL_INTERVAL_MS = 5000
+
 
 class AcquisitionMixin:
     def _try_acquire_gate(self) -> bool:
@@ -129,15 +136,119 @@ class AcquisitionMixin:
         self.spin_cooler_temp.blockSignals(False)
         self.spin_cooler_temp.setEnabled(not self._ui_lock_reasons)
 
+        # A new set point invalidates any previous "Stabilised" verdict: drop the
+        # spread history and re-check immediately instead of leaving a stale
+        # "Stabilised" label on screen for up to one more poll interval. This is
+        # also the only thing (besides on_temperature_capability_ready) allowed to
+        # re-enable auto polling once it has stopped - see on_temperature_read().
+        #
+        # Gated on _temp_control_available (a plain flag set by
+        # on_temperature_capability_ready), not on label_cooler_target.isVisible():
+        # QWidget.isVisible() reflects actual on-screen visibility, which requires the
+        # whole window to be shown - it can read False for a minimized/not-yet-shown
+        # window even though the widget's own setVisible(True) was already applied.
+        self._temp_accepted_setpoint = actual_temperature
+        self._temp_history = []
+        if self._temp_control_available:
+            self._temp_auto_poll_enabled = True
+            self.label_current_temp.setText("Reading...")
+            self._poll_temperature()
+
+    def on_temperature_capability_ready(self, has_control, has_status):
+        """Show/hide the temperature GUI based on whether this camera actually has
+        temperature control (mirrors on_em_gain_info_ready's exists-driven show/hide)."""
+        for widget in (self.label_cooler_target, self.spin_cooler_temp,
+                       self.btn_read_temp, self.label_current_temp):
+            widget.setVisible(has_control)
+
+        self._temp_control_available = has_control
+        if not has_control:
+            self._temp_auto_poll_enabled = False
+            self.temp_poll_timer.stop()
+            return
+
+        self._temp_status_supported = has_status
+        self._temp_history = []
+        self._temp_auto_poll_enabled = True
+        self.temp_poll_timer.start(_TEMP_POLL_INTERVAL_MS)
+
+    def _poll_temperature(self):
+        """Timer-driven read: no "Reading..." flash, to avoid flicker every 5s."""
+        self.thread.read_temperature()
+
     def request_temperature_read(self):
         self.label_current_temp.setText("Reading...")
         self.thread.read_temperature()
 
-    def on_temperature_read(self, temp):
+    def _check_temp_stabilised_by_spread(self, temp):
+        """Fallback stabilisation check for hardware with no Locked/Unlocked/Faulted
+        enum (status == "unsupported"): recent readings must both be tightly clustered
+        AND close to the accepted set point, so a cooler that plateaus far from target
+        is not mistaken for "stabilised" just because it stopped drifting."""
+        self._temp_history.append(temp)
+        if len(self._temp_history) > _TEMP_STABLE_WINDOW:
+            self._temp_history.pop(0)
+        if len(self._temp_history) < _TEMP_STABLE_WINDOW:
+            return False
+        spread = max(self._temp_history) - min(self._temp_history)
+        if spread > _TEMP_STABLE_SPREAD_C:
+            return False
+        if self._temp_accepted_setpoint is None:
+            return False
+        return abs(temp - self._temp_accepted_setpoint) <= _TEMP_TARGET_TOLERANCE_C
+
+    def _restart_temp_poll_timer_if_enabled(self):
+        """Resume 5s polling, but only while auto polling is actually enabled.
+
+        Once a Locked/Stabilised verdict disables auto polling, a manual
+        "Read current temperature" click must never silently re-enable it, no
+        matter what status comes back - only a fresh set point (see
+        on_temperature_set_finished) or a reconnect is allowed to do that.
+        """
+        if self._temp_auto_poll_enabled:
+            self.temp_poll_timer.start()
+
+    def on_temperature_read(self, temp, status):
+        """Render the latest reading and decide whether polling continues.
+
+        Timer start/stop for the "still settling" cases funnels through
+        _restart_temp_poll_timer_if_enabled() regardless of whether this read was
+        triggered by the timer or by the manual button, so the two trigger paths
+        can never leave the timer running when auto polling was already disabled.
+        """
         if temp == -999.0:
             self.label_current_temp.setText("Error")
+            self._restart_temp_poll_timer_if_enabled()
+            return
+
+        if status == "unsupported":
+            # No status enum on this hardware: infer stabilisation from spread +
+            # proximity to the set point instead of trusting a reported status.
+            stabilised = self._check_temp_stabilised_by_spread(temp)
+            suffix = " Stabilised" if stabilised else ""
+            self.label_current_temp.setText(f"{temp:.1f} °C{suffix}")
+            if stabilised:
+                self._temp_auto_poll_enabled = False
+                self.temp_poll_timer.stop()
+            else:
+                self._restart_temp_poll_timer_if_enabled()
+            return
+
+        if status == "locked":
+            self.label_current_temp.setText(f"{temp:.1f} °C Stabilised")
+            self._temp_auto_poll_enabled = False
+            self.temp_poll_timer.stop()
+        elif status == "faulted":
+            self.label_current_temp.setText(f"{temp:.1f} °C (Cooling Fault)")
+            self._restart_temp_poll_timer_if_enabled()
         else:
+            # "unlocked", or "unknown" (status-capable hardware whose status read
+            # failed just this once) - neither is a settled state, so keep polling.
+            # "unknown" deliberately does NOT fall through to the spread-based
+            # fallback above: a transient status read failure must never be
+            # mistaken for "Stabilised" when the camera could actually be Faulted.
             self.label_current_temp.setText(f"{temp:.1f} °C")
+            self._restart_temp_poll_timer_if_enabled()
 
     def on_camera_initialized(self):
         self.init_dialog.accept()

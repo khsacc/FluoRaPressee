@@ -310,12 +310,33 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
             "raising this further to reduce false positives."
         )
 
+        # The camera thread reports at connect time whether this hardware actually has
+        # temperature control (see on_temperature_capability_ready). Keep this group
+        # hidden until has_control=True is received, same as the EM Gain row above.
+        self.label_cooler_target = QLabel("Cooler target temp (°C):")
         self.spin_cooler_temp = CustomSpinBox()
         self.spin_cooler_temp.setRange(-100, 20)
         self.spin_cooler_temp.setValue(self.config.get("default_temperature", -65))
         self.btn_read_temp = QPushButton("Read current temperature")
         self.label_current_temp = QLabel("-- °C")
         self.label_current_temp.setStyleSheet("font-weight: bold; color: #E91E63;")
+        self.label_cooler_target.setVisible(False)
+        self.spin_cooler_temp.setVisible(False)
+        self.btn_read_temp.setVisible(False)
+        self.label_current_temp.setVisible(False)
+        self._temp_status_supported = False
+        self._temp_history = []
+        self._temp_accepted_setpoint = None
+        # Set by on_temperature_capability_ready; used instead of querying widget
+        # .isVisible() elsewhere, since isVisible() reflects actual on-screen
+        # visibility (requires the whole window to be shown), not just this group's
+        # own setVisible() state.
+        self._temp_control_available = False
+        # Whether the 5s poll timer is allowed to keep/resume running. Only
+        # on_temperature_capability_ready and on_temperature_set_finished may set this
+        # True; a manual "Read current temperature" click while stopped must never
+        # re-enable it on its own (see on_temperature_read / add-temperature-status work).
+        self._temp_auto_poll_enabled = False
 
         det_layout.addWidget(QLabel("Acquisition time (s):"), 0, 0)
         det_layout.addWidget(self.spin_acq_time, 0, 1)
@@ -325,7 +346,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         det_layout.addWidget(self.spin_accumulate, 2, 1)
         det_layout.addWidget(self.chk_cosmic_ray_removal, 3, 0)
         det_layout.addWidget(self.spin_spike_threshold, 3, 1)
-        det_layout.addWidget(QLabel("Cooler target temp (°C):"), 4, 0)
+        det_layout.addWidget(self.label_cooler_target, 4, 0)
         det_layout.addWidget(self.spin_cooler_temp, 4, 1)
         det_layout.addWidget(self.btn_read_temp, 5, 0)
         det_layout.addWidget(self.label_current_temp, 5, 1)
@@ -666,7 +687,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.seq_timer = QTimer(self)
         self.seq_timer.timeout.connect(self.update_seq_progress)
-        
+
+        self.temp_poll_timer = QTimer(self)
+        self.temp_poll_timer.setInterval(5000)
+
         self.update_plot_labels()
 
         if self.seq_dir and os.path.isdir(self.seq_dir):
@@ -749,13 +773,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.thread.init_failed.connect(self.on_camera_init_failed)
         self.thread.hardware_error.connect(self.on_hardware_error)
         self.thread.temperature_ready.connect(self.on_temperature_read)
+        self.thread.temperature_capability_ready.connect(self.on_temperature_capability_ready)
         self.thread.acquisition_failed.connect(self.on_acquisition_failed)
         self.thread.em_gain_info_ready.connect(self.on_em_gain_info_ready)
-        
+
         self.thread.exposure_set_finished.connect(lambda: self.spin_acq_time.setEnabled(True))
         self.thread.em_gain_set_finished.connect(self.on_em_gain_set_finished)
         self.thread.temperature_set_finished.connect(self.on_temperature_set_finished)
-        
+        self.temp_poll_timer.timeout.connect(self._poll_temperature)
+
         self.thread.start()
 
     def _set_button_style(self, button, enabled_style):
