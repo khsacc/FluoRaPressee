@@ -101,6 +101,32 @@ class _GratingDetectThread(QThread):
         self.detected.emit(gratings)
 
 
+class _HardwareProbeThread(QThread):
+    """Run the first-connection hardware inventory without blocking the dialog."""
+    detected = pyqtSignal(dict)
+
+    def __init__(self, supplier, config):
+        super().__init__()
+        self.supplier = supplier
+        self.config = dict(config)
+
+    def run(self):
+        from src.hardware_probe import probe_initial_hardware
+
+        try:
+            result = probe_initial_hardware(self.supplier, self.config)
+        except Exception as exc:
+            result = {
+                "supplier": self.supplier,
+                "config": {},
+                "detected_hardware": {},
+                "camera_candidates": [],
+                "successes": [],
+                "errors": [f"Hardware probe failed: {exc}"],
+            }
+        self.detected.emit(result)
+
+
 # ── Background path search ────────────────────────────────────────────────────
 
 class _PathSearchThread(QThread):
@@ -294,6 +320,8 @@ class _PageSupplier(QWidget):
 # ── Page 1: Paths / connection ────────────────────────────────────────────────
 
 class _PagePaths(QWidget):
+    probe_requested = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         root = QVBoxLayout(self)
@@ -312,6 +340,14 @@ class _PagePaths(QWidget):
         self._stack.addWidget(self._andor_panel)   # index 0
         self._stack.addWidget(self._pi_panel)      # index 1
         root.addWidget(self._stack)
+
+        self._probe_button = QPushButton("Read parameters from connected hardware")
+        self._probe_button.clicked.connect(self.probe_requested.emit)
+        root.addWidget(self._probe_button)
+        self._probe_status = QLabel("")
+        self._probe_status.setWordWrap(True)
+        self._probe_status.setStyleSheet("color: gray; font-size: small;")
+        root.addWidget(self._probe_status)
         root.addStretch()
 
         # path fields indexed by config key
@@ -373,8 +409,9 @@ class _PagePaths(QWidget):
         sdk_v.addWidget(QLabel(
             "Camera serial number  (leave blank to auto-select if only one camera is connected):"
         ))
-        self._pi_serial = QLineEdit()
-        self._pi_serial.setPlaceholderText("e.g. 0412060001")
+        self._pi_serial = QComboBox()
+        self._pi_serial.setEditable(True)
+        self._pi_serial.lineEdit().setPlaceholderText("e.g. 0412060001")
         sdk_v.addWidget(self._pi_serial)
         vbox.addWidget(sdk_grp)
         return w
@@ -397,20 +434,75 @@ class _PagePaths(QWidget):
         """Launch background path search for all fields (Andor + PI)."""
         if self._search_thread and self._search_thread.isRunning():
             return
+        self._probe_button.setEnabled(False)
+        self._probe_status.setText("Searching for installed SDK files...")
         for field in self._fields.values():
             field.begin_search()
         self._search_thread = _PathSearchThread()
         self._search_thread.found.connect(self._on_found)
+        self._search_thread.finished.connect(self._on_search_finished)
         self._search_thread.start()
 
     def _on_found(self, key: str, paths: list[str]):
         if key in self._fields:
             self._fields[key].apply_results(paths)
 
+    def _on_search_finished(self):
+        self._probe_button.setEnabled(True)
+        if self._probe_status.text() == "Searching for installed SDK files...":
+            self._probe_status.clear()
+
     # ── supplier switch ───────────────────────────────────────────────────────
 
     def show_supplier(self, supplier: str):
         self._stack.setCurrentIndex(0 if supplier == SUPPLIER_ANDOR else 1)
+        self._probe_status.clear()
+
+    def set_probe_busy(self, busy: bool):
+        self._probe_button.setEnabled(not busy)
+        self._probe_button.setText(
+            "Reading connected hardware..."
+            if busy else "Read parameters from connected hardware"
+        )
+        if busy:
+            self._probe_status.setText("Connecting to the camera and spectrograph...")
+            self._probe_status.setStyleSheet("color: gray; font-size: small;")
+
+    def show_probe_result(self, result: dict):
+        successes = result.get("successes", [])
+        errors = result.get("errors", [])
+        if successes and not errors:
+            text = "Read successfully: " + ", ".join(successes)
+            color = "green"
+        elif successes:
+            text = "Read partially: " + ", ".join(successes)
+            if errors:
+                text += f". {errors[0]}"
+            color = "#9a6700"
+        else:
+            text = "No hardware parameters could be read."
+            if errors:
+                text += f" {errors[0]}"
+            color = "#b42318"
+        self._probe_status.setText(text)
+        self._probe_status.setToolTip("\n".join(errors))
+        self._probe_status.setStyleSheet(f"color: {color}; font-size: small;")
+
+    def apply_probe_result(self, result: dict):
+        candidates = result.get("camera_candidates", [])
+        selected_serial = result.get("config", {}).get("camera_serial_number")
+        current = selected_serial or self._pi_serial.currentText().strip()
+        for candidate in candidates:
+            serial = str(candidate.get("serial_number") or "")
+            label = f"{serial} ({candidate.get('model')})" if serial else ""
+            if serial and self._pi_serial.findData(serial) < 0:
+                self._pi_serial.addItem(label, serial)
+        if current:
+            index = self._pi_serial.findData(current)
+            if index >= 0:
+                self._pi_serial.setCurrentIndex(index)
+            else:
+                self._pi_serial.setEditText(current)
 
     # ── validation ───────────────────────────────────────────────────────────
 
@@ -432,7 +524,11 @@ class _PagePaths(QWidget):
         return {
             "com_port":            self._pi_com.currentText().strip(),
             "PIcam_dll_path":      self._pi_picam.value(),
-            "camera_serial_number": self._pi_serial.text().strip(),
+            "camera_serial_number": (
+                str(self._pi_serial.currentData())
+                if self._pi_serial.currentData() is not None
+                else self._pi_serial.currentText().strip()
+            ),
         }
 
 
@@ -460,6 +556,7 @@ class _PageGrating(QWidget):
 
         self._detect_thread = None
         self._detect_started = False
+        self._detected_gratings = []
 
         self._flip_x = QCheckBox("Flip spectrum horizontally  (flip_x)")
         layout.addWidget(self._flip_x)
@@ -518,16 +615,49 @@ class _PageGrating(QWidget):
             )
             self._detect_status.setStyleSheet("color: gray; font-size: small;")
 
+    def apply_probe_result(self, config: dict):
+        gratings = config.get("grating") or []
+        if gratings:
+            self._detected_gratings = [dict(grating) for grating in gratings]
+            self._edit.setText(", ".join(str(g["grooves"]) for g in gratings))
+            self._detect_started = True
+            self._detect_status.setText(
+                f"Read {len(gratings)} installed grating(s) from the connected hardware."
+            )
+            self._detect_status.setStyleSheet("color: green; font-size: small;")
+        if config.get("default_temperature") is not None:
+            self._default_temp.setValue(int(config["default_temperature"]))
+        if config.get("default_fan_mode") in ("full", "low", "off"):
+            self._fan_mode.setCurrentText(config["default_fan_mode"])
+
+    def reset_detected_parameters(self):
+        self._detected_gratings = []
+        self._detect_started = False
+        self._edit.clear()
+        self._detect_status.clear()
+        self._default_temp.setValue(DEFAULT_TEMPERATURE)
+        self._fan_mode.setCurrentText(DEFAULT_FAN_MODE)
+
     def grating_list(self) -> list[dict]:
         result = []
         for i, token in enumerate(self._edit.text().split(","), start=1):
             token = token.strip()
             try:
-                result.append({
+                grooves = int(token)
+                detected = next(
+                    (
+                        dict(grating)
+                        for grating in self._detected_gratings
+                        if grating.get("index") == i and grating.get("grooves") == grooves
+                    ),
+                    {},
+                )
+                detected.update({
                     "index": i,
-                    "grooves": int(token),
-                    "defaultROI": {"from": 100, "to": 140},
+                    "grooves": grooves,
                 })
+                detected.setdefault("defaultROI", {"from": 100, "to": 140})
+                result.append(detected)
             except ValueError:
                 pass
         return result
@@ -557,6 +687,12 @@ class ConfigWizard(QDialog):
         self._p_paths    = _PagePaths()
         self._p_grating  = _PageGrating()
         self._search_started = False
+        self._probe_thread = None
+        self._detected_config = {}
+        self._detected_hardware = {}
+        self._detected_supplier = None
+        self._shown_supplier = None
+        self._p_paths.probe_requested.connect(self._probe_hardware)
 
         self._stack = QStackedWidget()
         for page in (self._p_supplier, self._p_paths, self._p_grating):
@@ -588,6 +724,9 @@ class ConfigWizard(QDialog):
         page = self._stack.currentIndex()
         if page == 0:
             supplier = self._p_supplier.supplier()
+            if self._shown_supplier is not None and supplier != self._shown_supplier:
+                self._p_grating.reset_detected_parameters()
+            self._shown_supplier = supplier
             self._p_paths.show_supplier(supplier)
             self._p_grating.show_supplier(supplier)
             if not self._search_started:
@@ -634,6 +773,45 @@ class ConfigWizard(QDialog):
         self._btn_back.setEnabled(page > 0)
         self._btn_next.setText("Finish" if page == 2 else "Next >")
 
+    def _probe_hardware(self):
+        if self._probe_thread is not None and self._probe_thread.isRunning():
+            return
+        supplier = self._p_supplier.supplier()
+        if self._detected_supplier != supplier:
+            self._detected_config = {}
+            self._detected_hardware = {}
+        self._detected_supplier = supplier
+        config = {"model": supplier, **self._p_paths.values(supplier)}
+        self._p_paths.set_probe_busy(True)
+        self._btn_back.setEnabled(False)
+        self._btn_next.setEnabled(False)
+        self._btn_cancel.setEnabled(False)
+        self._probe_thread = _HardwareProbeThread(supplier, config)
+        self._probe_thread.detected.connect(self._on_hardware_probed)
+        self._probe_thread.start()
+
+    def _on_hardware_probed(self, result: dict):
+        self._p_paths.set_probe_busy(False)
+        self._btn_cancel.setEnabled(True)
+        self._refresh_buttons()
+        self._p_paths.apply_probe_result(result)
+        self._p_paths.show_probe_result(result)
+        patch = result.get("config", {})
+        _merge_dict(self._detected_config, patch)
+        _merge_dict(self._detected_hardware, result.get("detected_hardware", {}))
+        self._p_grating.apply_probe_result(patch)
+
+    def closeEvent(self, event):
+        if self._probe_thread is not None and self._probe_thread.isRunning():
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def reject(self):
+        if self._probe_thread is not None and self._probe_thread.isRunning():
+            return
+        super().reject()
+
     # ── finish ───────────────────────────────────────────────────────────────
 
     def _finish(self):
@@ -649,18 +827,33 @@ class ConfigWizard(QDialog):
             "grating": gratings,
             "flip_x": self._p_grating.flip_x(),
             "default_temperature": self._p_grating.default_temperature(),
-            # Not yet known at wizard time -- populated from the actual hardware on
-            # the first successful connection (see ConfigMixin.check_and_record_hardware_identity()),
-            # then used on every later connection to warn if the config doesn't match
-            # what's plugged in.
             "hardware_identity": {
                 "spectrometer": {"model": None, "serial_number": None},
                 "camera": {"model": None, "serial_number": None},
             },
         }
+        if self._detected_supplier == supplier:
+            _merge_dict(
+                self._result["hardware_identity"],
+                self._detected_config.get("hardware_identity", {}),
+            )
+            if any(
+                self._detected_hardware.get(category)
+                for category in ("camera", "spectrometer")
+            ):
+                self._result["detected_hardware"] = self._detected_hardware
         if supplier == SUPPLIER_ANDOR:
             self._result["default_fan_mode"] = self._p_grating.fan_mode()
         self.accept()
 
     def result_config(self) -> Optional[dict]:
         return self._result
+
+
+def _merge_dict(target: dict, source: dict) -> dict:
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _merge_dict(target[key], value)
+        else:
+            target[key] = value
+    return target

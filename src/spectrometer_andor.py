@@ -16,8 +16,9 @@ class SpectrometerControllerAndor:
     
     SHAMROCK_SUCCESS = 20202
 
-    def __init__(self, debug=False):
+    def __init__(self, config=None, debug=False):
         self.debug = debug
+        self.config = config or {}
         self.is_initialized = False
         self.device_id = 0
         self.shamrock = None
@@ -35,10 +36,10 @@ class SpectrometerControllerAndor:
 
         print("Spectrometer initialisation...")
 
-        dll_path = "ShamrockCIF.dll" # Default value
+        dll_path = self.config.get("dll_path") or "ShamrockCIF.dll"
         config_path = "spectrometerConfig.json"
 
-        if os.path.exists(config_path):
+        if not self.config and os.path.exists(config_path):
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
@@ -46,6 +47,9 @@ class SpectrometerControllerAndor:
                     dll_path = config.get("dll_path", "ShamrockCIF.dll")
             except Exception as e:
                 print(f"Failed to read config file: {e}. Using default path.")
+
+        if os.path.isdir(dll_path):
+            dll_path = os.path.join(dll_path, "ShamrockCIF.dll")
 
         try:
             self.shamrock = ctypes.windll.LoadLibrary(dll_path)
