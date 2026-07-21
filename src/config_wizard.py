@@ -689,7 +689,6 @@ class ConfigWizard(QDialog):
         self._search_started = False
         self._probe_thread = None
         self._detected_config = {}
-        self._detected_hardware = {}
         self._detected_supplier = None
         self._shown_supplier = None
         self._p_paths.probe_requested.connect(self._probe_hardware)
@@ -780,7 +779,6 @@ class ConfigWizard(QDialog):
         supplier = self._p_supplier.supplier()
         if self._detected_supplier != supplier:
             self._detected_config = {}
-            self._detected_hardware = {}
         self._detected_supplier = supplier
         config = {"model": supplier, **self._p_paths.values(supplier)}
         self._p_paths.set_probe_busy(True)
@@ -799,7 +797,6 @@ class ConfigWizard(QDialog):
         self._p_paths.show_probe_result(result)
         patch = result.get("config", {})
         _merge_dict(self._detected_config, patch)
-        _merge_dict(self._detected_hardware, result.get("detected_hardware", {}))
         self._p_grating.apply_probe_result(patch)
 
     def closeEvent(self, event):
@@ -838,11 +835,6 @@ class ConfigWizard(QDialog):
                 self._result["hardware_identity"],
                 self._detected_config.get("hardware_identity", {}),
             )
-            if any(
-                self._detected_hardware.get(category)
-                for category in ("camera", "spectrometer")
-            ):
-                self._result["detected_hardware"] = self._detected_hardware
         if supplier == SUPPLIER_ANDOR:
             self._result["default_fan_mode"] = self._p_grating.fan_mode()
         self.accept()
