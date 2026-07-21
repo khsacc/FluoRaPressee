@@ -27,8 +27,8 @@ def _spectrum_metadata(calib_coeffs):
 
 
 class PixelPeaksNeverReachPressureWindowTests(unittest.TestCase):
-    """Regression test for: open a calibrated (nm) file, open the pressure
-    calculator, then load an uncalibrated (pixel) file while it's still open.
+    """Regression test for: open a calibrated (nm) file, then load an
+    uncalibrated (pixel) file while the embedded pressure calculator is visible.
     The pressure window must not silently compute/display/save a pressure from
     raw pixel positions.
     """
@@ -72,7 +72,8 @@ class PixelPeaksNeverReachPressureWindowTests(unittest.TestCase):
         win.show()
 
         win.load_file(self.calibrated_path)
-        win.open_pressure_calculator()
+        self.assertTrue(win.pressure_window.isVisible())
+        self.assertTrue(win.pressure_window.isEnabled())
         self.assertIsNotNone(win.pressure_window.current_pressure)
 
         win.load_file(self.pixel_path)

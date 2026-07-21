@@ -20,6 +20,7 @@ from src.pressureCalc import PressureCalculator
 from src.pressureCalc_ui import PressureCalculatorWindow
 from src.file_io import DataFileIO
 from src.ui_widgets import CustomSpinBox, CustomDoubleSpinBox, CustomComboBox
+from src.fitting_config_widget import FittingConfigWidget
 from src.ui_mixins.config_mixin import ConfigMixin
 from src.ui_mixins.file_io_mixin import FileIOMixin
 from src.ui_mixins.spectrometer_control_mixin import SpectrometerControlMixin
@@ -526,64 +527,9 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         bg_group.setLayout(bg_layout)
         controls_layout.addWidget(bg_group)
 
-        fit_group = QGroupBox("Fitting Configurations")
-        fit_layout = QGridLayout()
-        self.radio_fit_on = QRadioButton("ON")
-        self.radio_fit_off = QRadioButton("OFF")
-        self.radio_fit_off.setChecked(True)
-        fit_radio_layout = QHBoxLayout()
-        fit_radio_layout.addWidget(self.radio_fit_on)
-        fit_radio_layout.addWidget(self.radio_fit_off)
-        self.combo_fit_func = CustomComboBox()
-        self.combo_fit_func.addItems(["Pseudo Voigt", "Moffat", "Gauss", "Lorentz"])
-        self.combo_fit_func.setCurrentText("Pseudo Voigt")
-
-        self.combo_fit_peak_count = CustomComboBox()
-        for count in range(1, 6):
-            self.combo_fit_peak_count.addItem(str(count), count)
-        self.combo_fit_peak_count.setCurrentIndex(self.combo_fit_peak_count.findData(2))
-
-        self.combo_peak_sort = CustomComboBox()
-        self.combo_peak_sort.addItem("x descending", "x_desc")
-        self.combo_peak_sort.addItem("x ascending", "x_asc")
-        self.combo_peak_sort.addItem("intensity descending", "intensity_desc")
-        self.combo_peak_sort.addItem("intensity ascending", "intensity_asc")
-
-        self.combo_baseline_model = CustomComboBox()
-        self.combo_baseline_model.addItem("Constant", "Constant")
-        self.combo_baseline_model.addItem("Linear", "Linear")
-        self.combo_baseline_model.addItem("Quadratic", "Quadratic")
-        self.combo_baseline_model.addItem("Auto Polynomial", "Auto Polynomial")
-        self.combo_baseline_model.setCurrentIndex(
-            self.combo_baseline_model.findData("Constant")
-        )
-        
-        self.spin_fit_start = CustomDoubleSpinBox()
-        self.spin_fit_start.setRange(-10000, 20000)
-        self.spin_fit_start.setValue(0.0)
-        self.spin_fit_start.setDecimals(2)
-        
-        self.spin_fit_end = CustomDoubleSpinBox()
-        self.spin_fit_end.setRange(-10000, 20000)
-        self.spin_fit_end.setValue(4000.0)
-        self.spin_fit_end.setDecimals(2)
-        
-        fit_layout.addWidget(QLabel("Fitting:"), 0, 0)
-        fit_layout.addLayout(fit_radio_layout, 0, 1)
-        fit_layout.addWidget(QLabel("Function:"), 1, 0)
-        fit_layout.addWidget(self.combo_fit_func, 1, 1)
-        fit_layout.addWidget(QLabel("Fit Peaks:"), 2, 0)
-        fit_layout.addWidget(self.combo_fit_peak_count, 2, 1)
-        fit_layout.addWidget(QLabel("Sort peaks:"), 3, 0)
-        fit_layout.addWidget(self.combo_peak_sort, 3, 1)
-        fit_layout.addWidget(QLabel("Baseline:"), 4, 0)
-        fit_layout.addWidget(self.combo_baseline_model, 4, 1)
-        fit_layout.addWidget(QLabel("Range Start:"), 5, 0)
-        fit_layout.addWidget(self.spin_fit_start, 5, 1)
-        fit_layout.addWidget(QLabel("Range End:"), 6, 0)
-        fit_layout.addWidget(self.spin_fit_end, 6, 1)
-        fit_group.setLayout(fit_layout)
-        controls_layout.addWidget(fit_group)
+        self.fitting_config = FittingConfigWidget(fitting_enabled=False)
+        self.fitting_config.expose_controls_on(self)
+        controls_layout.addWidget(self.fitting_config)
 
         self.pressure_window = None  # Holds the pressure calculator dialog instance once opened
 

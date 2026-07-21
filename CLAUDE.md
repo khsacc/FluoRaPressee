@@ -47,6 +47,12 @@ background data, sequential-save state, fit results, etc.) lives in one of the M
 - `display_mixin.py` (`DisplayMixin`): plot/image rendering, peak fitting invocation and result display, mouse-hover readout.
 - `pressure_dialog_mixin.py` (`PressureDialogMixin`): opening/syncing the pressure calculator window.
 
+The live GUI and hardware-free Analysis Mode both use
+`src/fitting_config_widget.py` (`FittingConfigWidget`) for the complete fitting-settings panel;
+keep control choices, labels, ranges, and defaults in that shared widget rather than duplicating them
+in either window. `src/analysis_ui.py` embeds the existing `PressureCalculatorWindow` directly in its
+right-hand panel (`embedded=True`), while the live GUI continues to use the same class as a dialog.
+
 Mixins are plain Python classes (no `QObject` base) that assume they're mixed into `SpectrometerGUI`,
 so they freely call `self.xxx` across mixin boundaries — all methods end up on the same instance at
 runtime. When making UI changes, find the mixin that owns the relevant behavior (or `__init__` for

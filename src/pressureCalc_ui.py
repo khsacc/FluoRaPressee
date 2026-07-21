@@ -10,11 +10,18 @@ class CustomDoubleSpinBox(QDoubleSpinBox):
         self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
 
 class PressureCalculatorWindow(QDialog):
-    def __init__(self, parent=None, mode="nm"):
+    def __init__(self, parent=None, mode="nm", embedded=False, fit_controls_owner=None):
         super().__init__(parent)
+        self.embedded = embedded
+        self._fit_controls_owner = fit_controls_owner if fit_controls_owner is not None else parent
+        if self.embedded:
+            # QDialog is normally always a top-level window.  Qt.Widget keeps this
+            # exact same calculator UI usable as an in-layout child widget.
+            self.setWindowFlags(Qt.Widget)
         self.unit = mode
         self.setWindowTitle("Pressure Calculator")
-        self.resize(450, 700)
+        if not self.embedded:
+            self.resize(450, 700)
         self.current_peak_val = 0.0
         self.current_peak_err = 0.0
         self.current_pressure = None       
@@ -282,10 +289,10 @@ class PressureCalculatorWindow(QDialog):
             self.reset_peak_selection_for_pressure_calc()
             return
 
-        parent = self.parent()
-        if parent is not None and hasattr(parent, "combo_fit_peak_count"):
-            if parent.combo_fit_peak_count.currentData() != recommended:
-                parent.combo_fit_peak_count.setCurrentIndex(parent.combo_fit_peak_count.findData(recommended))
+        owner = self._fit_controls_owner
+        if owner is not None and hasattr(owner, "combo_fit_peak_count"):
+            if owner.combo_fit_peak_count.currentData() != recommended:
+                owner.combo_fit_peak_count.setCurrentIndex(owner.combo_fit_peak_count.findData(recommended))
             else:
                 self.set_fit_peak_count(recommended, reset_selection=True)
         else:

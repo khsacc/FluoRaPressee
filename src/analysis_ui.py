@@ -3,9 +3,9 @@ calculation on them, with no spectrometer/camera connection required.
 
 Usable both as a standalone top-level window (see analysis_main.py) and as an
 independent sub-window opened from the live SpectrometerGUI (src/ui.py). It shares
-only backend classes with the live GUI (DataAnalyzer, PressureCalculator, DataFileIO,
-PressureCalculatorWindow) -- its Qt widgets are built fresh here so the live
-acquisition GUI code is untouched.
+the fitting-configuration widget and pressure-calculator UI with the live GUI, as
+well as the hardware-independent DataAnalyzer and DataFileIO backends. Plot and
+loaded-file widgets remain specific to Analysis Mode.
 
 The x-axis column saved by DataFileIO.save_spectrum_1d is already fully resolved
 (nm / cm-1 / pixel) at save time, so loading a file here never needs calibration,
@@ -18,15 +18,15 @@ import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, QFileSystemWatcher
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox,
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QScrollArea,
     QLabel, QPushButton, QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
     QTextEdit, QFileDialog, QMessageBox,
 )
 
 from src.analysis import DataAnalyzer
 from src.file_io import DataFileIO
+from src.fitting_config_widget import FittingConfigWidget
 from src.pressureCalc_ui import PressureCalculatorWindow
-from src.ui_widgets import CustomDoubleSpinBox, CustomComboBox
 from src.local_cache import load_local_cache, save_local_cache
 
 _LAST_DIR_CACHE_KEY = "last_analysis_dir"
@@ -193,66 +193,16 @@ class AnalysisWindow(QMainWindow):
 
     # ---- right: fitting config + pressure -------------------------------------
     def _build_right_panel(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+
         panel = QWidget()
         layout = QVBoxLayout(panel)
 
-        fit_group = QGroupBox("Fitting Configurations")
-        fit_layout = QGridLayout()
-
-        self.radio_fit_on = QRadioButton("ON")
-        self.radio_fit_off = QRadioButton("OFF")
-        self.radio_fit_on.setChecked(True)
-        fit_radio_layout = QHBoxLayout()
-        fit_radio_layout.addWidget(self.radio_fit_on)
-        fit_radio_layout.addWidget(self.radio_fit_off)
-
-        self.combo_fit_func = CustomComboBox()
-        self.combo_fit_func.addItems(["Pseudo Voigt", "Moffat", "Gauss", "Lorentz"])
-        self.combo_fit_func.setCurrentText("Pseudo Voigt")
-
-        self.combo_fit_peak_count = CustomComboBox()
-        for count in range(1, 6):
-            self.combo_fit_peak_count.addItem(str(count), count)
-        self.combo_fit_peak_count.setCurrentIndex(self.combo_fit_peak_count.findData(2))
-
-        self.combo_peak_sort = CustomComboBox()
-        self.combo_peak_sort.addItem("x descending", "x_desc")
-        self.combo_peak_sort.addItem("x ascending", "x_asc")
-        self.combo_peak_sort.addItem("intensity descending", "intensity_desc")
-        self.combo_peak_sort.addItem("intensity ascending", "intensity_asc")
-
-        self.combo_baseline_model = CustomComboBox()
-        self.combo_baseline_model.addItem("Constant", "Constant")
-        self.combo_baseline_model.addItem("Linear", "Linear")
-        self.combo_baseline_model.addItem("Quadratic", "Quadratic")
-        self.combo_baseline_model.addItem("Auto Polynomial", "Auto Polynomial")
-        self.combo_baseline_model.setCurrentIndex(self.combo_baseline_model.findData("Constant"))
-
-        self.spin_fit_start = CustomDoubleSpinBox()
-        self.spin_fit_start.setRange(-10000, 20000)
-        self.spin_fit_start.setDecimals(2)
-
-        self.spin_fit_end = CustomDoubleSpinBox()
-        self.spin_fit_end.setRange(-10000, 20000)
-        self.spin_fit_end.setValue(4000.0)
-        self.spin_fit_end.setDecimals(2)
-
-        fit_layout.addWidget(QLabel("Fitting:"), 0, 0)
-        fit_layout.addLayout(fit_radio_layout, 0, 1)
-        fit_layout.addWidget(QLabel("Function:"), 1, 0)
-        fit_layout.addWidget(self.combo_fit_func, 1, 1)
-        fit_layout.addWidget(QLabel("Fit Peaks:"), 2, 0)
-        fit_layout.addWidget(self.combo_fit_peak_count, 2, 1)
-        fit_layout.addWidget(QLabel("Sort peaks:"), 3, 0)
-        fit_layout.addWidget(self.combo_peak_sort, 3, 1)
-        fit_layout.addWidget(QLabel("Baseline:"), 4, 0)
-        fit_layout.addWidget(self.combo_baseline_model, 4, 1)
-        fit_layout.addWidget(QLabel("Range Start:"), 5, 0)
-        fit_layout.addWidget(self.spin_fit_start, 5, 1)
-        fit_layout.addWidget(QLabel("Range End:"), 6, 0)
-        fit_layout.addWidget(self.spin_fit_end, 6, 1)
-        fit_group.setLayout(fit_layout)
-        layout.addWidget(fit_group)
+        self.fitting_config = FittingConfigWidget(fitting_enabled=True, parent=panel)
+        self.fitting_config.expose_controls_on(self)
+        layout.addWidget(self.fitting_config)
 
         self.radio_fit_on.toggled.connect(self.update_plot_and_fit)
         self.radio_fit_off.toggled.connect(self.update_plot_and_fit)
@@ -268,16 +218,25 @@ class AnalysisWindow(QMainWindow):
         self.btn_save_fit.clicked.connect(self.on_save_fit_clicked)
         layout.addWidget(self.btn_save_fit)
 
-        press_group = QGroupBox("Pressure Calculation")
-        press_layout = QVBoxLayout()
-        self.btn_open_pressure = QPushButton("Open Pressure Calculator")
-        self.btn_open_pressure.clicked.connect(self.open_pressure_calculator)
-        press_layout.addWidget(self.btn_open_pressure)
-        press_group.setLayout(press_layout)
-        layout.addWidget(press_group)
+        self.pressure_window = PressureCalculatorWindow(
+            panel,
+            mode="nm",
+            embedded=True,
+            fit_controls_owner=self,
+        )
+        self.pressure_window.setEnabled(False)
+        self.pressure_window.setToolTip("Load a calibrated spectrum to calculate pressure.")
+        layout.addWidget(self.pressure_window)
+
+        margins = layout.contentsMargins()
+        scroll.setMinimumWidth(
+            self.pressure_window.minimumSizeHint().width()
+            + margins.left() + margins.right() + 20
+        )
 
         layout.addStretch()
-        return panel
+        scroll.setWidget(panel)
+        return scroll
 
     # ---- data loading + fitting -----------------------------------------------
     @staticmethod
@@ -316,8 +275,16 @@ class AnalysisWindow(QMainWindow):
         else:
             x_label = 'Pixel'
         self.plot_widget.setLabel('bottom', x_label)
-        if self.pressure_window is not None and self.current_unit != "pixel":
+        if self.current_unit == "pixel":
+            self.pressure_window.set_fit_peaks([])
+            self.pressure_window.setEnabled(False)
+            self.pressure_window.setToolTip(
+                "This spectrum has a pixel axis only; pressure calculation requires calibration."
+            )
+        else:
             self.pressure_window.update_mode(self.current_unit)
+            self.pressure_window.setEnabled(self.radio_fit_on.isChecked())
+            self.pressure_window.setToolTip("")
 
         min_x, max_x = float(np.min(x)), float(np.max(x))
         self.spin_fit_start.blockSignals(True)
@@ -337,6 +304,9 @@ class AnalysisWindow(QMainWindow):
     def update_plot_and_fit(self):
         if self.current_x is None:
             return
+
+        pressure_available = self.current_unit != "pixel" and self.radio_fit_on.isChecked()
+        self.pressure_window.setEnabled(pressure_available)
 
         y_display = self.current_y_raw if self.radio_display_raw.isChecked() and self.current_y_raw is not None else self.current_y_sub
         self.plot_line.setData(self.current_x, y_display)
@@ -456,33 +426,3 @@ class AnalysisWindow(QMainWindow):
             QMessageBox.information(self, "Success", f"Fitting results saved to:\n{file_path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save fitting results:\n{e}")
-
-    # ---- pressure calculator ---------------------------------------------------
-    def open_pressure_calculator(self):
-        if self.radio_fit_off.isChecked():
-            QMessageBox.warning(self, "Fitting required", "Please activate peak fitting to calculate pressure.")
-            return
-        if self.current_unit is None:
-            QMessageBox.warning(self, "No spectrum loaded", "Load a spectrum first.")
-            return
-        if self.current_unit == "pixel":
-            QMessageBox.warning(
-                self, "Calibration required",
-                "This spectrum has no wavelength/Raman-shift calibration (pixel axis only); "
-                "pressure cannot be calculated from pixel positions."
-            )
-            return
-
-        unit = self.current_unit
-        if self.pressure_window is None:
-            self.pressure_window = PressureCalculatorWindow(self, mode=unit)
-        else:
-            self.pressure_window.update_mode(unit)
-
-        self.pressure_window.show()
-        self.pressure_window.raise_()
-        self.pressure_window.activateWindow()
-        if self.latest_fit_res is not None and self.latest_fit_res.get("peaks"):
-            self.pressure_window.set_fit_peaks(self.latest_fit_res["peaks"])
-        else:
-            self.pressure_window.set_fit_peak_count(self.combo_fit_peak_count.currentData())
