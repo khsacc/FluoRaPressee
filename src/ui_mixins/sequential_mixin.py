@@ -46,12 +46,17 @@ class SequentialMixin:
         self.lbl_seq_progress.setText(f"Progress: Acquired {self.seq_count} / {self.spin_max_num.value()}")
 
     def set_ui_enabled_during_seq(self, enabled):
+        self.action_hardware_config.setEnabled(enabled)
+
         self.btn_single.setEnabled(enabled)
         self.btn_commence.setEnabled(enabled)
         self.btn_terminate.setEnabled(enabled)
         self.btn_save_data.setEnabled(enabled)
 
         self.spin_acq_time.setEnabled(enabled)
+        self.spin_em_gain.setEnabled(
+            enabled and self.spin_em_gain.isVisible() and self._em_gain_available
+        )
         self.spin_accumulate.setEnabled(enabled)
         self.chk_cosmic_ray_removal.setEnabled(enabled)
         self.spin_spike_threshold.setEnabled(enabled and self.chk_cosmic_ray_removal.isChecked())
@@ -87,6 +92,9 @@ class SequentialMixin:
         self.radio_fit_on.setEnabled(enabled)
         self.radio_fit_off.setEnabled(enabled)
         self.combo_fit_func.setEnabled(enabled)
+        self.combo_fit_peak_count.setEnabled(enabled)
+        self.combo_peak_sort.setEnabled(enabled)
+        self.combo_baseline_model.setEnabled(enabled)
         self.spin_fit_start.setEnabled(enabled)
         self.spin_fit_end.setEnabled(enabled)
 
@@ -106,7 +114,7 @@ class SequentialMixin:
             self.lbl_seq_dir.setText(f"Dir: {display_path}")
             if not self.is_sequential_running:
                 self.btn_start_seq.setEnabled(True)
-                self.btn_start_seq.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+                self._set_button_style(self.btn_start_seq, self.BUTTON_STYLE_BLUE)
 
     def start_sequential(self):
         if not self.seq_dir:
@@ -119,9 +127,9 @@ class SequentialMixin:
         self._seq_fit_failed = False
 
         self.btn_start_seq.setEnabled(False)
-        self.btn_start_seq.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_start_seq, self.BUTTON_STYLE_BLUE)
         self.btn_stop_seq.setEnabled(True)
-        self.btn_stop_seq.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_stop_seq, self.BUTTON_STYLE_RED)
 
         self.seq_start_time_dt = datetime.now()
         self.seq_log_data = []
@@ -138,7 +146,9 @@ class SequentialMixin:
             func = self.combo_fit_func.currentText()
             fit_start = self.spin_fit_start.value()
             fit_end = self.spin_fit_end.value()
-            is_double = "Double" in func
+            peak_count = self.combo_fit_peak_count.currentData()
+            peak_sort = self.combo_peak_sort.currentText()
+            baseline_model = self.combo_baseline_model.currentText()
 
 
             try:
@@ -146,7 +156,8 @@ class SequentialMixin:
                 has_pressure = (self.pressure_window is not None and self.pressure_window.isVisible())
                 self.file_io.create_fitting_seq_summary(
                     self.seq_fitting_summary_path, func, fit_start, fit_end,
-                    is_double, unit, has_pressure
+                    peak_count, unit, has_pressure, peak_sort=peak_sort,
+                    baseline_model=baseline_model
                 )
             except Exception as e:
                 print(f"Failed to create summary file: {e}")
@@ -178,9 +189,9 @@ class SequentialMixin:
         self.seq_fitting_summary_path = None
 
         self.btn_start_seq.setEnabled(True)
-        self.btn_start_seq.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_start_seq, self.BUTTON_STYLE_BLUE)
         self.btn_stop_seq.setEnabled(False)
-        self.btn_stop_seq.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_stop_seq, self.BUTTON_STYLE_RED)
 
         self._unlock_ui("sequential")
 

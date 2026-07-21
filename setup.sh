@@ -19,4 +19,4 @@ echo "Installing dependencies..."
 .venv/bin/pip install -r requirements.txt
 
 echo
-echo "Setup complete. Use ./run_debug.sh to launch the app in debug mode."
+echo "Setup complete. Use ./FluoRaPressee_run_debug.sh to launch the app in debug mode."

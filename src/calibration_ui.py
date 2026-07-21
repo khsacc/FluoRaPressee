@@ -106,7 +106,14 @@ class CalibrationWindow(QDialog):
         self.btn_acquire.setDefault(False)
         self.btn_acquire.clicked.connect(self.acquire_spectrum)
         self.btn_acquire.setStyleSheet("font-weight: bold; padding: 5px;")
-        
+
+        self.btn_use_displayed = QPushButton("Use displayed data")
+        self.btn_use_displayed.setAutoDefault(False)
+        self.btn_use_displayed.setDefault(False)
+        self.btn_use_displayed.setToolTip("Use the spectrum currently shown in the main window's 1D plot instead of acquiring a new one.")
+        self.btn_use_displayed.clicked.connect(self.use_displayed_data)
+        self.btn_use_displayed.setStyleSheet("padding: 5px;")
+
         acq_time_layout = QHBoxLayout()
         acq_time_layout.addWidget(QLabel("Acquisition time (s):"))
         self.spin_acq_time = CustomDoubleSpinBox()
@@ -150,13 +157,13 @@ class CalibrationWindow(QDialog):
         helper_layout = QHBoxLayout()
         helper_layout.addWidget(QLabel("Reference data:"))
         
-        # --- 修正箇所: QComboBox の表示改善 ---
+        # --- QComboBox display improvements ---
         self.combo_reference = QComboBox()
-        # 1. ドロップダウンリスト内でテキストを折り返す設定
+        # 1. Enable word-wrap for text within the dropdown list
         view = QListView()
         view.setWordWrap(True)
         self.combo_reference.setView(view)
-        # 2. ボックス自体の幅を内容（選択テキスト）に合わせて自動調整
+        # 2. Auto-adjust the box width to fit its content (the selected text)
         self.combo_reference.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.combo_reference.setMinimumWidth(150)
         # ------------------------------------
@@ -208,6 +215,7 @@ class CalibrationWindow(QDialog):
         self.btn_save_apply.clicked.connect(self.save_and_apply)
         
         controls_layout.addWidget(self.btn_acquire)
+        controls_layout.addWidget(self.btn_use_displayed)
         controls_layout.addLayout(acq_time_layout)
         controls_layout.addLayout(unit_layout) 
         controls_layout.addLayout(find_peaks_layout)
@@ -313,7 +321,25 @@ class CalibrationWindow(QDialog):
             self.btn_acquire.setEnabled(True)
             self.btn_acquire.setText("Acquire a spectrum")
             self.find_peaks()
-            
+
+    def use_displayed_data(self):
+        # main_window.latest_1d_data already has background subtraction / X-flip applied, matching the on-screen plot.
+        main_window = self.parent()
+        if main_window is None or not hasattr(main_window, 'latest_1d_data'):
+            QMessageBox.warning(self, "Warning", "No main window data available.")
+            return
+        if self.is_acquiring:
+            QMessageBox.warning(self, "Warning", "An acquisition is already in progress.")
+            return
+        if (main_window.latest_1d_data is None
+                or not hasattr(main_window, 'stacked_widget')
+                or main_window.stacked_widget.currentIndex() != 0):
+            QMessageBox.warning(self, "Warning", "No 1D spectrum is currently displayed in the main window.")
+            return
+        self.current_spectrum = main_window.latest_1d_data.copy()
+        self.plot_scatter.setData(self.current_spectrum)
+        self.find_peaks()
+
     def find_peaks(self):
         if self.current_spectrum is None:
             return
@@ -477,8 +503,14 @@ class CalibrationWindow(QDialog):
             mode = "2D Image"
         else:
             mode = "1D Spectrum (Custom ROI)" if main_window.radio_1d_roi.isChecked() else "1D Spectrum (Full Range Binning)"
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Config", f"config_{grating}_{center_display:.1f}{unit_sym}_{date_str}.json", "JSON (*.json)")
+        default_filename = f"config_{grating}_{center_display:.1f}{unit_sym}_{date_str}.json"
+        last_calib_dir = getattr(main_window, '_last_calib_dir', "")
+        initial_path = os.path.join(last_calib_dir, default_filename) if last_calib_dir else default_filename
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Config", initial_path, "JSON (*.json)")
         if not file_path: return
+        if hasattr(main_window, '_save_local_cache'):
+            main_window._last_calib_dir = os.path.dirname(file_path)
+            main_window._save_local_cache("last_calib_dir", main_window._last_calib_dir)
         c0, c1, c2 = self.calib_coeffs
         data = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -508,7 +540,8 @@ class CalibrationWindow(QDialog):
                     self.calib_coeffs,
                     os.path.basename(file_path),
                     calib_unit="Raman shift" if is_raman_calib else "Wavelength",
-                    calib_laser_wl=calib_laser_wl
+                    calib_laser_wl=calib_laser_wl,
+                    axis_source="neon_polynomial",
                 )
             self.accept()
         except Exception as e:

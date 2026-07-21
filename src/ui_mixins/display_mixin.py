@@ -23,34 +23,54 @@ class DisplayMixin:
         if not is_on:
             self.chk_save_fitting.setChecked(False)
             self.fit_curve.clear()
+            self.fit_baseline_curve.clear()
             self.fit_curve_sub1.clear()
             self.fit_curve_sub2.clear()
             self.current_w_peak1 = None
             self.latest_fit_res = None
             self.latest_fit_func = None
+            if self.pressure_window is not None:
+                self.pressure_window.set_fit_peaks([])
         else:
-            if getattr(self, 'raw_1d_data', None) is not None:
-                x_data = self.get_x_axis(len(self.raw_1d_data))
-                min_x = np.min(x_data)
-                max_x = np.max(x_data)
-
-                curr_start = self.spin_fit_start.value()
-                curr_end = self.spin_fit_end.value()
-
-                if curr_start < min_x or curr_end > max_x:
-                    self.spin_fit_start.blockSignals(True)
-                    self.spin_fit_end.blockSignals(True)
-                    self.spin_fit_start.setValue(float(min_x))
-                    self.spin_fit_end.setValue(float(max_x))
-                    self.spin_fit_start.blockSignals(False)
-                    self.spin_fit_end.blockSignals(False)
+            self.sync_fit_range_to_spectrum()
 
             if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
                 self.update_display(is_new_data=False)
 
+    def sync_fit_range_to_spectrum(self, force=False):
+        """Recompute Range Start/Range End from the currently displayed spectrum's x-axis.
+
+        With force=False, only clamps when the current range falls outside the
+        new bounds (used when fitting is switched on). With force=True, always
+        resets to the full new bounds — used when the pixel-to-x-axis calibration
+        changes, since the previous range values are meaningless under the new mapping.
+        """
+        if getattr(self, 'raw_1d_data', None) is None:
+            return
+
+        x_data = self.get_x_axis(len(self.raw_1d_data))
+        min_x = np.min(x_data)
+        max_x = np.max(x_data)
+
+        curr_start = self.spin_fit_start.value()
+        curr_end = self.spin_fit_end.value()
+
+        if force or curr_start < min_x or curr_end > max_x:
+            self.spin_fit_start.blockSignals(True)
+            self.spin_fit_end.blockSignals(True)
+            self.spin_fit_start.setValue(float(min_x))
+            self.spin_fit_end.setValue(float(max_x))
+            self.spin_fit_start.blockSignals(False)
+            self.spin_fit_end.blockSignals(False)
+
     def on_fit_settings_changed(self):
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
             self.update_display(is_new_data=False)
+
+    def on_fit_peak_count_changed(self):
+        if self.pressure_window is not None:
+            self.pressure_window.set_fit_peak_count(self.combo_fit_peak_count.currentData(), reset_selection=True)
+        self.on_fit_settings_changed()
 
     def update_display(self, is_new_data=False, mode="1d"):
         if mode == "1d":
@@ -108,59 +128,64 @@ class DisplayMixin:
 
             if do_fit:
                 func = self.combo_fit_func.currentText()
+                peak_count = self.combo_fit_peak_count.currentData()
+                peak_sort_order = self.combo_peak_sort.currentData()
+                baseline_model = self.combo_baseline_model.currentData()
                 fit_start = self.spin_fit_start.value()
                 fit_end = self.spin_fit_end.value()
 
-                x_fit, y_fit, res = self.analyzer.fit_spectrum(x_data, disp_data, func, fit_start, fit_end)
+                x_fit, y_fit, res = self.analyzer.fit_spectrum(
+                    x_data, disp_data, func, fit_start, fit_end,
+                    peak_count=peak_count, peak_sort_order=peak_sort_order,
+                    baseline_model=baseline_model
+                )
 
                 if x_fit is not None:
                     self._seq_fit_failed = False
                     self.fit_curve.setData(x_fit, y_fit)
+                    self.fit_baseline_curve.setData(x_fit, res["y_baseline"])
 
-                    w_peak1 = res['Peak1'] if res.get('is_double') else res['Peak']
-                    w_err1 = res['Peak1_Err'] if res.get('is_double') else res['Peak_Err']
+                    first_peak = res["peaks"][0]
+                    w_peak1 = first_peak["position"]
+                    w_err1 = first_peak["position_err"]
 
                     self.current_w_peak1 = w_peak1
 
-                    if res.get("is_double"):
-                        if "y_fit1" in res and "y_fit2" in res:
-                            self.fit_curve_sub1.setData(x_fit, res["y_fit1"])
+                    if res.get("peak_count", 1) > 1 and "y_fit1" in res:
+                        self.fit_curve_sub1.setData(x_fit, res["y_fit1"])
+                        if "y_fit2" in res:
                             self.fit_curve_sub2.setData(x_fit, res["y_fit2"])
                         else:
-                            self.fit_curve_sub1.clear()
                             self.fit_curve_sub2.clear()
                     else:
                         self.fit_curve_sub1.clear()
                         self.fit_curve_sub2.clear()
 
-                    text = f"<span><b>Function:</b> {func}<br><br>"
+                    text = (
+                        f"<span><b>Function:</b> {func}<br>"
+                        f"<b>Fit Peaks:</b> {peak_count}<br>"
+                        f"<b>Sort peaks:</b> {self.combo_peak_sort.currentText()}<br>"
+                    )
+
+                    baseline = res["baseline"]
+                    baseline_text = baseline["requested"]
+                    if baseline["requested"] != baseline["selected"]:
+                        baseline_text += f" &rarr; {baseline['selected']}"
+                    text += f"<b>Baseline:</b> {baseline_text}<br><br>"
 
                     self.latest_fit_res = res.copy()
                     self.latest_fit_func = func
 
-                    if res.get("is_double"):
-                        w_peak2 = res['Peak2']
-                        w_err2 = res['Peak2_Err']
-
-                        text += f"<u>Peak 1 (Main)</u><br>"
-                        text += f" Pos: {w_peak1:.3f} ± {w_err1:.3f}<br>"
-                        text += f" Width: {res['Width1']:.3f} ± {res['Width1_Err']:.3f}<br><br>"
-                        text += f"<u>Peak 2 (Sub)</u><br>"
-                        text += f" Pos: {w_peak2:.3f} ± {w_err2:.3f}<br>"
-                        text += f" Width: {res['Width2']:.3f} ± {res['Width2_Err']:.3f}<br><br>"
-                    else:
-                        text += f"<u>Peak 1</u><br>"
-                        text += f" Pos: {w_peak1:.3f} ± {w_err1:.3f}<br>"
-                        text += f" Width: {res['Width']:.3f} ± {res['Width_Err']:.3f}<br><br>"
+                    for peak in res["peaks"]:
+                        i = peak["index"]
+                        text += f"<u>Peak {i}</u><br>"
+                        text += f" Pos: {peak['position']:.3f} ± {peak['position_err']:.3f}<br>"
+                        text += f" Width: {peak['width']:.3f} ± {peak['width_err']:.3f}<br><br>"
 
                     text += f"<b>R-value:</b><br> {res['R2']:.4f}</span>"
 
-
-                    is_double_fit = res.get("is_double")
-
-
                     if self.pressure_window is not None and self.pressure_window.isVisible():
-                        self.pressure_window.set_current_peak(w_peak1, w_err1)
+                        self.pressure_window.set_fit_peaks(res["peaks"])
                         p = self.pressure_window.current_pressure
                         p_err = self.pressure_window.current_pressure_err
                         if p is not None and p_err is not None:
@@ -176,11 +201,14 @@ class DisplayMixin:
                     self.fitting_text.setHtml(text)
                 else:
                     self.fit_curve.clear()
+                    self.fit_baseline_curve.clear()
                     self.fit_curve_sub1.clear()
                     self.fit_curve_sub2.clear()
                     self.current_w_peak1 = None
                     self.latest_fit_res = None
                     self.latest_fit_func = None
+                    if self.pressure_window is not None:
+                        self.pressure_window.set_fit_peaks([])
                     self.fitting_text.setHtml("<span>Fitting failed or out of range.</span>")
 
                     if getattr(self, 'is_sequential_running', False):
@@ -189,11 +217,14 @@ class DisplayMixin:
                         self.radio_fit_off.setChecked(True)
             else:
                 self.fit_curve.clear()
+                self.fit_baseline_curve.clear()
                 self.fit_curve_sub1.clear()
                 self.fit_curve_sub2.clear()
                 self.current_w_peak1 = None
                 self.latest_fit_res = None
                 self.latest_fit_func = None
+                if self.pressure_window is not None:
+                    self.pressure_window.set_fit_peaks([])
                 if self.radio_fit_on.isChecked():
                      self.fitting_text.setHtml("<span>Fitting failed. Paused for skipped frames.</span>")
                 else:
@@ -209,6 +240,11 @@ class DisplayMixin:
             self.stacked_widget.setCurrentIndex(1)
             self.image_view.setImage(disp_data.T)
 
+            h, w = disp_data.shape
+            view = self.image_view.getView()
+            vb = view.vb if hasattr(view, 'vb') else view
+            vb.setLimits(xMin=0, xMax=w, yMin=0, yMax=h)
+
         if getattr(self, 'is_sequential_running', False) and is_new_data:
             if self.current_skip_count >= self.spin_skip_frames.value():
                 now_dt = datetime.now()
@@ -222,7 +258,7 @@ class DisplayMixin:
                     self.seq_log_data.append([filename, now_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]])
 
                     if self.radio_fit_on.isChecked() and getattr(self, 'seq_fitting_summary_path', None):
-                        is_double = "Double" in self.combo_fit_func.currentText()
+                        peak_count = self.combo_fit_peak_count.currentData()
                         pw = self.pressure_window
                         pressure_info = None
                         if pw is not None and pw.isVisible():
@@ -233,7 +269,7 @@ class DisplayMixin:
                         try:
                             self.file_io.append_fitting_seq_row(
                                 self.seq_fitting_summary_path, filename, timestamp_str,
-                                self.latest_fit_res, is_double, pressure_info
+                                self.latest_fit_res, peak_count, pressure_info
                             )
                         except Exception as e:
                             print(f"Failed to write summary: {e}")

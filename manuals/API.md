@@ -130,12 +130,18 @@ X-API-Key: <API Server パネルに表示されているキー>
 **追加フィールド:**
 ```json
 {
-  "fit_function": "Double pseudo Voigt",
+  "fit_function": "Pseudo Voigt",
+  "fit_peak_count": 2,
+  "peak_sort_order": "x_desc",
+  "baseline_model": "constant",
   "fit_range": {"start": 690.0, "end": 700.0}
 }
 ```
-- `fit_function`: `"Gauss"`, `"Lorentz"`, `"Pseudo Voigt"`, `"Double Gauss"`, `"Double Lorentz"`,
-  `"Double pseudo Voigt"` のいずれか。
+- `fit_function`: `"Gauss"`, `"Lorentz"`, `"Pseudo Voigt"`, `"Moffat"` のいずれか。
+- `fit_peak_count`: フィットするピーク数。1～5、既定値は2。
+- `peak_sort_order`: `"x_desc"`, `"x_asc"`, `"intensity_desc"`, `"intensity_asc"` のいずれか。
+- `baseline_model`: `"constant"`, `"linear"`, `"quadratic"`, `"auto_polynomial"` のいずれか。
+  省略時は `"constant"`。`auto_polynomial` はBICを用いて0～2次から保守的に選択する。
 - `fit_range` は省略可(省略時は取得データ全域でフィット)。
 - 2Dイメージモードで取得した場合、フィットは意味を持たないため `400 Bad Request` を返す。
 
@@ -145,12 +151,18 @@ X-API-Key: <API Server パネルに表示されているキー>
   "success": true,
   "x_fit": [690.0, 690.5, ...],
   "y_fit": [1204.5, 1198.2, ...],
-  "fit": {
-    "is_double": true,
-    "Peak1": 694.32, "Peak1_Err": 0.01, "Width1": 1.2, "Width1_Err": 0.05,
-    "Peak2": 692.80, "Peak2_Err": 0.02, "Width2": 1.1, "Width2_Err": 0.06,
-    "R2": 0.998
-  }
+    "fit": {
+      "is_double": true,
+      "Peak1": 694.32, "Peak1_Err": 0.01, "Width1": 1.2, "Width1_Err": 0.05,
+      "Peak2": 692.80, "Peak2_Err": 0.02, "Width2": 1.1, "Width2_Err": 0.06,
+      "baseline": {
+        "requested": "Constant", "selected": "Constant", "degree": 0,
+        "basis": "chebyshev", "coefficients": [120.4],
+        "coefficient_errors": [2.1], "x_min": 690.0, "x_max": 700.0
+      },
+      "y_baseline": [120.4, 120.4, ...],
+      "R2": 0.998
+    }
 }
 ```
 フィットが失敗した場合(データ点不足・範囲外など)は `"success": false`, `"fit": null` になる
@@ -163,35 +175,41 @@ X-API-Key: <API Server パネルに表示されているキー>
 **追加フィールド:**
 ```json
 {
-  "sensor": "Ruby",
-  "pressure_scale": "Shen et al. 2020",
+  "sensor": "ruby",
+  "pressure_scale": "ruby_shen_2020",
   "zero_pressure_peak": 694.30,
   "temperature_correction": {
     "enabled": true,
-    "scale": "Kobayashi et al. unpublished",
+    "scale": "ruby_kobayashi_unpublished",
     "current_t": 300.0,
     "t0": 298.15,
     "zero_pressure_peak_at_t0": 694.30
   }
 }
 ```
-- `sensor`/`pressure_scale`: GUIの圧力計算ウィンドウと同じセンサー名・スケール名の文字列
-  (`src/pressureCalc.py` 参照)。
+- `sensor`/`pressure_scale`: `src/pressureCalc.py` の `SENSORS` / `PRESSURE_SCALES` で定義された key。
 - `zero_pressure_peak`: 温度補正を使わない場合のゼロ圧力ピーク位置。
 - `temperature_correction` は省略可。`enabled: false`、または省略した場合は温度補正無しで
-  `zero_pressure_peak` がそのまま使われる。`enabled: true` の場合のみ、指定した温度スケールで
+  `zero_pressure_peak` がそのまま使われる。`enabled: true` の場合のみ、`scale` に
+  `TEMPERATURE_SCALES` の key を指定し、その温度スケールで
   ゼロ圧力ピークを補正してから圧力を計算する。温度が有効範囲外でも計算自体は続行し、
   `temperature_warning` に警告メッセージが入る。
+- 圧力スケール側で `T0` が固定されている場合は、リクエスト中の `t0` より
+  `src/pressureCalc.py` の定義値が優先される。
 
 **レスポンス**: `/acquire/fit` のフィールドに `pressure_gpa`, `pressure_err_gpa`,
-`temperature_warning` を追加。
+`zero_pressure_peak_at_current_t`, `temperature_warning` を追加。
 ```json
 "pressure_gpa": 16.91,
 "pressure_err_gpa": 8.26,
+"zero_pressure_peak_at_current_t": 694.312,
 "temperature_warning": null
 ```
-フィットが失敗した場合は `pressure_gpa`/`pressure_err_gpa`/`temperature_warning` はすべて
-`null` になる。ダブルピークフィットの場合、圧力計算にはPeak1(較正済みx軸で値が小さい方の
+`zero_pressure_peak_at_current_t` は、現在温度でのゼロ圧ピークを明示的に計算できる
+スケールでのみ値が入り、そうでない場合は `null` になる。
+フィットが失敗した場合は `pressure_gpa`/`pressure_err_gpa`/
+`zero_pressure_peak_at_current_t`/`temperature_warning` はすべて `null` になる。
+ダブルピークフィットの場合、圧力計算にはPeak1(較正済みx軸で値が小さい方の
 主ピーク)が使われる。
 
 ## エラーコード一覧
@@ -227,9 +245,10 @@ curl -X POST -H "X-API-Key: <キー>" -H "Content-Type: application/json" \
   -d '{
         "exposure_time_s": 0.5, "accumulations": 3,
         "dark": {"mode": "reuse_loaded"},
-        "fit_function": "Double pseudo Voigt",
+        "fit_function": "Pseudo Voigt", "fit_peak_count": 2,
+        "baseline_model": "constant",
         "fit_range": {"start": 690, "end": 700},
-        "sensor": "Ruby", "pressure_scale": "Shen et al. 2020",
+        "sensor": "ruby", "pressure_scale": "ruby_shen_2020",
         "zero_pressure_peak": 694.30
       }' \
   http://<IP>:8765/acquire/pressure

@@ -5,9 +5,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 FluoraPressée is a PyQt5 desktop GUI for controlling Andor/Princeton Instruments spectrometer+camera
-rigs and analyzing the resulting spectra for high-pressure diamond-anvil-cell experiments (ruby
+rigs and analyzing the resulting spectra for high-pressure experiments (ruby
 fluorescence pressure scale, Raman shift, etc.). It is a lab instrument-control tool, not a library or
-service — there is no test suite, package manifest, linter, or CI in this repo.
+service. 
 
 ## Running the app
 
@@ -25,6 +25,8 @@ spectrometer control), but `--debug` mode runs fine cross-platform for UI develo
 
 There are no automated tests, build step, or lint config in this repo. Verify changes by running the
 app in `--debug` mode and exercising the relevant UI flow.
+
+It is not required to verify screenshots once you made changes to GUI. If something is needed to be checked, ask the user. 
 
 ## Architecture
 
@@ -44,6 +46,12 @@ background data, sequential-save state, fit results, etc.) lives in one of the M
 - `acquisition_mixin.py` (`AcquisitionMixin`): camera thread interaction — single-shot/continuous measurement, exposure/temperature/ROI, accumulation and frame handling.
 - `display_mixin.py` (`DisplayMixin`): plot/image rendering, peak fitting invocation and result display, mouse-hover readout.
 - `pressure_dialog_mixin.py` (`PressureDialogMixin`): opening/syncing the pressure calculator window.
+
+The live GUI and hardware-free Analysis Mode both use
+`src/fitting_config_widget.py` (`FittingConfigWidget`) for the complete fitting-settings panel;
+keep control choices, labels, ranges, and defaults in that shared widget rather than duplicating them
+in either window. `src/analysis_ui.py` embeds the existing `PressureCalculatorWindow` directly in its
+right-hand panel (`embedded=True`), while the live GUI continues to use the same class as a dialog.
 
 Mixins are plain Python classes (no `QObject` base) that assume they're mixed into `SpectrometerGUI`,
 so they freely call `self.xxx` across mixin boundaries — all methods end up on the same instance at
@@ -71,7 +79,8 @@ interface and extending these two factory functions.
 
 **Analysis/calibration/pressure modules** are plain Python classes with no PyQt dependency, so they're
 usable standalone or from scripts:
-- `src/analysis.py` (`DataAnalyzer`): single/double peak fitting (Gauss, Lorentz, Pseudo-Voigt).
+- `src/analysis.py` (`DataAnalyzer`): 1-5 peak fitting (Gauss, Lorentz, Pseudo-Voigt, Moffat)
+  with Constant/Linear/Quadratic baselines and BIC-based Auto Polynomial selection.
 - `src/calibration.py` (`CalibrationCore`): pixel→wavelength/Raman-shift polynomial calibration from
   detected reference peaks; `src/calibration_ui.py` wraps it in a `QDialog`.
 - `src/calibration_helper.py` (`ReferenceHelperWindow`): reference neon-line lookup dialog backed by

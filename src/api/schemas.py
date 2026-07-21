@@ -51,10 +51,10 @@ class FitRange(BaseModel):
 
 
 class AcquireFitRequest(AcquireRequest):
-    fit_function: Literal[
-        "Gauss", "Lorentz", "Pseudo Voigt",
-        "Double Gauss", "Double Lorentz", "Double pseudo Voigt",
-    ]
+    fit_function: Literal["Pseudo Voigt", "Moffat", "Gauss", "Lorentz"]
+    fit_peak_count: int = Field(default=2, ge=1, le=5)
+    peak_sort_order: Literal["x_desc", "x_asc", "intensity_desc", "intensity_asc"] = "x_desc"
+    baseline_model: Literal["constant", "linear", "quadratic", "auto_polynomial"] = "constant"
     fit_range: FitRange | None = None
 
 
@@ -70,7 +70,14 @@ class AcquirePressureRequest(AcquireFitRequest):
     sensor: str
     pressure_scale: str
     zero_pressure_peak: float
+    pressure_peak_index: int = Field(default=1, ge=1, le=5)
     temperature_correction: TemperatureCorrection | None = None
+
+    @model_validator(mode="after")
+    def _pressure_peak_must_exist_in_fit(self):
+        if self.pressure_peak_index > self.fit_peak_count:
+            raise ValueError("pressure_peak_index must be less than or equal to fit_peak_count")
+        return self
 
 
 # ----------------------------------------------------------------------
@@ -105,6 +112,7 @@ class AcquireFitResponse(AcquireResponse):
 class AcquirePressureResponse(AcquireFitResponse):
     pressure_gpa: float | None = None
     pressure_err_gpa: float | None = None
+    zero_pressure_peak_at_current_t: float | None = None
     temperature_warning: str | None = None
 
 

@@ -12,16 +12,16 @@ class ReferenceHelperWindow(QDialog):
         material = json_data.get("material", "Reference")
         approx = json_data.get("approximate_range", "Unknown")
 
-        # タイトルの単位も動的に変更
+        # Switch the unit shown in the window title dynamically as well
         if is_raman:
-            # ラマンシフトへ変換 (簡易計算)
+            # Convert to Raman shift (approximate calculation)
             approx_val = float(approx) if approx.replace('.','',1).isdigit() else 0.0
             approx_raman = CalibrationCore.nm_to_raman(approx_val, laser_wl)
             self.setWindowTitle(f"Guide: {material} around {approx_raman:.1f} cm⁻¹")
         else:
             self.setWindowTitle(f"Guide: {material} around {approx} nm")
 
-        self.resize(800, 550) # 注意書き用に少し高さを広げる
+        self.resize(800, 550) # A bit taller to leave room for the disclaimer text
 
         self.json_data = json_data
         self.is_raman = is_raman
@@ -57,14 +57,14 @@ class ReferenceHelperWindow(QDialog):
             
         self.plot_widget.setLabel('left', 'Intensity')
         
-        # 制限の設定
+        # Set the pan/zoom limits of the plot
         x_min, x_max = np.min(x_plot), np.max(x_plot)
         y_min, y_max = np.min(y_int), np.max(y_int)
         x_margin = (x_max - x_min) * 0.05
         y_margin = (y_max - y_min) * 0.1
         self.plot_widget.setLimits(xMin=x_min-x_margin, xMax=x_max+x_margin, yMin=y_min-y_margin, yMax=y_max+y_margin)
         
-        # プロット
+        # Plot the spectrum
         self.plot_widget.plot(x_plot, y_int, pen=pg.mkPen('k', width=1.5))
         
         ref_peaks = self.json_data.get("reference_peaks", [])
@@ -72,21 +72,21 @@ class ReferenceHelperWindow(QDialog):
         
         for peak in ref_peaks:
             calib_nm = peak.get("calibrated")
-            lit_val = peak.get("literature") # JSON内では通常nm
+            lit_val = peak.get("literature") # Usually nm in the JSON
             
             if calib_nm is None or lit_val is None: 
                 continue
             
             pos_x = self.nm_to_raman(calib_nm) if self.is_raman else calib_nm
             
-            # 縦線（半透明）
+            # Vertical marker line (semi-transparent)
             transparent_red_pen = pg.mkPen(color=(255, 0, 0, 100), style=Qt.PenStyle.DashLine)
             line = pg.InfiniteLine(pos=pos_x, angle=90, pen=transparent_red_pen)
             self.plot_widget.addItem(line)
             
-            # --- 変更: ラマンモード時は文献値も変換して表示 ---
+            # --- In Raman mode, also convert the literature value before displaying it ---
             if self.is_raman:
-                # 変換後の値（小数点2桁程度で表示）
+                # Converted value (shown to about 2 decimal places)
                 label_text = f"{self.nm_to_raman(float(lit_val)):.2f}"
             else:
                 label_text = str(lit_val)

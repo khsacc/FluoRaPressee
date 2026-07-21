@@ -1,7 +1,9 @@
+import math
 import numpy as np
 from PyQt5.QtWidgets import QMessageBox
 
 from src.accumulation import AccumulationCombiner
+from src.measurement_metadata import capture_hardware_state
 
 # Cap on how many raw frames we buffer in memory for spike rejection (list of
 # individual frames instead of an O(1) running sum). ~16MB worst case for a
@@ -9,6 +11,13 @@ from src.accumulation import AccumulationCombiner
 # legacy plain-sum path (no rejection) rather than risking unbounded memory,
 # since spin_accumulate allows values up to 99999.
 MAX_BUFFERED_FRAMES = 2000
+
+# Detector temperature polling/stabilisation (used only for the "unsupported" status -
+# i.e. hardware with no Locked/Unlocked/Faulted enum, see on_temperature_read()).
+_TEMP_STABLE_WINDOW = 6          # number of recent readings considered
+_TEMP_STABLE_SPREAD_C = 0.3      # max peak-to-peak spread over that window, in °C
+_TEMP_TARGET_TOLERANCE_C = 1.0   # max distance from the accepted set point, in °C
+_TEMP_POLL_INTERVAL_MS = 5000
 
 
 class AcquisitionMixin:
@@ -31,9 +40,9 @@ class AcquisitionMixin:
         self.current_accum_count = 0
         self.btn_single.setEnabled(False)
         self.btn_commence.setEnabled(False)
-        self.btn_commence.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_commence, self.BUTTON_STYLE_GREEN)
         self.btn_terminate.setEnabled(True)
-        self.btn_terminate.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_terminate, self.BUTTON_STYLE_RED)
         self.thread.start_measuring()
 
     def get_x_axis(self, num_pixels):
@@ -75,27 +84,220 @@ class AcquisitionMixin:
         self.spin_acq_time.setEnabled(False)
         self.thread.update_exposure(val)
 
+    def on_exposure_applied(self, actual_exposure, success, error):
+        """Reflect the exposure accepted by Andor, including SDK rounding."""
+        self.spin_acq_time.blockSignals(True)
+        self.spin_acq_time.setValue(actual_exposure)
+        self.spin_acq_time.blockSignals(False)
+        if success:
+            self.status_label.setText(f"Exposure set to {actual_exposure:g} s")
+
+    def on_roi_applied(self, applied):
+        """Cache and display the ROI/read mode actually accepted by Andor."""
+        self._last_applied_camera_roi = dict(applied)
+        if applied.get("mode") == "1d_roi":
+            self.spin_vstart.blockSignals(True)
+            self.spin_vend.blockSignals(True)
+            self.spin_vstart.setValue(applied["vertical_start"])
+            self.spin_vend.setValue(applied["vertical_end"])
+            self.spin_vstart.blockSignals(False)
+            self.spin_vend.blockSignals(False)
+
+    def on_em_gain_info_ready(self, exists, available, minimum, maximum, increment, current):
+        """Render the EM Gain row only when PICam says the parameter exists."""
+        self.label_em_gain.setVisible(exists)
+        self.spin_em_gain.setVisible(exists)
+        self._em_gain_available = bool(exists and available)
+        if not exists:
+            self.spin_em_gain.setEnabled(False)
+            return
+
+        self.spin_em_gain.blockSignals(True)
+        if available:
+            self.spin_em_gain.setRange(minimum, maximum)
+            self.spin_em_gain.setSingleStep(max(1, increment))
+            self.spin_em_gain.setValue(current)
+            self.spin_em_gain.setToolTip(
+                "Electron-multiplication gain reported by the connected camera.\n"
+                "Changing this value selects the Electron Multiplied ADC quality."
+            )
+        else:
+            self.spin_em_gain.setToolTip(
+                "The camera has an EM Gain parameter, but it is not available "
+                "with the current camera/readout settings."
+            )
+        self.spin_em_gain.blockSignals(False)
+        self.spin_em_gain.setEnabled(
+            self._em_gain_available and not self._ui_lock_reasons
+        )
+
+    def on_em_gain_changed(self):
+        if not self._em_gain_available:
+            return
+        self.spin_em_gain.setEnabled(False)
+        self.thread.update_em_gain(self.spin_em_gain.value())
+
+    def on_em_gain_set_finished(self, actual_gain):
+        self.spin_em_gain.blockSignals(True)
+        self.spin_em_gain.setValue(actual_gain)
+        self.spin_em_gain.blockSignals(False)
+        self.spin_em_gain.setEnabled(
+            self._em_gain_available and not self._ui_lock_reasons
+        )
+
     def on_temperature_changed(self):
         val = self.spin_cooler_temp.value()
         self.spin_cooler_temp.setEnabled(False)
         self.thread.update_temperature(val)
 
+    def on_temperature_set_finished(self, actual_temperature):
+        """Reflect the set point that the camera accepted, not only the requested value."""
+        self.spin_cooler_temp.blockSignals(True)
+        self.spin_cooler_temp.setValue(round(actual_temperature))
+        self.spin_cooler_temp.blockSignals(False)
+        self.spin_cooler_temp.setEnabled(not self._ui_lock_reasons)
+
+        # A new set point invalidates any previous "Stabilised" verdict: drop the
+        # spread history and re-check immediately instead of leaving a stale
+        # "Stabilised" label on screen for up to one more poll interval. This is
+        # also the only thing (besides on_temperature_capability_ready) allowed to
+        # re-enable auto polling once it has stopped - see on_temperature_read().
+        #
+        # Gated on _temp_control_available (a plain flag set by
+        # on_temperature_capability_ready), not on label_cooler_target.isVisible():
+        # QWidget.isVisible() reflects actual on-screen visibility, which requires the
+        # whole window to be shown - it can read False for a minimized/not-yet-shown
+        # window even though the widget's own setVisible(True) was already applied.
+        self._temp_accepted_setpoint = actual_temperature
+        self._temp_history = []
+        if self._temp_control_available:
+            self._temp_auto_poll_enabled = True
+            self.label_current_temp.setText("Reading...")
+            self._poll_temperature()
+
+    def on_temperature_capability_ready(self, has_control, has_status, temp_min, temp_max):
+        """Show/hide the temperature GUI based on whether this camera actually has
+        temperature control (mirrors on_em_gain_info_ready's exists-driven show/hide)."""
+        for widget in (self.label_cooler_target, self.spin_cooler_temp,
+                       self.btn_read_temp, self.label_current_temp):
+            widget.setVisible(has_control)
+
+        self._temp_control_available = has_control
+        if not has_control:
+            self._temp_auto_poll_enabled = False
+            self.temp_poll_timer.stop()
+            return
+
+        # ceil()/floor() (not round()) so the spinbox's integer bounds never fall outside
+        # the camera-reported float range - rounding outward could let the user pick a
+        # value the hardware would then reject or silently clamp further.
+        self.spin_cooler_temp.blockSignals(True)
+        self.spin_cooler_temp.setRange(math.ceil(temp_min), math.floor(temp_max))
+        self.spin_cooler_temp.blockSignals(False)
+        self.spin_cooler_temp.setToolTip(
+            f"Settable range for this camera: {temp_min:.1f} to {temp_max:.1f} °C"
+        )
+
+        self._temp_status_supported = has_status
+        self._temp_history = []
+        self._temp_auto_poll_enabled = True
+        self.temp_poll_timer.start(_TEMP_POLL_INTERVAL_MS)
+
+    def _poll_temperature(self):
+        """Timer-driven read: no "Reading..." flash, to avoid flicker every 5s."""
+        self.thread.read_temperature()
+
     def request_temperature_read(self):
         self.label_current_temp.setText("Reading...")
         self.thread.read_temperature()
 
-    def on_temperature_read(self, temp):
+    def _check_temp_stabilised_by_spread(self, temp):
+        """Fallback stabilisation check for hardware with no Locked/Unlocked/Faulted
+        enum (status == "unsupported"): recent readings must both be tightly clustered
+        AND close to the accepted set point, so a cooler that plateaus far from target
+        is not mistaken for "stabilised" just because it stopped drifting."""
+        self._temp_history.append(temp)
+        if len(self._temp_history) > _TEMP_STABLE_WINDOW:
+            self._temp_history.pop(0)
+        if len(self._temp_history) < _TEMP_STABLE_WINDOW:
+            return False
+        spread = max(self._temp_history) - min(self._temp_history)
+        if spread > _TEMP_STABLE_SPREAD_C:
+            return False
+        if self._temp_accepted_setpoint is None:
+            return False
+        return abs(temp - self._temp_accepted_setpoint) <= _TEMP_TARGET_TOLERANCE_C
+
+    def _restart_temp_poll_timer_if_enabled(self):
+        """Resume 5s polling, but only while auto polling is actually enabled.
+
+        Once a Locked/Stabilised verdict disables auto polling, a manual
+        "Read current temperature" click must never silently re-enable it, no
+        matter what status comes back - only a fresh set point (see
+        on_temperature_set_finished) or a reconnect is allowed to do that.
+        """
+        if self._temp_auto_poll_enabled:
+            self.temp_poll_timer.start()
+
+    def on_temperature_read(self, temp, status):
+        """Render the latest reading and decide whether polling continues.
+
+        Timer start/stop for the "still settling" cases funnels through
+        _restart_temp_poll_timer_if_enabled() regardless of whether this read was
+        triggered by the timer or by the manual button, so the two trigger paths
+        can never leave the timer running when auto polling was already disabled.
+        """
+        self._last_temperature_status = status
         if temp == -999.0:
             self.label_current_temp.setText("Error")
+            self._restart_temp_poll_timer_if_enabled()
+            return
+        self._last_temperature_c = float(temp)
+
+        if status == "unsupported":
+            # No status enum on this hardware: infer stabilisation from spread +
+            # proximity to the set point instead of trusting a reported status.
+            stabilised = self._check_temp_stabilised_by_spread(temp)
+            suffix = " Stabilised" if stabilised else ""
+            self.label_current_temp.setText(f"{temp:.1f} °C{suffix}")
+            if stabilised:
+                self._temp_auto_poll_enabled = False
+                self.temp_poll_timer.stop()
+            else:
+                self._restart_temp_poll_timer_if_enabled()
+            return
+
+        if status == "locked":
+            self.label_current_temp.setText(f"{temp:.1f} °C Stabilised")
+            self._temp_auto_poll_enabled = False
+            self.temp_poll_timer.stop()
+        elif status == "faulted":
+            self.label_current_temp.setText(f"{temp:.1f} °C (Cooling Fault)")
+            self._restart_temp_poll_timer_if_enabled()
+        elif status == "drifted":
+            # Was previously locked/stabilised and has since moved off the set point
+            # (Andor SDK2 DRV_TEMP_DRIFT) - worth calling out distinctly rather than
+            # showing a plain reading that looks identical to "still converging".
+            self.label_current_temp.setText(f"{temp:.1f} °C (Drifted)")
+            self._restart_temp_poll_timer_if_enabled()
+        elif status == "off":
+            self.label_current_temp.setText(f"{temp:.1f} °C (Cooler Off)")
+            self._restart_temp_poll_timer_if_enabled()
         else:
+            # "unlocked", or "unknown" (status-capable hardware whose status read
+            # failed just this once) - neither is a settled state, so keep polling.
+            # "unknown" deliberately does NOT fall through to the spread-based
+            # fallback above: a transient status read failure must never be
+            # mistaken for "Stabilised" when the camera could actually be Faulted.
             self.label_current_temp.setText(f"{temp:.1f} °C")
+            self._restart_temp_poll_timer_if_enabled()
 
     def on_camera_initialized(self):
         self.init_dialog.accept()
         self.centralWidget().setEnabled(True)
 
         self.btn_commence.setEnabled(True)
-        self.btn_commence.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_commence, self.BUTTON_STYLE_GREEN)
         self.btn_single.setEnabled(True)
 
         self.status_label.setText("Camera Ready")
@@ -105,6 +307,37 @@ class AcquisitionMixin:
 
         self.radio_2d.setText(f"2D Image View ({self.thread.det_width}x{self.thread.det_height})")
         self.apply_roi_settings()
+
+    def on_camera_identity_ready(self, model, serial_number):
+        """CameraThread reports the connected camera's model/serial once after connecting;
+        cross-check it against spectrometerConfig.json's recorded identity (see ConfigMixin)."""
+        self._camera_identity = {"model": model or None, "serial_number": serial_number or None}
+        self.check_and_record_hardware_identity("camera", model, serial_number)
+
+    def on_hardware_error(self, message):
+        self.status_label.setText(f"Camera error: {message}")
+        QMessageBox.warning(self, "Camera Error", message)
+
+    def on_camera_init_failed(self, reason):
+        self.init_dialog.reject()
+        self.centralWidget().setEnabled(True)
+
+        self.btn_commence.setEnabled(False)
+        self.btn_single.setEnabled(False)
+
+        # temperature_capability_ready can fire (and start the poll timer) before a
+        # later init step fails, since capability reporting happens partway through
+        # the same try block as the rest of connect (see camera_princeton.py's
+        # run()). Stop it defensively so it doesn't keep sending read requests to a
+        # thread whose run() has already returned.
+        self._temp_auto_poll_enabled = False
+        self.temp_poll_timer.stop()
+
+        self.status_label.setText("Camera initialization failed")
+        QMessageBox.critical(
+            self, "Camera Initialization Failed",
+            f"Failed to initialize the camera:\n\n{reason}"
+        )
 
     def apply_roi_settings(self):
         is_custom_roi = self.radio_1d_roi.isChecked()
@@ -140,17 +373,17 @@ class AcquisitionMixin:
         self.current_accum_count = 0
         self.btn_single.setEnabled(False)
         self.btn_commence.setEnabled(False)
-        self.btn_commence.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_commence, self.BUTTON_STYLE_GREEN)
         self.btn_terminate.setEnabled(True)
-        self.btn_terminate.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_terminate, self.BUTTON_STYLE_RED)
         self.thread.start_measuring()
 
     def stop_measurement(self):
         self.btn_single.setEnabled(True)
         self.btn_commence.setEnabled(True)
-        self.btn_commence.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_commence, self.BUTTON_STYLE_GREEN)
         self.btn_terminate.setEnabled(False)
-        self.btn_terminate.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_terminate, self.BUTTON_STYLE_RED)
         self.lbl_accum_status.setVisible(False)
         self.thread.stop_measuring()
         self._release_acquisition_gate()
@@ -255,6 +488,8 @@ class AcquisitionMixin:
                 final_data = self.accumulated_data.copy()
                 self.accumulated_data = None
 
+            self._latest_hardware_capture = capture_hardware_state(self, target_accum)
+            self._hardware_capture_by_mode[mode] = self._latest_hardware_capture
             self._process_completed_data(mode, final_data)
 
     def _process_completed_data(self, mode, data):

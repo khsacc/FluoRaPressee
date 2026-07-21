@@ -1,7 +1,6 @@
 import secrets
 import socket
 import threading
-import time
 from concurrent.futures import Future
 from datetime import datetime
 
@@ -48,8 +47,15 @@ class ApiMixin:
         actual_accum = accumulations if accumulations is not None else self.spin_accumulate.value()
 
         if exposure_s is not None:
-            self.thread.update_exposure(exposure_s)
-            time.sleep(0.1)  # let the camera thread pick up the new exposure, as acquire_single_image() does
+            # Block until the camera thread has actually pushed the new exposure to
+            # hardware rather than hoping a fixed sleep was long enough - if the thread
+            # is mid-snap() on a previous long exposure, a flat 0.1s sleep can elapse
+            # before it's picked up, and take_single_spectrum() below would then measure
+            # with the stale exposure still on the hardware.
+            wait_timeout = self.thread.current_exposure + 15
+            seq = self.thread.update_exposure(exposure_s)
+            if not self.thread.wait_for_exposure_applied(seq, timeout=wait_timeout):
+                print("Warning: timed out waiting for the new exposure to reach hardware before API acquisition")
 
         if accumulations is not None:
             self._active_target_accum = accumulations
@@ -179,14 +185,17 @@ class ApiMixin:
     # Stateless computation (no GUI thread / widget dependency at all).
     # ------------------------------------------------------------------
 
-    def api_fit(self, x, y, fit_function, fit_start=None, fit_end=None):
+    def api_fit(self, x, y, fit_function, fit_start=None, fit_end=None,
+                fit_peak_count=2, peak_sort_order="x_desc", baseline_model="constant"):
         """Fit a spectrum using DataAnalyzer directly - no GuiBridge needed,
         since DataAnalyzer.fit_spectrum() is Qt-independent. Deliberately does
         not touch combo_fit_func/spin_fit_start/spin_fit_end so a concurrent
         API request never disturbs the operator's own fit display settings.
         """
         x_fit, y_fit_curve, res = self.analyzer.fit_spectrum(
-            np.asarray(x), np.asarray(y), fit_function, fit_start, fit_end
+            np.asarray(x), np.asarray(y), fit_function, fit_start, fit_end,
+            peak_count=fit_peak_count, peak_sort_order=peak_sort_order,
+            baseline_model=baseline_model
         )
         if res is None:
             return {"success": False, "x_fit": None, "y_fit": None, "fit": None}
@@ -194,46 +203,65 @@ class ApiMixin:
 
     def api_pressure(self, peak, peak_err, sensor, pressure_scale, zero_pressure_peak,
                       temperature_correction=None):
-        """Mirrors PressureCalculatorWindow.calculate() (src/pressureCalc_ui.py)
-        exactly, without any GUI widget dependency: PressureCalculator.calculate()
-        takes lam0_at_t0 regardless of whether temperature correction is enabled
-        (the GUI always forwards spin_lam0_t0.value() for it), so
-        `zero_pressure_peak_at_t0` is read from temperature_correction
-        unconditionally, not only when enabled=True. Only the lam0-correction and
-        temperature-range warning are gated on `enabled`, matching the GUI's
-        radio_on.isChecked() branches. When temperature_correction is omitted
-        entirely, lam0_at_t0 is left as None so PressureCalculator.calculate()
-        falls back to treating it as equal to lam0 (its own default behaviour).
+        """Calculate pressure using PressureCalculator's internal keys.
+
+        `sensor`, `pressure_scale`, and `temperature_correction["scale"]` are
+        backend keys such as "ruby", "ruby_shen_2020", and
+        "ruby_kobayashi_unpublished", not GUI labels.
+
+        This mirrors PressureCalculatorWindow.calculate() without any widget
+        dependency. Temperature correction is performed inside
+        PressureCalculator.calculate(); this method only gathers request values
+        and formats the API response.
         """
-        lam0 = zero_pressure_peak
-        lam0_at_t0 = None
+        zero_peak_at_t0 = None
         current_t = 298.15
         t0 = 298.15
+        t_scale = None
+        temperature_enabled = False
         temperature_warning = None
 
         if temperature_correction is not None:
             current_t = temperature_correction.get("current_t", current_t)
             t0 = temperature_correction.get("t0", t0)
-            lam0_at_t0 = temperature_correction.get("zero_pressure_peak_at_t0", zero_pressure_peak)
+            zero_peak_at_t0 = temperature_correction.get("zero_pressure_peak_at_t0", zero_pressure_peak)
+            temperature_enabled = temperature_correction.get("enabled", False)
 
-            if temperature_correction.get("enabled", False):
+            if temperature_enabled:
                 t_scale = temperature_correction.get("scale")
-                is_valid, rng = PressureCalculator.is_temp_in_range(sensor=sensor, t_scale=t_scale, temp=current_t)
+                is_valid, rng = PressureCalculator.is_temp_in_range(
+                    sensor=sensor, p_scale=pressure_scale, t_scale=t_scale, temp=current_t
+                )
                 if not is_valid and rng[0] is not None:
+                    warning_scale = (
+                        pressure_scale
+                        if PressureCalculator.pressure_scale_requires_temperature(
+                            sensor=sensor, p_scale=pressure_scale
+                        )
+                        else t_scale
+                    )
                     temperature_warning = (
                         f"Temperature {current_t} K is outside the valid range "
-                        f"({rng[0]}-{rng[1]} K) for {sensor} / {t_scale}."
+                        f"({rng[0]}-{rng[1]} K) for {sensor} / {warning_scale}."
                     )
-                lam0 = PressureCalculator.get_corrected_lam0(
-                    sensor=sensor, t_scale=t_scale, current_t=current_t, t0=t0, lam0_at_t0=lam0_at_t0
-                )
 
-        p, dp = PressureCalculator.calculate(
-            sensor=sensor, p_scale=pressure_scale, lam=peak, lam0=lam0, lam0_at_t0=lam0_at_t0,
-            lam_err=peak_err, current_t=current_t, t0=t0,
+        t0 = PressureCalculator.resolve_t0(sensor=sensor, p_scale=pressure_scale, t0=t0)
+        result = PressureCalculator.calculate(
+            sensor=sensor, p_scale=pressure_scale,
+            peak=peak, zero_peak=zero_pressure_peak,
+            zero_peak_at_t0=zero_peak_at_t0,
+            peak_err=peak_err,
+            temperature_correction_enabled=temperature_enabled,
+            t_scale=t_scale,
+            current_t=current_t, t0=t0,
         )
 
-        return {"pressure": p, "pressure_err": dp, "temperature_warning": temperature_warning}
+        return {
+            "pressure": result.pressure,
+            "pressure_err": result.pressure_err,
+            "zero_pressure_peak_at_current_t": result.zero_peak_at_current_t,
+            "temperature_warning": temperature_warning,
+        }
 
     # ------------------------------------------------------------------
     # More GUI-thread helpers (state mutation / widget reads).
@@ -243,7 +271,11 @@ class ApiMixin:
         """Must run on the GUI thread (updates self.lbl_loaded_calib etc. via
         FileIOMixin.apply_calibration()).
         """
-        self.apply_calibration((c0, c1, c2), label, calib_unit=unit, calib_laser_wl=laser_wavelength_nm)
+        self.apply_calibration(
+            (c0, c1, c2), label, calib_unit=unit,
+            calib_laser_wl=laser_wavelength_nm,
+            axis_source="loaded_calibration",
+        )
         return {
             "applied": True,
             "unit": self.calib_unit,
@@ -364,16 +396,16 @@ class ApiMixin:
 
         self.lbl_api_status.setText(self._build_api_status_text(port))
         self.btn_start_api.setEnabled(False)
-        self.btn_start_api.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_start_api, self.BUTTON_STYLE_GREEN)
         self.spin_api_port.setEnabled(False)
         self.btn_stop_api.setEnabled(True)
-        self.btn_stop_api.setStyleSheet("background-color: #f44336; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_stop_api, self.BUTTON_STYLE_RED)
 
     def on_stop_api_server_clicked(self):
         self.stop_api_server()
         self.lbl_api_status.setText("Not running")
         self.btn_start_api.setEnabled(True)
-        self.btn_start_api.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_start_api, self.BUTTON_STYLE_GREEN)
         self.spin_api_port.setEnabled(True)
         self.btn_stop_api.setEnabled(False)
-        self.btn_stop_api.setStyleSheet("background-color: #A0A0A0; color: white; font-weight: bold;")
+        self._set_button_style(self.btn_stop_api, self.BUTTON_STYLE_RED)

@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QVBoxLayout, QLabel, QDialog, QMessageBox
+from PyQt5.QtWidgets import QVBoxLayout, QLabel, QDialog, QMessageBox, QPushButton
 from PyQt5.QtCore import Qt
 
 from src.spectrometer import SpectrometerMoveThread
@@ -50,11 +50,14 @@ class SpectrometerControlMixin:
     def update_plot_labels(self):
         if self.calib_coeffs is not None:
             if self.radio_spec_mode_raman.isChecked():
-                self.plot_widget.setLabel('bottom', 'Raman shift (cm⁻¹)')
+                x_label = 'Raman shift (cm⁻¹)'
             else:
-                self.plot_widget.setLabel('bottom', 'Wavelength (nm)')
+                x_label = 'Wavelength (nm)'
         else:
-            self.plot_widget.setLabel('bottom', 'Pixel')
+            x_label = 'Pixel'
+
+        self.plot_widget.setLabel('bottom', x_label)
+        self.image_view.getView().setLabel('bottom', x_label)
 
     def check_spectrometer_changes(self, *args):
         curr_g = self.combo_grating.currentText()
@@ -141,8 +144,21 @@ class SpectrometerControlMixin:
         layout = QVBoxLayout(self.spec_move_dialog)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.addWidget(QLabel("Spectrometer is moving. Please wait..."))
+
+        # Cancelling (MONO-STOP) is only meaningful for the Princeton serial
+        # backend, and only during the wavelength-move phase (grating turret
+        # changes have no documented abort). See on_spectrometer_move_phase.
+        self.spec_move_cancel_btn = None
+        if hasattr(self.spec_ctrl, "request_cancel_move"):
+            self.spec_move_cancel_btn = QPushButton("Cancel")
+            self.spec_move_cancel_btn.setEnabled(False)
+            self.spec_move_cancel_btn.clicked.connect(self.on_cancel_spectrometer_move)
+            layout.addWidget(self.spec_move_cancel_btn)
+            self.spec_move_dialog.setFixedSize(320, 130)
+        else:
+            self.spec_move_dialog.setFixedSize(320, 100)
+
         self.spec_move_dialog.setLayout(layout)
-        self.spec_move_dialog.setFixedSize(320, 100)
         self.spec_move_dialog.show()
         self.spec_move_dialog.raise_()
         self.spec_move_dialog.activateWindow()
@@ -152,10 +168,29 @@ class SpectrometerControlMixin:
         if dialog is not None:
             dialog.accept()
             self.spec_move_dialog = None
+        self.spec_move_cancel_btn = None
         self.centralWidget().setEnabled(True)
 
+    def on_spectrometer_move_phase(self, phase):
+        """Enable Cancel only once the wavelength-move phase begins (see
+        SpectrometerMoveThread.phase_signal)."""
+        if self.spec_move_cancel_btn is not None:
+            self.spec_move_cancel_btn.setEnabled(phase == "wavelength")
+
+    def on_cancel_spectrometer_move(self):
+        if self.spec_move_cancel_btn is not None:
+            self.spec_move_cancel_btn.setEnabled(False)
+            self.spec_move_cancel_btn.setText("Cancelling...")
+        if hasattr(self, 'spec_move_thread'):
+            self.spec_move_thread.request_cancel()
+
     def on_apply_spectrometer(self):
-        grating_index = self.combo_grating.currentIndex() + 1
+        combo_index = self.combo_grating.currentIndex()
+        gratings = self.config.get("grating", [])
+        if 0 <= combo_index < len(gratings):
+            grating_index = int(gratings[combo_index].get("index", combo_index + 1))
+        else:
+            grating_index = combo_index + 1
         val = self.spin_centre_wl.value()
 
         if self.radio_spec_mode_raman.isChecked():
@@ -175,9 +210,63 @@ class SpectrometerControlMixin:
 
         self.spec_move_thread = SpectrometerMoveThread(self.spec_ctrl, grating_index, target_wl)
         self.spec_move_thread.finished_signal.connect(self.on_spectrometer_moved)
+        if hasattr(self.spec_move_thread, "phase_signal"):
+            self.spec_move_thread.phase_signal.connect(self.on_spectrometer_move_phase)
         self.spec_move_thread.start()
 
     def on_spectrometer_moved(self):
+        if getattr(self.spec_move_thread, "cancelled", False):
+            # The actual position is now wherever MONO-STOP caught it, not the old
+            # value nor the requested target -- read it back from hardware instead
+            # of guessing.
+            self._loading_config = False
+            self._close_spectrometer_moving_dialog()
+            actual_wl = self.spec_ctrl.get_wavelength()
+            actual_grating_idx = self.spec_ctrl.get_grating()
+            for i, g in enumerate(self.config.get("grating", [])):
+                if g.get("index") == actual_grating_idx and i < self.combo_grating.count():
+                    self.combo_grating.setCurrentIndex(i)
+                    break
+            self.physical_grating = self.combo_grating.currentText()
+            self.physical_center_wl = actual_wl
+            if self.radio_spec_mode_raman.isChecked():
+                ex_wl = self.spin_exc_wl.value()
+                shown_value = (1e7 / ex_wl) - (1e7 / actual_wl) if ex_wl > 0 and actual_wl > 0 else 0.0
+            else:
+                shown_value = actual_wl
+            self.spin_centre_wl.blockSignals(True)
+            self.spin_centre_wl.setValue(shown_value)
+            self.spin_centre_wl.blockSignals(False)
+
+            # Position no longer matches whatever the pixel calibration was taken at.
+            self.calib_coeffs = None
+            self.axis_source = "pixel"
+            self.calib_unit = 'Wavelength'
+            self.calib_laser_wl = None
+            self.calib_file_name = "None"
+            self.lbl_loaded_calib.setText("Loaded: None")
+            self.update_plot_labels()
+
+            self._set_spectrometer_controls_enabled(True)
+            QMessageBox.information(
+                self, "Move cancelled",
+                f"The spectrometer move was cancelled. Actual position read back: "
+                f"grating index {actual_grating_idx}, {actual_wl:.3f} nm."
+            )
+            return
+
+        if getattr(self.spec_move_thread, "success", True) is False:
+            message = getattr(
+                self.spec_move_thread,
+                "error_message",
+                "The spectrometer setting change failed."
+            )
+            self._loading_config = False
+            self._close_spectrometer_moving_dialog()
+            self._set_spectrometer_controls_enabled(True)
+            QMessageBox.warning(self, "Spectrometer error", message)
+            return
+
         self.physical_grating = self.combo_grating.currentText()
         val = self.spin_centre_wl.value()
         if self.radio_spec_mode_raman.isChecked():
@@ -194,18 +283,21 @@ class SpectrometerControlMixin:
                     self._pending_calib_coeffs,
                     self._pending_calib_filename,
                     calib_unit=getattr(self, '_pending_calib_unit', 'Wavelength'),
-                    calib_laser_wl=getattr(self, '_pending_calib_laser_wl', None)
+                    calib_laser_wl=getattr(self, '_pending_calib_laser_wl', None),
+                    axis_source=getattr(self, '_pending_axis_source', 'loaded_calibration'),
                 )
                 self._pending_calib_coeffs = None
                 self._pending_calib_filename = None
                 self._pending_calib_unit = None
                 self._pending_calib_laser_wl = None
+                self._pending_axis_source = None
             self._loading_config = False
         else:
             # Grating/centre-wavelength changes invalidate the pixel calibration (it was only
             # valid at the previous physical position), but must NOT touch the ROI: ROI is set
             # independently via config load, calibration-file load, or direct user edits only.
             self.calib_coeffs = None
+            self.axis_source = "pixel"
             self.calib_unit = 'Wavelength'
             self.calib_laser_wl = None
             self.calib_file_name = "None"

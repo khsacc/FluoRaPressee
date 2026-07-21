@@ -22,6 +22,6 @@ call .venv\Scripts\python.exe -m pip install --upgrade pip
 call .venv\Scripts\pip.exe install -r requirements.txt
 
 echo.
-echo Setup complete. Use run.bat (hardware) or run_debug.bat (no hardware) to launch the app.
+echo Setup complete. Use FluoRaPressee_run.bat (hardware) or FluoRaPressee_run_debug.bat (no hardware) to launch the app.
 
 endlocal
