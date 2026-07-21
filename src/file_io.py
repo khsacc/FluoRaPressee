@@ -7,6 +7,7 @@ enabling reuse from external scripts and other applications.
 import csv
 import json
 import os
+import re
 import numpy as np
 from datetime import datetime
 
@@ -73,6 +74,116 @@ class DataFileIO:
         """Save 2D image data."""
         header = self._build_header(metadata) + "2D Image Data"
         np.savetxt(file_path, data_2d, delimiter=",", header=header, comments="# ", fmt="%g")
+
+    def looks_like_spectrum_file(self, file_path):
+        """Cheap header sniff (no full parse) for whether a file is a 1D spectrum saved
+        by save_spectrum_1d. Used to filter directory listings in Analysis Mode -- it
+        naturally rejects background/calibration files (JSON, no '#' lines) and
+        *_fitting_results.txt files (plain CSV, no '#' lines either).
+        """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                for _ in range(30):
+                    line = f.readline()
+                    if not line:
+                        break
+                    if line.startswith("#") and "Grating:" in line:
+                        return True
+        except OSError:
+            return False
+        return False
+
+    def load_spectrum_1d(self, file_path):
+        """Load a 1D spectrum previously written by save_spectrum_1d.
+
+        Returns (x, y, y_raw, y_bg, metadata). y_raw/y_bg are None unless the file
+        was saved with the raw+background 4-column format. metadata has the same
+        keys as the dict save_spectrum_1d's caller builds: grating, center_wl,
+        acq_time, accum, calib_coeffs, roi_start, roi_end, mode, spec_mode, exc_wl,
+        hardware_metadata, source_file.
+
+        The x column is already fully resolved (nm / cm-1 / pixel) at save time, so
+        no calibration/grating/ROI state is needed to use the returned data.
+
+        Raises ValueError if the file doesn't look like a spectrum saved by this app.
+        """
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                raw_lines = f.readlines()
+        except OSError as e:
+            raise ValueError(f"Could not read file: {e}")
+
+        header_lines = [l[1:].strip() for l in raw_lines if l.startswith("#")]
+
+        def find(pattern, default=None, cast=str):
+            for line in header_lines:
+                m = re.match(pattern, line)
+                if m:
+                    return cast(m.group(1))
+            return default
+
+        grating = find(r"Grating:\s*(\S+)")
+        if grating is None:
+            raise ValueError(
+                "Not a FluoraPressée spectrum file: missing 'Grating' header field."
+            )
+
+        spec_mode = find(r"Spectrometer Mode:\s*(.+)$", default="Wavelength")
+        exc_wl = find(r"Excitation Wavelength:\s*([-\d.eE+]+)", cast=float)
+        center = find(r"Centre (?:Wavelength|Raman shift):\s*([-\d.eE+]+)", cast=float)
+        acq_time = find(r"Acquisition Time:\s*([-\d.eE+]+)", default=0.0, cast=float)
+        accum = find(r"Accumulations:\s*(\d+)", default=1, cast=int)
+        roi_start = find(r"ROI Start.*?:\s*(-?\d+)", default=0, cast=int)
+        roi_end = find(r"ROI End.*?:\s*(-?\d+)", default=0, cast=int)
+        mode = find(r"Measurement Mode:\s*(.+)$", default="1D (ROI)")
+
+        calib_coeffs = None
+        # Greedy ".*:" so it matches the LAST colon on the line -- the label itself
+        # contains a colon (e.g. "...c2: y = c0 + c1x + c2x^2): 690.0, 0.05, -1e-06").
+        calib_line = find(r"Calibration Coefficients.*:\s*(.+)$")
+        if calib_line and calib_line.strip() != "None":
+            try:
+                calib_coeffs = tuple(float(v) for v in calib_line.split(","))
+            except ValueError:
+                calib_coeffs = None
+
+        hardware_metadata = None
+        hw_line = find(r"hardware_metadata:\s*(.+)$")
+        if hw_line:
+            try:
+                hardware_metadata = json.loads(hw_line)
+            except (json.JSONDecodeError, TypeError):
+                hardware_metadata = None
+
+        try:
+            data = np.loadtxt(file_path, delimiter=",", comments="#")
+        except Exception as e:
+            raise ValueError(f"Failed to parse spectrum data columns: {e}")
+
+        data = np.atleast_2d(data)
+        if data.shape[1] not in (2, 4):
+            raise ValueError(f"Unexpected number of data columns: {data.shape[1]}")
+
+        x = data[:, 0]
+        y = data[:, 1]
+        y_raw = data[:, 2] if data.shape[1] == 4 else None
+        y_bg = data[:, 3] if data.shape[1] == 4 else None
+
+        metadata = {
+            "grating": grating,
+            "center_wl": center,
+            "acq_time": acq_time,
+            "accum": accum,
+            "calib_coeffs": calib_coeffs,
+            "roi_start": roi_start,
+            "roi_end": roi_end,
+            "mode": mode,
+            "spec_mode": spec_mode,
+            "exc_wl": exc_wl,
+            "hardware_metadata": hardware_metadata,
+            "source_file": os.path.basename(file_path),
+        }
+        return x, y, y_raw, y_bg, metadata
 
     def save_fitting_results(self, fit_file_path, fit_res, func_name, pressure_info=None):
         """Save fitting result parameters to a text file.

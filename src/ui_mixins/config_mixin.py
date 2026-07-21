@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import QMessageBox
 
 from src.menu.hardware_config_dialog import HardwareConfigDialog
 from src.menu.instrument_status_dialog import InstrumentStatusDialog
+from src.local_cache import load_local_cache, save_local_cache
 
 class ConfigMixin:
     def on_open_hardware_config_clicked(self):
@@ -22,6 +23,18 @@ class ConfigMixin:
         self.instrument_status_window.show()
         self.instrument_status_window.raise_()
         self.instrument_status_window.activateWindow()
+
+    def on_open_analysis_mode_clicked(self):
+        # Lazy import: Analysis Mode's widgets aren't needed until this menu action is
+        # used, and keeping the import out of module load time keeps src/ui.py's own
+        # startup path unaffected by src/analysis_ui.py.
+        from src.analysis_ui import AnalysisWindow
+
+        if self.analysis_window is None:
+            self.analysis_window = AnalysisWindow()
+        self.analysis_window.show()
+        self.analysis_window.raise_()
+        self.analysis_window.activateWindow()
 
     def _instrument_status_busy(self):
         camera_busy = bool(getattr(self.thread, "is_measuring", False))
@@ -123,24 +136,10 @@ class ConfigMixin:
             self.save_config_to_file()
 
     def _load_local_cache(self):
-        try:
-            with open("local_cache.json", "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
+        return load_local_cache()
 
     def _save_local_cache(self, key, value):
-        try:
-            try:
-                with open("local_cache.json", "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                data = {}
-            data[key] = value
-            with open("local_cache.json", "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4)
-        except Exception as e:
-            print(f"Failed to save local cache: {e}")
+        save_local_cache(key, value)
 
     def load_api_key_file(self):
         try:

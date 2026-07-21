@@ -146,6 +146,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.pressure_window = None
         self.instrument_status_window = None
+        self.analysis_window = None
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -705,6 +706,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         api_menu = self.menuBar().addMenu("API")
         self.action_regenerate_api_key = api_menu.addAction("Regenerate Key")
         self.action_regenerate_api_key.triggered.connect(self.on_regenerate_api_key_clicked)
+
+        tools_menu = self.menuBar().addMenu("Tools")
+        self.action_analysis_mode = tools_menu.addAction("Analysis Mode…")
+        self.action_analysis_mode.triggered.connect(self.on_open_analysis_mode_clicked)
 
         self.seq_timer = QTimer(self)
         self.seq_timer.timeout.connect(self.update_seq_progress)
