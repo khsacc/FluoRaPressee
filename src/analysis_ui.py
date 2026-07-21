@@ -388,7 +388,10 @@ class AnalysisWindow(QMainWindow):
             self.fit_curve_sub2.clear()
 
         if self.pressure_window is not None:
-            self.pressure_window.set_fit_peaks(res["peaks"])
+            # Never feed pixel positions into the pressure calculator, even if it was
+            # left open from a previously-loaded calibrated file -- clear it instead so
+            # it can't silently report a bogus pressure computed from pixel indices.
+            self.pressure_window.set_fit_peaks(res["peaks"] if self.current_unit != "pixel" else [])
 
         text = (
             f"<span><b>Function:</b> {func}<br>"
@@ -407,7 +410,7 @@ class AnalysisWindow(QMainWindow):
             text += f" Width: {peak['width']:.3f} &plusmn; {peak['width_err']:.3f}<br><br>"
         text += f"<b>R-value:</b><br> {res['R2']:.4f}</span>"
 
-        if self.pressure_window is not None and self.pressure_window.isVisible():
+        if self.current_unit != "pixel" and self.pressure_window is not None and self.pressure_window.isVisible():
             p = self.pressure_window.current_pressure
             p_err = self.pressure_window.current_pressure_err
             if p is not None and p_err is not None:
@@ -433,7 +436,7 @@ class AnalysisWindow(QMainWindow):
 
         pressure_info = None
         pw = self.pressure_window
-        if pw is not None and pw.isVisible() and pw.current_pressure is not None:
+        if self.current_unit != "pixel" and pw is not None and pw.isVisible() and pw.current_pressure is not None:
             lam0_value = pw.current_zero_peak_at_current_t
             if lam0_value is None:
                 lam0_value = pw.spin_lam0_t0.value() if pw.radio_on.isChecked() else pw.spin_lam0.value()
