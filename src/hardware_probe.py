@@ -118,12 +118,7 @@ def _probe_andor_spectrometer(result, config):
             raise RuntimeError("No installed gratings could be read")
         _merge_identity(result, "spectrometer", identity)
         result["config"]["grating"] = _config_gratings(gratings, result)
-        result["detected_hardware"]["spectrometer"] = {
-            **identity,
-            "current_grating": int(controller.get_grating()),
-            "center_wavelength_nm": float(controller.get_wavelength()),
-            "gratings": gratings,
-        }
+        result["detected_hardware"]["spectrometer"] = dict(identity)
     finally:
         try:
             controller.close()
@@ -219,12 +214,7 @@ def _probe_pi_spectrometer(result, config):
         _merge_identity(result, "spectrometer", identity)
         if gratings:
             result["config"]["grating"] = _config_gratings(gratings, result)
-        result["detected_hardware"]["spectrometer"] = {
-            **identity,
-            "current_grating": int(controller.get_grating()),
-            "center_wavelength_nm": float(controller.get_wavelength()),
-            "gratings": gratings,
-        }
+        result["detected_hardware"]["spectrometer"] = dict(identity)
     finally:
         try:
             controller.close()
