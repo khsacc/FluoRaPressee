@@ -94,6 +94,7 @@ class SequentialMixin:
         self.combo_fit_func.setEnabled(enabled)
         self.combo_fit_peak_count.setEnabled(enabled)
         self.combo_peak_sort.setEnabled(enabled)
+        self.combo_baseline_model.setEnabled(enabled)
         self.spin_fit_start.setEnabled(enabled)
         self.spin_fit_end.setEnabled(enabled)
 
@@ -147,6 +148,7 @@ class SequentialMixin:
             fit_end = self.spin_fit_end.value()
             peak_count = self.combo_fit_peak_count.currentData()
             peak_sort = self.combo_peak_sort.currentText()
+            baseline_model = self.combo_baseline_model.currentText()
 
 
             try:
@@ -154,7 +156,8 @@ class SequentialMixin:
                 has_pressure = (self.pressure_window is not None and self.pressure_window.isVisible())
                 self.file_io.create_fitting_seq_summary(
                     self.seq_fitting_summary_path, func, fit_start, fit_end,
-                    peak_count, unit, has_pressure, peak_sort=peak_sort
+                    peak_count, unit, has_pressure, peak_sort=peak_sort,
+                    baseline_model=baseline_model
                 )
             except Exception as e:
                 print(f"Failed to create summary file: {e}")

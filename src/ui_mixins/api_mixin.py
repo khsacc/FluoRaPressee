@@ -186,7 +186,7 @@ class ApiMixin:
     # ------------------------------------------------------------------
 
     def api_fit(self, x, y, fit_function, fit_start=None, fit_end=None,
-                fit_peak_count=2, peak_sort_order="x_desc"):
+                fit_peak_count=2, peak_sort_order="x_desc", baseline_model="constant"):
         """Fit a spectrum using DataAnalyzer directly - no GuiBridge needed,
         since DataAnalyzer.fit_spectrum() is Qt-independent. Deliberately does
         not touch combo_fit_func/spin_fit_start/spin_fit_end so a concurrent
@@ -194,7 +194,8 @@ class ApiMixin:
         """
         x_fit, y_fit_curve, res = self.analyzer.fit_spectrum(
             np.asarray(x), np.asarray(y), fit_function, fit_start, fit_end,
-            peak_count=fit_peak_count, peak_sort_order=peak_sort_order
+            peak_count=fit_peak_count, peak_sort_order=peak_sort_order,
+            baseline_model=baseline_model
         )
         if res is None:
             return {"success": False, "x_fit": None, "y_fit": None, "fit": None}

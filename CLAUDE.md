@@ -73,7 +73,8 @@ interface and extending these two factory functions.
 
 **Analysis/calibration/pressure modules** are plain Python classes with no PyQt dependency, so they're
 usable standalone or from scripts:
-- `src/analysis.py` (`DataAnalyzer`): single/double peak fitting (Gauss, Lorentz, Pseudo-Voigt).
+- `src/analysis.py` (`DataAnalyzer`): 1-5 peak fitting (Gauss, Lorentz, Pseudo-Voigt, Moffat)
+  with Constant/Linear/Quadratic baselines and BIC-based Auto Polynomial selection.
 - `src/calibration.py` (`CalibrationCore`): pixel→wavelength/Raman-shift polynomial calibration from
   detected reference peaks; `src/calibration_ui.py` wraps it in a `QDialog`.
 - `src/calibration_helper.py` (`ReferenceHelperWindow`): reference neon-line lookup dialog backed by

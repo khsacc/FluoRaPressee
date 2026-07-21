@@ -23,6 +23,7 @@ class DisplayMixin:
         if not is_on:
             self.chk_save_fitting.setChecked(False)
             self.fit_curve.clear()
+            self.fit_baseline_curve.clear()
             self.fit_curve_sub1.clear()
             self.fit_curve_sub2.clear()
             self.current_w_peak1 = None
@@ -129,17 +130,20 @@ class DisplayMixin:
                 func = self.combo_fit_func.currentText()
                 peak_count = self.combo_fit_peak_count.currentData()
                 peak_sort_order = self.combo_peak_sort.currentData()
+                baseline_model = self.combo_baseline_model.currentData()
                 fit_start = self.spin_fit_start.value()
                 fit_end = self.spin_fit_end.value()
 
                 x_fit, y_fit, res = self.analyzer.fit_spectrum(
                     x_data, disp_data, func, fit_start, fit_end,
-                    peak_count=peak_count, peak_sort_order=peak_sort_order
+                    peak_count=peak_count, peak_sort_order=peak_sort_order,
+                    baseline_model=baseline_model
                 )
 
                 if x_fit is not None:
                     self._seq_fit_failed = False
                     self.fit_curve.setData(x_fit, y_fit)
+                    self.fit_baseline_curve.setData(x_fit, res["y_baseline"])
 
                     first_peak = res["peaks"][0]
                     w_peak1 = first_peak["position"]
@@ -160,8 +164,14 @@ class DisplayMixin:
                     text = (
                         f"<span><b>Function:</b> {func}<br>"
                         f"<b>Fit Peaks:</b> {peak_count}<br>"
-                        f"<b>Sort peaks:</b> {self.combo_peak_sort.currentText()}<br><br>"
+                        f"<b>Sort peaks:</b> {self.combo_peak_sort.currentText()}<br>"
                     )
+
+                    baseline = res["baseline"]
+                    baseline_text = baseline["requested"]
+                    if baseline["requested"] != baseline["selected"]:
+                        baseline_text += f" &rarr; {baseline['selected']}"
+                    text += f"<b>Baseline:</b> {baseline_text}<br><br>"
 
                     self.latest_fit_res = res.copy()
                     self.latest_fit_func = func
@@ -191,6 +201,7 @@ class DisplayMixin:
                     self.fitting_text.setHtml(text)
                 else:
                     self.fit_curve.clear()
+                    self.fit_baseline_curve.clear()
                     self.fit_curve_sub1.clear()
                     self.fit_curve_sub2.clear()
                     self.current_w_peak1 = None
@@ -206,6 +217,7 @@ class DisplayMixin:
                         self.radio_fit_off.setChecked(True)
             else:
                 self.fit_curve.clear()
+                self.fit_baseline_curve.clear()
                 self.fit_curve_sub1.clear()
                 self.fit_curve_sub2.clear()
                 self.current_w_peak1 = None

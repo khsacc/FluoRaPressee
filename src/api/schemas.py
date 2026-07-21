@@ -54,6 +54,7 @@ class AcquireFitRequest(AcquireRequest):
     fit_function: Literal["Pseudo Voigt", "Moffat", "Gauss", "Lorentz"]
     fit_peak_count: int = Field(default=2, ge=1, le=5)
     peak_sort_order: Literal["x_desc", "x_asc", "intensity_desc", "intensity_asc"] = "x_desc"
+    baseline_model: Literal["constant", "linear", "quadratic", "auto_polynomial"] = "constant"
     fit_range: FitRange | None = None
 
 

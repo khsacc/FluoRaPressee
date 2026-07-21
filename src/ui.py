@@ -189,6 +189,9 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         
         self.plot_scatter = self.plot_widget.plot(pen=None, symbol='o', symbolSize=4, symbolBrush='w')
         self.plot_line = self.plot_widget.plot(pen=pg.mkPen('w', width=1))
+        self.fit_baseline_curve = self.plot_widget.plot(
+            pen=pg.mkPen('#9E9E9E', width=1, style=Qt.PenStyle.DashLine)
+        )
         self.fit_curve = self.plot_widget.plot(pen=pg.mkPen('y', width=2))
         self.fit_curve_sub1 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
         self.fit_curve_sub2 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
@@ -544,6 +547,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.combo_peak_sort.addItem("x ascending", "x_asc")
         self.combo_peak_sort.addItem("intensity descending", "intensity_desc")
         self.combo_peak_sort.addItem("intensity ascending", "intensity_asc")
+
+        self.combo_baseline_model = CustomComboBox()
+        self.combo_baseline_model.addItem("Constant", "Constant")
+        self.combo_baseline_model.addItem("Linear", "Linear")
+        self.combo_baseline_model.addItem("Quadratic", "Quadratic")
+        self.combo_baseline_model.addItem("Auto Polynomial", "Auto Polynomial")
+        self.combo_baseline_model.setCurrentIndex(
+            self.combo_baseline_model.findData("Constant")
+        )
         
         self.spin_fit_start = CustomDoubleSpinBox()
         self.spin_fit_start.setRange(-10000, 20000)
@@ -563,10 +575,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         fit_layout.addWidget(self.combo_fit_peak_count, 2, 1)
         fit_layout.addWidget(QLabel("Sort peaks:"), 3, 0)
         fit_layout.addWidget(self.combo_peak_sort, 3, 1)
-        fit_layout.addWidget(QLabel("Range Start:"), 4, 0)
-        fit_layout.addWidget(self.spin_fit_start, 4, 1)
-        fit_layout.addWidget(QLabel("Range End:"), 5, 0)
-        fit_layout.addWidget(self.spin_fit_end, 5, 1)
+        fit_layout.addWidget(QLabel("Baseline:"), 4, 0)
+        fit_layout.addWidget(self.combo_baseline_model, 4, 1)
+        fit_layout.addWidget(QLabel("Range Start:"), 5, 0)
+        fit_layout.addWidget(self.spin_fit_start, 5, 1)
+        fit_layout.addWidget(QLabel("Range End:"), 6, 0)
+        fit_layout.addWidget(self.spin_fit_end, 6, 1)
         fit_group.setLayout(fit_layout)
         controls_layout.addWidget(fit_group)
 
@@ -657,6 +671,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.combo_fit_func.currentTextChanged.connect(self.on_fit_settings_changed)
         self.combo_fit_peak_count.currentIndexChanged.connect(self.on_fit_peak_count_changed)
         self.combo_peak_sort.currentIndexChanged.connect(self.on_fit_settings_changed)
+        self.combo_baseline_model.currentIndexChanged.connect(self.on_fit_settings_changed)
         self.spin_fit_start.valueChanged.connect(self.on_fit_settings_changed)
         self.spin_fit_end.valueChanged.connect(self.on_fit_settings_changed)
         

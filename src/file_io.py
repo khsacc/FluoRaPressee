@@ -105,6 +105,24 @@ class DataFileIO:
                 f"{peak.get('width', np.nan):.6f}",
                 f"{peak.get('width_err', np.nan):.6f}",
             ])
+
+        baseline = fit_res.get("baseline") or {}
+        coefficients = list(baseline.get("coefficients") or [])
+        coefficient_errors = list(baseline.get("coefficient_errors") or [])
+        header_cols.extend([
+            "Baseline_Requested", "Baseline_Selected",
+            "Baseline_b0", "Baseline_b0_Err",
+            "Baseline_b1", "Baseline_b1_Err",
+            "Baseline_b2", "Baseline_b2_Err",
+        ])
+        vals.extend([
+            str(baseline.get("requested", "Constant")),
+            str(baseline.get("selected", "Constant")),
+        ])
+        for index in range(3):
+            coefficient = coefficients[index] if index < len(coefficients) else np.nan
+            coefficient_error = coefficient_errors[index] if index < len(coefficient_errors) else np.nan
+            vals.extend([f"{coefficient:.6f}", f"{coefficient_error:.6f}"])
         fit_header = ",".join(header_cols)
 
         if pressure_info is not None:
@@ -219,7 +237,8 @@ class DataFileIO:
         }
 
     def create_fitting_seq_summary(self, file_path, func, fit_start, fit_end,
-                                   peak_count, unit, has_pressure, peak_sort="x descending"):
+                                   peak_count, unit, has_pressure, peak_sort="x descending",
+                                   baseline_model="Constant"):
         """Create the fitting sequential summary CSV with comment lines and a header row."""
         header_cols = ["Filename", "Timestamp"]
         for i in range(1, peak_count + 1):
@@ -230,11 +249,13 @@ class DataFileIO:
         header_cols.append("R2")
         if has_pressure:
             header_cols.extend(["Pressure (GPa)", "Pressure_Err (GPa)"])
+        header_cols.extend(["Baseline Selected", "Baseline b0", "Baseline b1", "Baseline b2"])
 
         with open(file_path, "w", encoding="utf-8") as f:
             f.write(f"# Fitting Function: {func}\n")
             f.write(f"# Peak Count: {peak_count}\n")
             f.write(f"# Peak Sort: {peak_sort}\n")
+            f.write(f"# Baseline Model: {baseline_model}\n")
             f.write(f"# Fitting Range: {fit_start} to {fit_end}\n")
             f.write(",".join(header_cols) + "\n")
 
@@ -278,6 +299,13 @@ class DataFileIO:
                 cols.extend([f"{p:.6f}", f"{pe:.6f}"])
             else:
                 cols.extend(["NaN", "NaN"])
+
+        baseline = (res or {}).get("baseline") or {}
+        coefficients = list(baseline.get("coefficients") or [])
+        cols.append(str(baseline.get("selected", "")))
+        for index in range(3):
+            value = coefficients[index] if index < len(coefficients) else np.nan
+            cols.append(f"{value:.6f}")
 
         with open(file_path, "a", encoding="utf-8") as f:
             f.write(",".join(cols) + "\n")

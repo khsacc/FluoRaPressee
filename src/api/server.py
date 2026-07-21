@@ -110,7 +110,8 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
         fit_start, fit_end = (req.fit_range.start, req.fit_range.end) if req.fit_range else (None, None)
         fit_result = gui_window.api_fit(
             result["x"], result["y"], req.fit_function, fit_start=fit_start, fit_end=fit_end,
-            fit_peak_count=req.fit_peak_count, peak_sort_order=req.peak_sort_order
+            fit_peak_count=req.fit_peak_count, peak_sort_order=req.peak_sort_order,
+            baseline_model=req.baseline_model
         )
         return {
             "success": fit_result["success"],

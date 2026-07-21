@@ -32,6 +32,13 @@ class DataAnalyzer:
     MOFFAT_BETA_MAX = 100.0
     MIN_PEAK_COUNT = 1
     MAX_PEAK_COUNT = 5
+    BASELINE_MODE_DEGREES = {
+        "Constant": 0,
+        "Linear": 1,
+        "Quadratic": 2,
+    }
+    AUTO_BASELINE_MODE = "Auto Polynomial"
+    AUTO_BASELINE_BIC_THRESHOLD = 6.0
 
     def __init__(self):
         """DataAnalyzer を初期化する"""
@@ -90,12 +97,44 @@ class DataAnalyzer:
     def _params_per_peak(self, func_type):
         return 3 if func_type in ["Gauss", "Lorentz"] else 4
 
-    def _multi_peak_model(self, func_type, peak_count):
+    def _normalize_baseline_model(self, baseline_model):
+        normalized = str(baseline_model).strip().lower().replace("_", " ")
+        aliases = {
+            "constant": "Constant",
+            "linear": "Linear",
+            "quadratic": "Quadratic",
+            "auto polynomial": self.AUTO_BASELINE_MODE,
+        }
+        try:
+            return aliases[normalized]
+        except KeyError as exc:
+            allowed = list(self.BASELINE_MODE_DEGREES) + [self.AUTO_BASELINE_MODE]
+            raise ValueError(
+                f"Unknown baseline model: {baseline_model!r}; expected one of {allowed}"
+            ) from exc
+
+    def _baseline_curve(self, x, coefficients, x_min, x_max):
+        """Evaluate a degree 0-2 Chebyshev baseline on x normalized to [-1, 1]."""
+        x_span = float(x_max) - float(x_min)
+        if x_span <= 0:
+            raise ValueError("baseline x range must be greater than zero")
+
+        u = 2.0 * (np.asarray(x, dtype=np.float64) - float(x_min)) / x_span - 1.0
+        baseline = np.zeros_like(u, dtype=np.float64) + coefficients[0]
+        if len(coefficients) >= 2:
+            baseline += coefficients[1] * u
+        if len(coefficients) >= 3:
+            baseline += coefficients[2] * (2.0 * u**2 - 1.0)
+        return baseline
+
+    def _multi_peak_model(self, func_type, peak_count, baseline_degree=0,
+                          x_min=None, x_max=None):
         params_per_peak = self._params_per_peak(func_type)
+        baseline_param_count = baseline_degree + 1
 
         def model(x, *params):
-            offset = params[-1]
-            y = np.zeros_like(x, dtype=np.float64) + offset
+            baseline_coefficients = params[-baseline_param_count:]
+            y = self._baseline_curve(x, baseline_coefficients, x_min, x_max)
             for i in range(peak_count):
                 start = i * params_per_peak
                 y += self._base_function_value(
@@ -105,8 +144,57 @@ class DataAnalyzer:
 
         return model
 
-    def _component_curve(self, func_type, x, peak_params, offset):
-        return self._base_function_value(func_type, x, peak_params, offset=offset)
+    def _component_curve(self, func_type, x, peak_params, baseline):
+        return baseline + self._base_function_value(
+            func_type, x, peak_params, offset=0.0
+        )
+
+    def _fit_baseline_candidate(self, func_type, peak_count, baseline_degree,
+                                x_fit, y_fit, peak_p0, peak_lower, peak_upper,
+                                offset_guess, nested_p0=None):
+        """Fit one peak-plus-polynomial candidate and return its numerical results."""
+        baseline_param_count = baseline_degree + 1
+        if nested_p0 is None:
+            p0 = list(peak_p0) + [offset_guess] + [0.0] * baseline_degree
+        else:
+            p0 = list(nested_p0) + [0.0]
+
+        lower = list(peak_lower) + [-np.inf] * baseline_param_count
+        upper = list(peak_upper) + [np.inf] * baseline_param_count
+        model = self._multi_peak_model(
+            func_type,
+            peak_count,
+            baseline_degree=baseline_degree,
+            x_min=float(np.min(x_fit)),
+            x_max=float(np.max(x_fit)),
+        )
+        popt, pcov = self._fit_strict(model, x_fit, y_fit, p0, (lower, upper))
+        y_fit_curve = model(x_fit, *popt)
+
+        if not np.all(np.isfinite(popt)) or not np.all(np.isfinite(y_fit_curve)):
+            raise ValueError("fit returned non-finite parameters or curve")
+        if not np.all(np.isfinite(pcov)):
+            raise ValueError("fit returned a non-finite covariance matrix")
+
+        residuals = y_fit - y_fit_curve
+        rss = float(np.sum(residuals**2))
+        if not np.isfinite(rss):
+            raise ValueError("fit returned a non-finite residual sum of squares")
+        rss_floor = np.finfo(np.float64).eps * max(float(np.sum(y_fit**2)), 1.0)
+        rss_for_bic = max(rss, rss_floor)
+        parameter_count = len(popt)
+        bic = len(y_fit) * np.log(rss_for_bic / len(y_fit)) + parameter_count * np.log(len(y_fit))
+
+        return {
+            "degree": baseline_degree,
+            "model": model,
+            "popt": popt,
+            "pcov": pcov,
+            "perr": np.sqrt(np.maximum(np.diag(pcov), 0)),
+            "y_fit_curve": y_fit_curve,
+            "rss": rss,
+            "bic": float(bic),
+        }
 
     def _smoothed_for_peak_search(self, x_fit, y_fit, fwhm_guess):
         """find_peaks に渡す信号だけを平滑化する（フィット本体には常に生データを使う）。
@@ -207,7 +295,8 @@ class DataAnalyzer:
     # ==========================================
     def fit_spectrum(self, x_data: np.ndarray, y_data: np.ndarray, func_type: str = "Pseudo Voigt",
                      fit_start: Optional[float] = None, fit_end: Optional[float] = None,
-                     peak_count: int = 1, peak_sort_order: str = "x_desc") -> Tuple:
+                     peak_count: int = 1, peak_sort_order: str = "x_desc",
+                     baseline_model: str = "Constant") -> Tuple:
         """スペクトルのピークフィッティングを行う（指定されたX軸の範囲内で実行）
         
         Args:
@@ -218,6 +307,8 @@ class DataAnalyzer:
             fit_end: フィッティング範囲の終了値
             peak_count: フィットするピーク数 (1-5)
             peak_sort_order: ピーク番号の並び順
+            baseline_model: ベースラインモデル
+                ("Constant", "Linear", "Quadratic", "Auto Polynomial")
             
         Returns:
             (x_fit, y_fit_curve, res) のタプル。フィッティング失敗時は (None, None, None)
@@ -252,41 +343,87 @@ class DataAnalyzer:
             raise ValueError(f"peak_count must be between {self.MIN_PEAK_COUNT} and {self.MAX_PEAK_COUNT}")
         if func_type not in ["Pseudo Voigt", "Moffat", "Gauss", "Lorentz"]:
             raise ValueError(f"Unknown fitting function: {func_type!r}")
+        requested_baseline = self._normalize_baseline_model(baseline_model)
         
         try:
             params_per_peak = self._params_per_peak(func_type)
             initial_peaks = self._initial_peak_positions(x_fit, y_fit, peak_count, amp_guess, offset_guess, fwhm_guess)
-            p0 = []
-            lower = []
-            upper = []
+            peak_p0 = []
+            peak_lower = []
+            peak_upper = []
             for peak_x, peak_amp in initial_peaks:
-                p0.extend([peak_amp, peak_x, fwhm_guess])
-                lower.extend([0, min(x_fit), self.FWHM_MIN])
-                upper.extend([np.inf, max(x_fit), width_upper])
+                peak_p0.extend([peak_amp, peak_x, fwhm_guess])
+                peak_lower.extend([0, min(x_fit), self.FWHM_MIN])
+                peak_upper.extend([np.inf, max(x_fit), width_upper])
                 if func_type == "Pseudo Voigt":
-                    p0.append(self.PSEUDO_VOIGT_ETA_INIT)
-                    lower.append(self.PSEUDO_VOIGT_ETA_MIN)
-                    upper.append(self.PSEUDO_VOIGT_ETA_MAX)
+                    peak_p0.append(self.PSEUDO_VOIGT_ETA_INIT)
+                    peak_lower.append(self.PSEUDO_VOIGT_ETA_MIN)
+                    peak_upper.append(self.PSEUDO_VOIGT_ETA_MAX)
                 elif func_type == "Moffat":
-                    p0.append(self.MOFFAT_BETA_INIT)
-                    lower.append(self.MOFFAT_BETA_MIN)
-                    upper.append(self.MOFFAT_BETA_MAX)
+                    peak_p0.append(self.MOFFAT_BETA_INIT)
+                    peak_lower.append(self.MOFFAT_BETA_MIN)
+                    peak_upper.append(self.MOFFAT_BETA_MAX)
 
-            p0.append(offset_guess)
-            lower.append(-np.inf)
-            upper.append(np.inf)
+            candidate_results = {}
+            candidate_failures = []
+            if requested_baseline == self.AUTO_BASELINE_MODE:
+                nested_p0 = None
+                for label, degree in self.BASELINE_MODE_DEGREES.items():
+                    parameter_count = len(peak_p0) + degree + 1
+                    if len(x_fit) <= parameter_count:
+                        candidate_failures.append(label)
+                        nested_p0 = None
+                        continue
+                    try:
+                        candidate = self._fit_baseline_candidate(
+                            func_type, peak_count, degree, x_fit, y_fit,
+                            peak_p0, peak_lower, peak_upper, offset_guess,
+                            nested_p0=nested_p0,
+                        )
+                    except (OptimizeWarning, RuntimeError, ValueError, FloatingPointError):
+                        candidate_failures.append(label)
+                        nested_p0 = None
+                        continue
+                    candidate_results[label] = candidate
+                    nested_p0 = candidate["popt"]
 
-            model = self._multi_peak_model(func_type, peak_count)
-            popt, pcov = self._fit_strict(model, x_fit, y_fit, p0, (lower, upper))
-            y_fit_curve = model(x_fit, *popt)
-            perr = np.sqrt(np.maximum(np.diag(pcov), 0))
+                if not candidate_results:
+                    return None, None, None
 
-            offset = popt[-1]
+                minimum_bic = min(item["bic"] for item in candidate_results.values())
+                parsimonious = [
+                    (item["degree"], label, item)
+                    for label, item in candidate_results.items()
+                    if item["bic"] <= minimum_bic + self.AUTO_BASELINE_BIC_THRESHOLD
+                ]
+                _, selected_baseline, fit_result = min(parsimonious, key=lambda item: item[0])
+            else:
+                degree = self.BASELINE_MODE_DEGREES[requested_baseline]
+                fit_result = self._fit_baseline_candidate(
+                    func_type, peak_count, degree, x_fit, y_fit,
+                    peak_p0, peak_lower, peak_upper, offset_guess,
+                )
+                candidate_results[requested_baseline] = fit_result
+                selected_baseline = requested_baseline
+
+            popt = fit_result["popt"]
+            perr = fit_result["perr"]
+            y_fit_curve = fit_result["y_fit_curve"]
+            baseline_degree = fit_result["degree"]
+            baseline_param_count = baseline_degree + 1
+            baseline_coefficients = popt[-baseline_param_count:]
+            baseline_errors = perr[-baseline_param_count:]
+            y_baseline = self._baseline_curve(
+                x_fit, baseline_coefficients, float(np.min(x_fit)), float(np.max(x_fit))
+            )
             records = []
             for i in range(peak_count):
                 start = i * params_per_peak
                 peak_params = popt[start:start + params_per_peak]
                 peak_errs = perr[start:start + params_per_peak]
+                y_peak = self._base_function_value(
+                    func_type, x_fit, peak_params, offset=0.0
+                )
                 records.append({
                     "position": peak_params[1],
                     "position_err": peak_errs[1],
@@ -297,7 +434,10 @@ class DataAnalyzer:
                     "intensity": peak_params[0],
                     "params": peak_params.copy(),
                     "errors": peak_errs.copy(),
-                    "y_fit": self._component_curve(func_type, x_fit, peak_params, offset),
+                    "y_peak": y_peak,
+                    "y_fit": self._component_curve(
+                        func_type, x_fit, peak_params, y_baseline
+                    ),
                 })
 
             sorted_peaks = self._sort_peak_records(records, peak_sort_order)
@@ -310,12 +450,33 @@ class DataAnalyzer:
                 "peak_count": peak_count,
                 "peak_sort_order": peak_sort_order,
                 "peaks": [
-                    {k: v for k, v in peak.items() if k not in ["params", "errors", "y_fit"]}
+                    {k: v for k, v in peak.items()
+                     if k not in ["params", "errors", "y_peak", "y_fit"]}
                     for peak in sorted_peaks
                 ],
+                "baseline": {
+                    "requested": requested_baseline,
+                    "selected": selected_baseline,
+                    "degree": baseline_degree,
+                    "basis": "chebyshev",
+                    "coefficients": [float(value) for value in baseline_coefficients],
+                    "coefficient_errors": [float(value) for value in baseline_errors],
+                    "x_min": float(np.min(x_fit)),
+                    "x_max": float(np.max(x_fit)),
+                    "bic": fit_result["bic"],
+                },
+                "y_baseline": y_baseline,
             }
+            if requested_baseline == self.AUTO_BASELINE_MODE:
+                res["baseline"]["candidate_bic"] = {
+                    label: item["bic"] for label, item in candidate_results.items()
+                }
+                res["baseline"]["selection_threshold"] = self.AUTO_BASELINE_BIC_THRESHOLD
+                if candidate_failures:
+                    res["baseline"]["candidate_failures"] = candidate_failures
             for i, peak in enumerate(sorted_peaks, start=1):
                 res[f"y_fit{i}"] = peak["y_fit"]
+                res[f"y_peak{i}"] = peak["y_peak"]
             self._add_legacy_peak_keys(res, sorted_peaks)
 
             # Compute R2 (coefficient of determination)
