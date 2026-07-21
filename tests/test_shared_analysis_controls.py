@@ -57,6 +57,25 @@ class SharedAnalysisControlsTests(unittest.TestCase):
         self.assertTrue(window.pressure_window.isVisible())
         self.assertFalse(window.pressure_window.isEnabled())
         right_panel = window.centralWidget().layout().itemAt(2).widget()
+        right_contents = right_panel.widget()
+        center_panel = window.centralWidget().layout().itemAt(1).widget()
+        self.assertTrue(right_contents.isAncestorOf(window.fitting_text))
+        self.assertFalse(center_panel.isAncestorOf(window.fitting_text))
+        self.assertGreaterEqual(
+            window.fitting_results_group.y(),
+            window.fitting_config.y() + window.fitting_config.height(),
+        )
+        expected_pressure_width = round(window.pressure_group_natural_width * 0.8)
+        self.assertEqual(window.pressure_group.maximumWidth(), expected_pressure_width)
+        self.assertLess(
+            window.pressure_group.maximumWidth(),
+            window.pressure_window.unconstrained_width,
+        )
+        self.assertEqual(right_panel.horizontalScrollBar().maximum(), 0)
+
+        window.resize(window.width(), 500)
+        self.app.processEvents()
+        self.assertGreater(right_panel.verticalScrollBar().maximum(), 0)
         self.assertEqual(right_panel.horizontalScrollBar().maximum(), 0)
 
         window.close()

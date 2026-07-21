@@ -17,6 +17,7 @@ import os
 import numpy as np
 import pyqtgraph as pg
 from PyQt5.QtCore import Qt, QFileSystemWatcher
+from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QScrollArea,
     QLabel, QPushButton, QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
@@ -31,12 +32,33 @@ from src.local_cache import load_local_cache, save_local_cache
 
 _LAST_DIR_CACHE_KEY = "last_analysis_dir"
 
+# Analysis Mode's plot is meant to be publication-ready as-is (white background,
+# Arial/Helvetica, labelled axes, legend) rather than match the live GUI's dark
+# monitoring view -- kept local to this module/widget instance rather than via
+# pg.setConfigOption, which is process-global and would also repaint the live
+# GUI's plot if Analysis Mode is opened as a sub-window in the same process.
+_PLOT_FONT_FAMILIES = ["Arial", "Helvetica"]
+_PLOT_LABEL_STYLE = {
+    "color": "#000000",
+    "font-size": "12pt",
+    "font-family": "Arial, Helvetica, sans-serif",
+}
+
+
+def _axis_tick_font():
+    font = QFont()
+    if hasattr(font, "setFamilies"):
+        font.setFamilies(_PLOT_FONT_FAMILIES)
+    else:
+        font.setFamily(_PLOT_FONT_FAMILIES[0])
+    return font
+
 
 class AnalysisWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("FluoraPressée: Analysis Mode")
-        self.resize(1400, 900)
+        self.resize(1650, 900)
 
         self.analyzer = DataAnalyzer()
         self.file_io = DataFileIO()
@@ -61,7 +83,7 @@ class AnalysisWindow(QMainWindow):
 
         layout.addWidget(self._build_left_panel(), stretch=1)
         layout.addWidget(self._build_center_panel(), stretch=3)
-        layout.addWidget(self._build_right_panel(), stretch=1)
+        layout.addWidget(self._build_right_panel(), stretch=2)
 
         cache = load_local_cache()
         last_dir = cache.get(_LAST_DIR_CACHE_KEY, "")
@@ -142,7 +164,7 @@ class AnalysisWindow(QMainWindow):
         if file_path:
             self.load_file(file_path)
 
-    # ---- center: plot + fitting results --------------------------------------
+    # ---- center: plot ---------------------------------------------------------
     def _build_center_panel(self):
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -168,41 +190,64 @@ class AnalysisWindow(QMainWindow):
         self.display_toggle_widget.setVisible(False)
         layout.addWidget(self.display_toggle_widget)
 
-        plot_and_results = QHBoxLayout()
+        self.plot_widget = pg.PlotWidget()
+        self.plot_widget.setBackground('w')
 
-        self.plot_widget = pg.PlotWidget(title="Loaded Spectrum")
-        self.plot_widget.setLabel('left', 'Intensity (Counts)')
-        self.plot_widget.setLabel('bottom', 'Pixel')
-        self.plot_line = self.plot_widget.plot(pen=pg.mkPen('w', width=1))
-        self.fit_baseline_curve = self.plot_widget.plot(
-            pen=pg.mkPen('#9E9E9E', width=1, style=Qt.PenStyle.DashLine)
+        # LabelItem (used for the title) takes different option keys than AxisItem's
+        # CSS-passthrough labelStyle -- "family"/"size"/"bold", not "font-family" etc.
+        self.plot_widget.setTitle(
+            "Loaded Spectrum", color="#000000",
+            family="Arial, Helvetica, sans-serif", size="13pt", bold=True,
         )
-        self.fit_curve = self.plot_widget.plot(pen=pg.mkPen('y', width=2))
-        self.fit_curve_sub1 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
-        self.fit_curve_sub2 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
-        plot_and_results.addWidget(self.plot_widget, stretch=3)
+        self.plot_widget.setLabel('left', 'Intensity (Counts)', **_PLOT_LABEL_STYLE)
+        self.plot_widget.setLabel('bottom', 'Pixel', **_PLOT_LABEL_STYLE)
 
-        self.fitting_text = QTextEdit()
-        self.fitting_text.setReadOnly(True)
-        self.fitting_text.setStyleSheet("font-family: Consolas; font-size: 11px;")
-        self.fitting_text.setFixedWidth(240)
-        plot_and_results.addWidget(self.fitting_text, stretch=1)
+        tick_font = _axis_tick_font()
+        for axis_name in ('left', 'bottom'):
+            axis = self.plot_widget.getAxis(axis_name)
+            axis.setPen('k')
+            axis.setTextPen('k')
+            axis.setStyle(tickFont=tick_font)
 
-        layout.addLayout(plot_and_results, stretch=1)
+        self.plot_widget.addLegend(offset=(10, 10), pen='k', brush='w', labelTextColor='k')
+
+        self.plot_line = self.plot_widget.plot(
+            pen=None, symbol='o', symbolSize=5, symbolBrush='k', symbolPen=None, name="Data"
+        )
+        self.fit_baseline_curve = self.plot_widget.plot(
+            pen=pg.mkPen('#757575', width=1, style=Qt.PenStyle.DashLine), name="Baseline"
+        )
+        self.fit_curve = self.plot_widget.plot(pen=pg.mkPen('r', width=2), name="Fit")
+        self.fit_curve_sub1 = self.plot_widget.plot(
+            pen=pg.mkPen('#1976D2', width=1, style=Qt.PenStyle.DashLine), name="Peak 1"
+        )
+        self.fit_curve_sub2 = self.plot_widget.plot(
+            pen=pg.mkPen('#7B1FA2', width=1, style=Qt.PenStyle.DashLine), name="Peak 2"
+        )
+
+        # LegendItem.addItem() builds its row labels with hardcoded style keys that
+        # don't include "family", so the legend text needs a second pass to pick up
+        # the same Arial/Helvetica styling as the rest of the plot.
+        legend = self.plot_widget.getPlotItem().legend
+        for _, label in legend.items:
+            label.setText(label.text, color="#000000", family="Arial, Helvetica, sans-serif", size="10pt")
+
+        layout.addWidget(self.plot_widget, stretch=1)
         return panel
 
-    # ---- right: fitting config + pressure -------------------------------------
+    # ---- right: fitting config + pressure, as two independent columns ---------
     def _build_right_panel(self):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
 
         panel = QWidget()
-        layout = QVBoxLayout(panel)
+        layout = QHBoxLayout(panel)
 
+        fitting_column = QVBoxLayout()
         self.fitting_config = FittingConfigWidget(fitting_enabled=True, parent=panel)
         self.fitting_config.expose_controls_on(self)
-        layout.addWidget(self.fitting_config)
+        fitting_column.addWidget(self.fitting_config)
 
         self.radio_fit_on.toggled.connect(self.update_plot_and_fit)
         self.radio_fit_off.toggled.connect(self.update_plot_and_fit)
@@ -213,28 +258,59 @@ class AnalysisWindow(QMainWindow):
         self.spin_fit_start.valueChanged.connect(self.update_plot_and_fit)
         self.spin_fit_end.valueChanged.connect(self.update_plot_and_fit)
 
+        self.fitting_results_group = QGroupBox("Fitting Results")
+        fitting_results_layout = QVBoxLayout(self.fitting_results_group)
+        self.fitting_text = QTextEdit()
+        self.fitting_text.setReadOnly(True)
+        self.fitting_text.setStyleSheet("font-family: Consolas; font-size: 11px;")
+        self.fitting_text.setMinimumHeight(220)
+        fitting_results_layout.addWidget(self.fitting_text)
+        fitting_column.addWidget(self.fitting_results_group, stretch=1)
+
         self.btn_save_fit = QPushButton("Save fitting results…")
         self.btn_save_fit.setEnabled(False)
         self.btn_save_fit.clicked.connect(self.on_save_fit_clicked)
-        layout.addWidget(self.btn_save_fit)
+        fitting_column.addWidget(self.btn_save_fit)
+        layout.addLayout(fitting_column, stretch=1)
 
+        # Wrapped in its own titled QGroupBox (mirroring FittingConfigWidget's own
+        # border/title) purely so the two columns read as clearly independent panels
+        # side by side, rather than one flowing into the other.
+        self.pressure_group = QGroupBox("Pressure Calculation")
+        pressure_group_layout = QVBoxLayout(self.pressure_group)
         self.pressure_window = PressureCalculatorWindow(
-            panel,
+            self.pressure_group,
             mode="nm",
             embedded=True,
             fit_controls_owner=self,
         )
         self.pressure_window.setEnabled(False)
         self.pressure_window.setToolTip("Load a calibrated spectrum to calculate pressure.")
-        layout.addWidget(self.pressure_window)
+        pressure_group_layout.addWidget(self.pressure_window)
+
+        pressure_margins = pressure_group_layout.contentsMargins()
+        pressure_frame_allowance = 6
+        self.pressure_group_natural_width = (
+            self.pressure_window.unconstrained_width
+            + pressure_margins.left() + pressure_margins.right()
+            + pressure_frame_allowance
+        )
+        self.pressure_group_max_width = round(self.pressure_group_natural_width * 0.8)
+        self.pressure_group.setMaximumWidth(self.pressure_group_max_width)
+
+        pressure_column = QVBoxLayout()
+        pressure_column.addWidget(self.pressure_group)
+        pressure_column.addStretch()
+        layout.addLayout(pressure_column, stretch=1)
 
         margins = layout.contentsMargins()
         scroll.setMinimumWidth(
-            self.pressure_window.minimumSizeHint().width()
-            + margins.left() + margins.right() + 20
+            self.fitting_config.minimumSizeHint().width()
+            + self.pressure_group_max_width
+            + margins.left() + margins.right() + layout.spacing()
+            + scroll.verticalScrollBar().sizeHint().width()
         )
 
-        layout.addStretch()
         scroll.setWidget(panel)
         return scroll
 
@@ -274,7 +350,7 @@ class AnalysisWindow(QMainWindow):
             x_label = 'Wavelength (nm)'
         else:
             x_label = 'Pixel'
-        self.plot_widget.setLabel('bottom', x_label)
+        self.plot_widget.setLabel('bottom', x_label, **_PLOT_LABEL_STYLE)
         if self.current_unit == "pixel":
             self.pressure_window.set_fit_peaks([])
             self.pressure_window.setEnabled(False)

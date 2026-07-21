@@ -31,6 +31,17 @@ class PressureCalculatorWindow(QDialog):
         self.fit_peak_count = 1
         self.peak_selection_for_pressure_calc = 1
         self.init_ui()
+        self.unconstrained_width = self.minimumSizeHint().width()
+        if self.embedded:
+            # Keep the shared calculator readable in the narrower embedded column.
+            # Newlines preserve the full labels without letting these two buttons
+            # dictate the width of the whole Analysis Mode window.
+            self.btn_apply_current.setText(
+                "Use the current value as\nzero-pressure peak position"
+            )
+            self.btn_set_lam0_t0.setText(
+                "Use the Current Value as the\nzero-pressure peak position at T0"
+            )
         self.setup_connections()
         self.update_mode(self.unit)
 
