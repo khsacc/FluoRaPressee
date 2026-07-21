@@ -80,18 +80,30 @@ class DataFileIO:
         by save_spectrum_1d. Used to filter directory listings in Analysis Mode -- it
         naturally rejects background/calibration files (JSON, no '#' lines) and
         *_fitting_results.txt files (plain CSV, no '#' lines either).
+
+        Requires the trailing '#' line to be the actual 1D column header (not just any
+        line containing 'Grating:', which save_spectrum_2d's header also has) so 2D
+        image files -- saved with the same header block plus a final '2D Image Data'
+        marker instead of a CSV column header -- are correctly rejected too.
         """
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                for _ in range(30):
+                header_lines = []
+                for _ in range(40):
                     line = f.readline()
-                    if not line:
+                    if not line or not line.startswith("#"):
                         break
-                    if line.startswith("#") and "Grating:" in line:
-                        return True
-        except OSError:
+                    header_lines.append(line[1:].strip())
+        except (OSError, UnicodeDecodeError):
             return False
-        return False
+
+        if not any(l.startswith("Grating:") for l in header_lines):
+            return False
+        if not header_lines:
+            return False
+        last_line = header_lines[-1]
+        return last_line.startswith("Wavelength_or_Pixel,Intensity") or \
+            last_line.startswith("Raman_shift_cm-1,Intensity")
 
     def load_spectrum_1d(self, file_path):
         """Load a 1D spectrum previously written by save_spectrum_1d.
@@ -110,10 +122,12 @@ class DataFileIO:
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 raw_lines = f.readlines()
-        except OSError as e:
+        except (OSError, UnicodeDecodeError) as e:
             raise ValueError(f"Could not read file: {e}")
 
         header_lines = [l[1:].strip() for l in raw_lines if l.startswith("#")]
+        if any(l == "2D Image Data" for l in header_lines):
+            raise ValueError("This file contains 2D image data, not a 1D spectrum.")
 
         def find(pattern, default=None, cast=str):
             for line in header_lines:

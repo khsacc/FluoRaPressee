@@ -76,6 +76,23 @@ class LoadSpectrum1dTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 io.load_spectrum_1d(path)
 
+    def test_load_raises_on_2d_file(self):
+        io = DataFileIO()
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "image.txt")
+            io.save_spectrum_2d(path, np.ones((3, 3)), metadata())
+            with self.assertRaises(ValueError):
+                io.load_spectrum_1d(path)
+
+    def test_load_raises_cleanly_on_non_utf8_file(self):
+        io = DataFileIO()
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "binary.txt")
+            with open(path, "wb") as f:
+                f.write(b"\xff\xfe\x00\x01not utf-8")
+            with self.assertRaises(ValueError):
+                io.load_spectrum_1d(path)
+
     def test_looks_like_spectrum_file(self):
         io = DataFileIO()
         with tempfile.TemporaryDirectory() as directory:
@@ -94,6 +111,15 @@ class LoadSpectrum1dTests(unittest.TestCase):
                 "baseline": {"requested": "Constant", "selected": "Constant"},
             }, "Gauss")
             self.assertFalse(io.looks_like_spectrum_file(fit_path))
+
+            image_path = os.path.join(directory, "image.txt")
+            io.save_spectrum_2d(image_path, np.ones((3, 3)), metadata())
+            self.assertFalse(io.looks_like_spectrum_file(image_path))
+
+            binary_path = os.path.join(directory, "binary.txt")
+            with open(binary_path, "wb") as f:
+                f.write(b"\xff\xfe\x00\x01not utf-8")
+            self.assertFalse(io.looks_like_spectrum_file(binary_path))
 
 
 if __name__ == "__main__":

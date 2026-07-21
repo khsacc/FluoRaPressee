@@ -50,6 +50,7 @@ class AnalysisWindow(QMainWindow):
         self.current_y_raw = None
         self.current_y_bg = None
         self.current_metadata = None
+        self.current_unit = None
         self.latest_fit_res = None
         self.latest_fit_func = None
         self.pressure_window = None
@@ -279,6 +280,17 @@ class AnalysisWindow(QMainWindow):
         return panel
 
     # ---- data loading + fitting -----------------------------------------------
+    @staticmethod
+    def _unit_for_metadata(metadata):
+        """"nm" / "cm-1" / "pixel". A file saved without a calibration loaded has its
+        x column as a raw pixel index regardless of what spec_mode's header says
+        (spec_mode defaults to "Wavelength" even when uncalibrated) -- calib_coeffs
+        being present is what actually indicates the axis is nm/cm-1.
+        """
+        if metadata is None or metadata.get("calib_coeffs") is None:
+            return "pixel"
+        return "cm-1" if metadata.get("spec_mode") == "Raman shift" else "nm"
+
     def load_file(self, file_path):
         try:
             x, y, y_raw, y_bg, metadata = self.file_io.load_spectrum_1d(file_path)
@@ -296,11 +308,16 @@ class AnalysisWindow(QMainWindow):
         self.lbl_loaded_file.setText(f"Loaded: {os.path.basename(file_path)}")
         self.display_toggle_widget.setVisible(y_raw is not None)
 
-        unit = "cm-1" if metadata.get("spec_mode") == "Raman shift" else "nm"
-        x_label = 'Raman shift (cm⁻¹)' if unit == "cm-1" else 'Wavelength (nm)'
+        self.current_unit = self._unit_for_metadata(metadata)
+        if self.current_unit == "cm-1":
+            x_label = 'Raman shift (cm⁻¹)'
+        elif self.current_unit == "nm":
+            x_label = 'Wavelength (nm)'
+        else:
+            x_label = 'Pixel'
         self.plot_widget.setLabel('bottom', x_label)
-        if self.pressure_window is not None:
-            self.pressure_window.update_mode(unit)
+        if self.pressure_window is not None and self.current_unit != "pixel":
+            self.pressure_window.update_mode(self.current_unit)
 
         min_x, max_x = float(np.min(x)), float(np.max(x))
         self.spin_fit_start.blockSignals(True)
@@ -442,8 +459,18 @@ class AnalysisWindow(QMainWindow):
         if self.radio_fit_off.isChecked():
             QMessageBox.warning(self, "Fitting required", "Please activate peak fitting to calculate pressure.")
             return
+        if self.current_unit is None:
+            QMessageBox.warning(self, "No spectrum loaded", "Load a spectrum first.")
+            return
+        if self.current_unit == "pixel":
+            QMessageBox.warning(
+                self, "Calibration required",
+                "This spectrum has no wavelength/Raman-shift calibration (pixel axis only); "
+                "pressure cannot be calculated from pixel positions."
+            )
+            return
 
-        unit = "cm-1" if (self.current_metadata or {}).get("spec_mode") == "Raman shift" else "nm"
+        unit = self.current_unit
         if self.pressure_window is None:
             self.pressure_window = PressureCalculatorWindow(self, mode=unit)
         else:
