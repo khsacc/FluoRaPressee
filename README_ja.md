@@ -192,9 +192,33 @@ Andor製またはPrinceton Instruments製のカメラ（検出器）および分
 
 ``FluoRaPressee_run.bat``をダブルクリック（またはコマンドプロンプト/PowerShellから実行）すると、``setup.bat``で作成した仮想環境を使ってアプリが起動します。
 
-※ ハードウェアを接続せずにUIのテストだけを行いたい場合は、``FluoRaPressee_run_debug.bat``を使うとデバッグモードで起動できます。
+<!-- ※ ハードウェアを接続せずにUIのテストだけを行いたい場合は、``FluoRaPressee_run_debug.bat``を使うとデバッグモードで起動できます。
 
-macOS/Linux上でUI開発のみ行う場合（ハードウェア制御は非対応）は、``./setup.sh``と``./FluoRaPressee_run_debug.sh``を使用してください。
+macOS/Linux上でUI開発のみ行う場合（ハードウェア制御は非対応）は、``./setup.sh``と``./FluoRaPressee_run_debug.sh``を使用してください。 -->
+
+### Analysis Modeをスタンドアロンで起動する
+
+保存済みの1Dスペクトルを読み込んでフィッティングや圧力計算を行うAnalysis Modeは、装置制御用のメイン画面を起動せず、単独で使用できます。プロジェクトのルートフォルダで次のコマンドを実行してください。
+
+Windows（``setup.bat``で作成した仮想環境を直接使用する場合）:
+
+```powershell
+.venv\Scripts\python.exe analysis_main.py
+```
+
+仮想環境をすでに有効化している場合:
+
+```bash
+python analysis_main.py
+```
+
+macOS/Linux（``setup.sh``で作成した仮想環境を直接使用する場合）:
+
+```bash
+.venv/bin/python analysis_main.py
+```
+
+Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``spectrometerConfig.json``は必要ありません。未較正のpixel軸データでもフィッティングは可能ですが、圧力計算には波長またはRaman shiftで較正されたデータが必要です。
 
 ## API機能（同一LAN内の他PCからの操作）
 
