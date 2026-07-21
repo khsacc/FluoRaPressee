@@ -156,7 +156,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         plot_layout = QVBoxLayout()
         
         status_coord_layout = QHBoxLayout()
-        self.status_label = QLabel("Initializing camera...")
+        self.status_label = QLabel("Initialising camera...")
         self.coord_label = QLabel("Cursor Position: --")
         self.coord_label.setStyleSheet("font-weight: bold; color: #0078D7; font-size: 14px;")
         status_coord_layout.addWidget(self.status_label)
@@ -741,7 +741,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.init_dialog.setModal(True)
         self.init_dialog.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint)
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("Initializing camera and cooler...\nPlease wait until the operation is completed."))
+        layout.addWidget(QLabel("Initialising camera and cooler...\nPlease wait until the operation is completed."))
         self.init_dialog.setLayout(layout)
         self.init_dialog.show()
 
