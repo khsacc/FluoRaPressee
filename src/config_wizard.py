@@ -771,6 +771,7 @@ class ConfigWizard(QDialog):
     def _refresh_buttons(self):
         page = self._stack.currentIndex()
         self._btn_back.setEnabled(page > 0)
+        self._btn_next.setEnabled(True)
         self._btn_next.setText("Finish" if page == 2 else "Next >")
 
     def _probe_hardware(self):
