@@ -446,19 +446,19 @@ class ApiMixin:
     # ------------------------------------------------------------------
 
     def api_apply_calibration(self, c0, c1, c2, unit, laser_wavelength_nm=None, label="api"):
-        """Must run on the GUI thread (updates self.lbl_loaded_calib etc. via
+        """Must run on the GUI thread (updates the loaded-configuration label via
         FileIOMixin.apply_calibration()).
         """
         self.apply_calibration(
             (c0, c1, c2), label, calib_unit=unit,
             calib_laser_wl=laser_wavelength_nm,
-            axis_source="loaded_calibration",
+            axis_source="api_inline_calibration",
         )
         return {
             "applied": True,
             "unit": self.calib_unit,
             "c0": c0, "c1": c1, "c2": c2,
-            "label": self.calib_file_name,
+            "label": self.configuration_label,
         }
 
     def api_get_status(self):
@@ -477,7 +477,7 @@ class ApiMixin:
             "calibration": {
                 "applied": self.calib_coeffs is not None,
                 "unit": self.calib_unit,
-                "label": self.calib_file_name,
+                "label": self.configuration_label,
             },
             "roi": {
                 "mode": roi_mode,

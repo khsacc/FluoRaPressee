@@ -17,6 +17,7 @@ from src.camera import CameraThread
 from src.spectrometer import SpectrometerController, SpectrometerMoveThread
 from src.analysis import DataAnalyzer
 from src.calibration_ui import CalibrationWindow
+from src.configuration_catalog import ConfigurationCatalog
 from src.pressureCalc import PressureCalculator
 from src.pressureCalc_ui import PressureCalculatorWindow
 from src.file_io import DataFileIO
@@ -94,7 +95,9 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.calib_coeffs = None
         self.calib_unit = 'Wavelength'   # 'Wavelength' (pixel→nm) or 'Raman shift' (pixel→cm⁻¹)
         self.calib_laser_wl = None       # excitation wavelength (nm) used when calib_unit=='Raman shift'
-        self.calib_file_name = "None"
+        self.configuration_label = "None"
+        self.active_configuration_id = None
+        self.active_configuration_slot_id = None
         self.axis_source = "pixel"
         self._latest_hardware_capture = None
         self._hardware_capture_by_mode = {}
@@ -130,6 +133,13 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # Future used only by GET /hardware/camera?refresh=true. The camera owns
         # its SDK and reports the live snapshot asynchronously via status_ready.
         self._api_camera_status_future = None
+        self._pending_calib_coeffs = None
+        self._pending_configuration_label = None
+        self._pending_calib_unit = None
+        self._pending_calib_laser_wl = None
+        self._pending_axis_source = None
+        self._pending_configuration_id = None
+        self._pending_configuration_slot_id = None
         # Set of "reasons the measurement controls are locked" (sequential run in progress,
         # API server running, etc.). Re-enabled only once every reason has been cleared
         # (see _lock_ui/_unlock_ui in sequential_mixin.py).
@@ -147,8 +157,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spec_ctrl = SpectrometerController(config=self.config, debug=self.debug)
         self.analyzer = DataAnalyzer()
         self.file_io = DataFileIO()
+        self.configuration_catalog = ConfigurationCatalog()
         self._last_save_dir = _cache.get("last_save_dir", "")
-        self._last_calib_dir = _cache.get("last_calib_dir", "")
 
         first_grating = self.config.get("grating", [{}])[0].get("grooves", 600)
         self.physical_grating = str(first_grating)
@@ -435,15 +445,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         spec_group = QGroupBox("Spectrometer Configurations")
         spec_layout = QGridLayout()
 
-        self.btn_load_calib = QPushButton("Load previous configuration")
-        self._set_button_style(self.btn_load_calib, self.BUTTON_STYLE_PURPLE)
-        self.lbl_notes_calib_loading = QLabel('Loading a configuration will change the grating, centre, ROI, and pixel-wavelength calibration.')
+        self.btn_load_configuration = QPushButton("Load previous configuration")
+        self._set_button_style(self.btn_load_configuration, self.BUTTON_STYLE_PURPLE)
+        self.lbl_notes_calib_loading = QLabel('Loading a configuration will change the grating, centre, ROI, and x-axis calibration.')
         self.lbl_notes_calib_loading.setStyleSheet("font-style: italic;")
         self.lbl_notes_calib_loading.setWordWrap(True) # Enable word wrap to prevent layout overflow
         
-        self.lbl_loaded_calib = QLabel("Loaded: None")
-        self.lbl_loaded_calib.setStyleSheet("color: #333; font-size: 12px; font-weight: bold; margin-bottom: 10px;")
-        self.lbl_loaded_calib.setWordWrap(True)
+        self.lbl_loaded_configuration = QLabel("Loaded: None")
+        self.lbl_loaded_configuration.setStyleSheet("color: #333; font-size: 12px; font-weight: bold; margin-bottom: 10px;")
+        self.lbl_loaded_configuration.setWordWrap(True)
         
         self.grating_list = [str(g.get("grooves")) for g in self.config.get("grating", [])]
         self.combo_grating = CustomComboBox()
@@ -473,9 +483,9 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         
         self.btn_calib_neon = QPushButton("Calibrate x-axis")
         
-        spec_layout.addWidget(self.btn_load_calib, 0, 0, 1, 2)
+        spec_layout.addWidget(self.btn_load_configuration, 0, 0, 1, 2)
         spec_layout.addWidget(self.lbl_notes_calib_loading, 1, 0, 1, 2)
-        spec_layout.addWidget(self.lbl_loaded_calib, 2, 0, 1, 2)
+        spec_layout.addWidget(self.lbl_loaded_configuration, 2, 0, 1, 2)
         
         spec_layout.addWidget(QLabel("Grating (grooves/mm):"), 3, 0)
         spec_layout.addWidget(self.combo_grating, 3, 1)
@@ -651,7 +661,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.btn_apply_spec.clicked.connect(self.on_apply_spectrometer)
         self.btn_calib_neon.clicked.connect(self.on_calibrate_neon)
-        self.btn_load_calib.clicked.connect(self.on_load_calibration)
+        self.btn_load_configuration.clicked.connect(self.on_load_configuration)
 
         self.btn_start_api.clicked.connect(self.on_start_api_server_clicked)
         self.btn_stop_api.clicked.connect(self.on_stop_api_server_clicked)

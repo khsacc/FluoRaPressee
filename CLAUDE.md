@@ -89,18 +89,29 @@ usable standalone or from scripts:
 - `src/calibration_helper.py` (`ReferenceHelperWindow`): reference neon-line lookup dialog backed by
   the pre-generated spectra JSON in `calibrationHelper/` (produced by
   `calibrationHelper/generateCalibrationHelper.py`).
+- `src/configuration_catalog.py` (`ConfigurationCatalog`): Qt-independent, versioned configuration
+  storage. Immutable JSON records contain hardware compatibility, grating, centre position, ROI,
+  display state, and calibration; a SQLite catalog indexes active/history versions without scanning
+  every JSON file. A slot is identified by hardware namespace + grating + target centre + ROI, and
+  saving another calibration for the same slot atomically makes the new record active. Both the GUI
+  and future API discovery endpoints must call this class rather than duplicating selection rules.
+- `src/configuration_browser.py` (`ConfigurationBrowserDialog`): the GUI's Load Configuration
+  selector. It shows active, hardware-compatible catalog summaries by default and can expose
+  compatible history explicitly; it never browses arbitrary legacy configuration JSON files.
 - `src/pressureCalc.py` (`PressureCalculator`): static methods mapping peak shift → pressure (GPa) for
   several sensors (Ruby, Sm2+:SrB4O7, diamond, cBN, zircon) and published calibration scales, with
   per-scale temperature-validity ranges; `src/pressureCalc_ui.py` wraps it in a `QDialog`.
-- `src/file_io.py` (`DataFileIO`): all file I/O (spectrum CSV, background JSON, calibration JSON,
-  fitting-result files, sequential-measurement summaries) is deliberately isolated here with **no
-  Qt dependency**, so it can be reused from external scripts. Keep new save/load logic here rather
-  than inlining it in `ui.py`.
+- `src/file_io.py` (`DataFileIO`): spectrum, background, fitting-result, and sequential-result file
+  I/O, deliberately isolated with **no Qt dependency**. Versioned spectrometer configuration
+  persistence is the separate responsibility of `ConfigurationCatalog`.
 
 **Config/state files** (generated at runtime, not checked in): `spectrometerConfig.json` (grating list,
 default ROIs, `flip_x`, hardware `model`) at the repo root, plus a local UI cache read/written by
 `_load_local_cache`/`_save_local_cache` in `src/ui_mixins/config_mixin.py` (last save/sequential
-directories, etc.).
+directories, etc.). Versioned measurement configurations are stored below the user's application-data
+directory in `FluoraPressee/configurations/`: canonical records under `records/YYYY/MM/` and the
+query-oriented `catalog.sqlite3` index. Exposure, accumulation, sample/material, dark,
+fit, and pressure settings deliberately do not belong to these records.
 
 **Optional HTTP API layer** (`src/api/`, `src/ui_mixins/api_mixin.py`): exposes a subset of
 `SpectrometerGUI`'s functionality over HTTP so other machines on the same LAN can trigger

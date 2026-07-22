@@ -317,30 +317,53 @@ Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``sp
 ```
 
 ### Configuration file
+
+Configurationは校正ダイアログの ``Save and apply`` でアプリケーション管理領域へ自動保存されます。
+任意の保存先・ファイル名を毎回指定する必要はありません。同じ装置、grating、centre position、ROIで
+再度保存すると新しいversionがactiveになり、以前のversionは履歴として保持されます。メイン画面の
+``Load previous configuration`` は、接続中の装置と互換性があるactive configurationだけを通常表示し、
+必要な場合だけ ``Show version history`` で旧versionを表示します。
+
+Configurationはgrating、centre position、ROI、装置互換性と横軸calibrationを一体として扱います。
+露光時間、積算数、試料・物質名、background、fitting条件は測定ごとに変更する値なので含みません。
+保存場所はOSのユーザー別application data領域にある ``FluoraPressee/configurations`` です。個々の
+JSON recordを正本とし、一覧検索には全JSONを読み込まずSQLite catalogを使用します。
+
 ```json
 {
-    "timestamp": "2026-04-15 21:01:52",
-    "spectrometer_settings": {
-        "grating_grooves_per_mm": "1200",
-        "center_wavelength_nm": 694.0,
-        "calibration_unit": "Wavelength",
-        "display_mode": "Wavelength",
-        "excitation_wavelength_nm": 532.0
+    "schema_version": 1,
+    "configuration_id": "cfg_...",
+    "slot_id": "slot_...",
+    "created_at": "2026-07-22T15:30:00+09:00",
+    "compatibility": {
+        "spectrometer_serial_number": "SPEC-001",
+        "camera_serial_number": "CAM-001"
     },
-    "detector_settings": {
-        "mode": "1D Spectrum (Custom ROI)",
+    "spectrometer": {
+        "grating_index": 2,
+        "grating_grooves_per_mm": 1200,
+        "target_center_wavelength_nm": 694.0,
+        "actual_center_wavelength_nm": 693.9998
+    },
+    "detector": {
+        "roi_mode": "1d_roi",
         "roi_start": 113,
         "roi_end": 125
     },
-    "calibration_coefficients": {
-        "c0": 673.3405851432854,
-        "c1": 0.020990883361968825,
-        "c2": -2.889725985123467e-07
+    "calibration": {
+        "unit": "Wavelength",
+        "excitation_wavelength_nm": null,
+        "coefficients": {
+            "c0": 673.3405851432854,
+            "c1": 0.020990883361968825,
+            "c2": -2.889725985123467e-07
+        }
     }
 }
 ```
 
-``calibration_unit`` は較正時の基準値（ネオン輝線波長など）に使われた単位、``display_mode`` は保存時にメイン画面が波長モード／Raman shiftモードのどちらであったかを表します（Raman shiftモードで励起波長を用いて較正した場合は ``excitation_wavelength_nm`` も併せて記録されます）。
+``configuration_id`` は変更されない特定version、``slot_id`` は同一のgrating・centre・ROI条件を表します。
+外部自動化から利用する将来のAPIも、GUIのLoad画面と同じcatalog summaryと互換性判定を使用できる構造です。
 
 
 

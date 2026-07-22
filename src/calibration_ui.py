@@ -1,18 +1,18 @@
 import json
 import os
-from datetime import datetime
 import numpy as np
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QTableWidget, QTableWidgetItem,
                              QCheckBox, QComboBox, QHeaderView, QWidget,
                              QAbstractSpinBox, QDoubleSpinBox, QSplitter,
-                             QScrollArea, QRadioButton, QFileDialog, QMessageBox, QSlider,
+                             QScrollArea, QRadioButton, QMessageBox, QSlider,
                              QListView, QButtonGroup)
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 
 from src.calibration import CalibrationCore
 from src.calibration_helper import ReferenceHelperWindow
+from src.configuration_catalog import format_configuration_label
 from src.ui_theme import colored_button_style
 
 class CustomDoubleSpinBox(QDoubleSpinBox):
@@ -491,64 +491,30 @@ class CalibrationWindow(QDialog):
         if self.calib_coeffs is None: return
         main_window = self.parent()
         if main_window is None: return
-        grating = main_window.combo_grating.currentText() if hasattr(main_window, 'combo_grating') else "Unknown"
-        # Always save the physical center wavelength in nm, regardless of display mode
-        center_wl = main_window.physical_center_wl if hasattr(main_window, 'physical_center_wl') else (
-            main_window.spin_centre_wl.value() if hasattr(main_window, 'spin_centre_wl') else 0.0)
-        date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         is_raman_unit = self.radio_unit_raman.isChecked()
-        unit_sym = "nm" if not is_raman_unit else "cm-1"
         calibration_unit = "Wavelength" if not is_raman_unit else "Raman shift"
-        if is_raman_unit:
-            laser_wl = main_window.spin_exc_wl.value() if hasattr(main_window, 'spin_exc_wl') else 532.0
-            center_display = self.nm_to_raman(center_wl, laser_wl)
-        else:
-            center_display = center_wl
-        display_mode = "Raman shift" if (hasattr(main_window, 'radio_spec_mode_raman') and main_window.radio_spec_mode_raman.isChecked()) else "Wavelength"
-        if main_window.radio_2d.isChecked():
-            mode = "2D Image"
-        else:
-            mode = "1D Spectrum (Custom ROI)" if main_window.radio_1d_roi.isChecked() else "1D Spectrum (Full Range Binning)"
-        default_filename = f"config_{grating}_{center_display:.1f}{unit_sym}_{date_str}.json"
-        last_calib_dir = getattr(main_window, '_last_calib_dir', "")
-        initial_path = os.path.join(last_calib_dir, default_filename) if last_calib_dir else default_filename
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Config", initial_path, "JSON (*.json)")
-        if not file_path: return
-        if hasattr(main_window, '_save_local_cache'):
-            main_window._last_calib_dir = os.path.dirname(file_path)
-            main_window._save_local_cache("last_calib_dir", main_window._last_calib_dir)
-        c0, c1, c2 = self.calib_coeffs
-        data = {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "spectrometer_settings": {
-                "grating_grooves_per_mm": grating,
-                "center_wavelength_nm": center_wl,
-                "calibration_unit": calibration_unit,
-                "display_mode": display_mode,
-                "excitation_wavelength_nm": main_window.spin_exc_wl.value() if hasattr(main_window, 'spin_exc_wl') else None,
-            },
-            "detector_settings": {
-                "mode": mode,
-                "roi_start": main_window.spin_vstart.value(),
-                "roi_end": main_window.spin_vend.value()
-            },
-            "calibration_coefficients": {"c0": c0, "c1": c1, "c2": c2}
-        }
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4)
-            if hasattr(main_window, 'apply_calibration'):
-                is_raman_calib = self.radio_unit_raman.isChecked()
-                calib_laser_wl = (main_window.spin_exc_wl.value()
-                                  if (is_raman_calib and hasattr(main_window, 'spin_exc_wl'))
-                                  else None)
-                main_window.apply_calibration(
-                    self.calib_coeffs,
-                    os.path.basename(file_path),
-                    calib_unit="Raman shift" if is_raman_calib else "Wavelength",
-                    calib_laser_wl=calib_laser_wl,
-                    axis_source="neon_polynomial",
-                )
+            calib_laser_wl = (
+                main_window.spin_exc_wl.value() if is_raman_unit else None
+            )
+            record = main_window.register_current_configuration(
+                self.calib_coeffs,
+                calibration_unit=calibration_unit,
+                excitation_wavelength_nm=calib_laser_wl,
+            )
+            label = format_configuration_label(record)
+            main_window.apply_calibration(
+                self.calib_coeffs,
+                label,
+                calib_unit=calibration_unit,
+                calib_laser_wl=calib_laser_wl,
+                axis_source="neon_polynomial",
+                configuration_id=record["configuration_id"],
+                slot_id=record["slot_id"],
+            )
+            main_window.status_label.setText(
+                f"Configuration saved and active: {label}"
+            )
             self.accept()
         except Exception as e:
-            QMessageBox.critical(self, "Error", str(e))
+            QMessageBox.critical(self, "Configuration Error", str(e))

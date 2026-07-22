@@ -31,7 +31,7 @@ This software was developed in the Geochemical Research Center (GcRC), Graduate 
   * Seamless switching between Wavelength (nm) and Raman shift (cm⁻¹) modes (supports excitation wavelength setting).
 * **Background Correction & Calibration**
   * Acquire, save, and subtract background spectra in real-time.
-  * X-axis wavelength calibration tool (supports loading previous calibration files).
+  * X-axis wavelength calibration tool with a versioned, hardware-compatible configuration catalog.
 * **Real-time Peak Fitting**
   * Single and double peak fitting using Gauss, Lorentz, and Pseudo-Voigt functions.
   * Automatic and manual fitting range configurations.
@@ -100,7 +100,10 @@ instead.
 * analysis.py: Handles peak fitting logic for spectrum data.
 * calibration_ui.py: Dedicated GUI dialogue for pixel-to-wavelength calibration.
 * pressureCalc.py: Module for pressure calculation logic from Ruby fluorescence.
-* spectrometerConfig.json: Configuration file for gratings and ROI settings (generated automatically on first run).
+* spectrometerConfig.json: Startup hardware/configuration file (generated automatically on first run).
+* Per-measurement spectrometer configurations: immutable JSON records indexed by SQLite below the
+  user's `FluoraPressee/configurations` application-data directory. Each active slot is distinguished
+  by hardware, grating, centre position, and ROI; exposure and sample/material are not part of it.
 
 # Acknowledgement
 

@@ -68,7 +68,9 @@ class Window:
         self.physical_center_wl = 694.0
         self.calib_coeffs = (690.0, 0.1, 1e-6)
         self.calib_unit = "Wavelength"
-        self.calib_file_name = "/calibrations/neon.json"
+        self.configuration_label = "600 g/mm | 694.000 nm | ROI 45–65"
+        self.active_configuration_id = "cfg-test"
+        self.active_configuration_slot_id = "slot-test"
         self.axis_source = "neon_polynomial"
         self._camera_identity = {"model": "DU-401", "serial_number": "CAM-1"}
         self._last_temperature_c = -64.9
@@ -90,7 +92,8 @@ class MeasurementMetadataTests(unittest.TestCase):
         self.assertEqual(metadata["spectrometer"]["grating"]["blaze"], "500 nm")
         self.assertEqual(metadata["spectrometer"]["wavelength_limits_nm"]["max"], 1200.0)
         self.assertEqual(metadata["axis"]["source"], "neon_polynomial")
-        self.assertEqual(metadata["axis"]["calibration_file_name"], "neon.json")
+        self.assertEqual(metadata["axis"]["configuration_id"], "cfg-test")
+        self.assertEqual(metadata["axis"]["configuration_slot_id"], "slot-test")
 
     def test_background_match_and_mismatch_are_recorded(self):
         window = Window()

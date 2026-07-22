@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
-import os
 
 from src.instrument_status import json_value
 
@@ -124,16 +123,23 @@ def _axis_state(window):
     if coeffs is None:
         source = "hardware_shamrock" if source == "hardware_shamrock" else "pixel"
         coefficients = None
-        filename = None
     else:
-        source = source if source in ("neon_polynomial", "loaded_calibration") else "loaded_calibration"
+        source = source if source in (
+            "neon_polynomial", "loaded_configuration", "api_inline_calibration"
+        ) else "loaded_configuration"
         coefficients = {"c0": coeffs[0], "c1": coeffs[1], "c2": coeffs[2]}
-        raw_name = getattr(window, "calib_file_name", None)
-        filename = None if raw_name in (None, "", "None") else os.path.basename(str(raw_name))
     return {
         "source": source,
+        "configuration_id": (
+            getattr(window, "active_configuration_id", None) if coefficients else None
+        ),
+        "configuration_slot_id": (
+            getattr(window, "active_configuration_slot_id", None) if coefficients else None
+        ),
+        "configuration_label": (
+            getattr(window, "configuration_label", None) if coefficients else None
+        ),
         "calibration_coefficients": coefficients,
-        "calibration_file_name": filename,
         "calibration_unit": getattr(window, "calib_unit", None) if coefficients else None,
     }
 

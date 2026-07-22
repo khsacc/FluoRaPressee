@@ -87,7 +87,7 @@ class SequentialMixin:
             self.spin_exc_wl.setEnabled(enabled)
         self.btn_apply_spec.setEnabled(enabled)
         self.btn_calib_neon.setEnabled(enabled)
-        self.btn_load_calib.setEnabled(enabled)
+        self.btn_load_configuration.setEnabled(enabled)
 
         self.radio_fit_on.setEnabled(enabled)
         self.radio_fit_off.setEnabled(enabled)

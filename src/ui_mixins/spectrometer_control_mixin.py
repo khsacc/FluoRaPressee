@@ -127,7 +127,7 @@ class SpectrometerControlMixin:
         self.spin_centre_wl.setEnabled(enabled)
         self.spin_exc_wl.setEnabled(enabled and self.radio_spec_mode_raman.isChecked())
         self.btn_calib_neon.setEnabled(enabled)
-        self.btn_load_calib.setEnabled(enabled)
+        self.btn_load_configuration.setEnabled(enabled)
         if enabled:
             self.check_spectrometer_changes()
         else:
@@ -239,13 +239,8 @@ class SpectrometerControlMixin:
             self.spin_centre_wl.blockSignals(False)
 
             # Position no longer matches whatever the pixel calibration was taken at.
-            self.calib_coeffs = None
-            self.axis_source = "pixel"
-            self.calib_unit = 'Wavelength'
-            self.calib_laser_wl = None
-            self.calib_file_name = "None"
-            self.lbl_loaded_calib.setText("Loaded: None")
-            self.update_plot_labels()
+            self.clear_active_configuration()
+            self._clear_pending_configuration()
 
             self._set_spectrometer_controls_enabled(True)
             QMessageBox.information(
@@ -262,6 +257,7 @@ class SpectrometerControlMixin:
                 "The spectrometer setting change failed."
             )
             self._loading_config = False
+            self._clear_pending_configuration()
             self._close_spectrometer_moving_dialog()
             self._set_spectrometer_controls_enabled(True)
             QMessageBox.warning(self, "Spectrometer error", message)
@@ -281,28 +277,24 @@ class SpectrometerControlMixin:
             if hasattr(self, '_pending_calib_coeffs') and self._pending_calib_coeffs is not None:
                 self.apply_calibration(
                     self._pending_calib_coeffs,
-                    self._pending_calib_filename,
+                    self._pending_configuration_label,
                     calib_unit=getattr(self, '_pending_calib_unit', 'Wavelength'),
                     calib_laser_wl=getattr(self, '_pending_calib_laser_wl', None),
-                    axis_source=getattr(self, '_pending_axis_source', 'loaded_calibration'),
+                    axis_source=getattr(self, '_pending_axis_source', 'loaded_configuration'),
+                    configuration_id=getattr(self, '_pending_configuration_id', None),
+                    slot_id=getattr(self, '_pending_configuration_slot_id', None),
                 )
-                self._pending_calib_coeffs = None
-                self._pending_calib_filename = None
-                self._pending_calib_unit = None
-                self._pending_calib_laser_wl = None
-                self._pending_axis_source = None
+                try:
+                    self.configuration_catalog.mark_used(self._pending_configuration_id)
+                except Exception as exc:
+                    print(f"Failed to update configuration usage metadata: {exc}")
+                self._clear_pending_configuration()
             self._loading_config = False
         else:
             # Grating/centre-wavelength changes invalidate the pixel calibration (it was only
             # valid at the previous physical position), but must NOT touch the ROI: ROI is set
-            # independently via config load, calibration-file load, or direct user edits only.
-            self.calib_coeffs = None
-            self.axis_source = "pixel"
-            self.calib_unit = 'Wavelength'
-            self.calib_laser_wl = None
-            self.calib_file_name = "None"
-            self.lbl_loaded_calib.setText("Loaded: None")
-            self.update_plot_labels()
+            # independently via configuration load or direct user edits only.
+            self.clear_active_configuration()
 
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
             self.update_display(is_new_data=False)
