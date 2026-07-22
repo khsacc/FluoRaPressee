@@ -344,6 +344,10 @@ class PressureCalculatorWindow(QDialog):
             recommended = 1
         elif sensor == "diamond_raman_edge":
             recommended = 1
+        elif sensor == "quartz_464":
+            recommended = 1
+        elif sensor == "quartz_128":
+            recommended = 1
 
         if recommended is None:
             self.reset_peak_selection_for_pressure_calc()

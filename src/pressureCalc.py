@@ -57,6 +57,18 @@ class PressureCalculator:
             "unit": "cm-1",
             "initial_value": 1008.6,
         },
+        "quartz_464": {
+            "label": "Quartz 464 cm-1",
+            "kind": "raman",
+            "unit": "cm-1",
+            "initial_value": 464.4,
+        },
+        "quartz_128": {
+            "label": "Quartz 128 cm-1",
+            "kind": "raman",
+            "unit": "cm-1",
+            "initial_value": 127.9,
+        },
     }
 
     PRESSURE_SCALES = {
@@ -141,6 +153,25 @@ class PressureCalculator:
             "zircon_schmidt_2013": {"label": "Schmidt et al. 2013", "temperature_mode": "none"},
             "zircon_takahashi_2024": {"label": "Takahashi et al. 2024", "temperature_mode": "none"},
         },
+        "quartz_464": {
+            "quartz_schmidt_ziemann_2000": {
+                "label": "Schmidt and Ziemann 2000 (quadratic, ~23 C)",
+                "temperature_mode": "none",
+            },
+            "quartz_schmidt_ziemann_2000_linear": {
+                "label": "Schmidt and Ziemann 2000 (linear, 9 cm-1/GPa)",
+                "temperature_mode": "none",
+            },
+        },
+        "quartz_128": {
+            "quartz_li_2025": {
+                "label": "Li et al. 2025",
+                "temperature_mode": "embedded_pt",
+                "valid_temp_range": (296.15, 973.15),
+                "fixed_t0": 296.15,
+                "fixed_t0_note": "T0 is fixed at 23 C (296.15 K) for this scale.",
+            },
+        },
     }
 
     TEMPERATURE_SCALES = {
@@ -163,6 +194,9 @@ class PressureCalculator:
         "zircon_b1g": {
             "zircon_schmidt_2013": {"label": "Schmidt et al. 2013", "valid_range": (296, 1223)},
             "zircon_takahashi_2024": {"label": "Takahashi et al. 2024", "valid_range": (294, 1078)},
+        },
+        "quartz_464": {
+            "quartz_schmidt_ziemann_2000": {"label": "Schmidt and Ziemann 2000", "valid_range": (77.15, 833.15)},
         },
     }
 
@@ -603,6 +637,50 @@ class PressureCalculator:
             if p_scale == "zircon_takahashi_2024":
                 return (wavenumber-wavenumber0)/5.48, wavenumber_err / 5.48, None
 
+        if sensor == "quartz_464":
+            if p_scale == "quartz_schmidt_ziemann_2000":
+                # Schmidt and Ziemann (2000) Eq. 2: P (MPa) = 0.36079*x^2 + 110.86*x,
+                # x = pressure-induced shift of the 464 cm-1 line relative to 0.1 MPa
+                # at ~23 degC (after any temperature correction has been applied to
+                # wavenumber0). Valid for 0 < x <= 20 cm-1 (up to ~2.1 GPa).
+                a = 0.36079
+                b = 110.86
+                x = wavenumber - wavenumber0
+                p = (a * x**2 + b * x) / 1000.0
+                dp = abs(2.0 * a * x + b) / 1000.0 * wavenumber_err
+                return p, dp, None
+
+            if p_scale == "quartz_schmidt_ziemann_2000_linear":
+                # Global isotherm slope (d(nu464)/dP)_T = 9 +/- 0.5 cm-1/GPa,
+                # reported as constant between 100 and 560 degC.
+                a = 9.0
+                a_err = 0.5
+                x = wavenumber - wavenumber0
+                p = x / a
+                dp = np.sqrt((wavenumber_err / a) ** 2 + (x / a**2 * a_err) ** 2)
+                return p, dp, None
+
+        if sensor == "quartz_128":
+            if p_scale == "quartz_li_2025":
+                # Li et al. (2025) Eq. 3: domega128(Tc, P) = A*Tc^4 + B*Tc^3 + C*Tc^2
+                # + D*Tc + (E + F*Tc)*P + G, with Tc in degC (T0 fixed at 23 degC) and
+                # P in MPa. Linear in P, so inverted algebraically for P(domega128, Tc).
+                A = 1.20176e-10
+                B = -1.64508e-7
+                C = 2.0665e-5
+                D = -0.02134
+                E = 0.00599
+                F = 1.60394e-5
+                G = 0.48515
+                t_c = current_t - 273.15
+                baseline = A * t_c**4 + B * t_c**3 + C * t_c**2 + D * t_c + G
+                slope = E + F * t_c
+                domega = wavenumber - wavenumber0
+                p_mpa = (domega - baseline) / slope
+                p = p_mpa / 1000.0
+                dp = abs(wavenumber_err / slope) / 1000.0
+                return p, dp, None
+
         return None, None, None
 
     @staticmethod
@@ -742,6 +820,20 @@ class PressureCalculator:
                 calc_nu_at_t0 = kawamoto_BN_temp(t0)
                 offset = calc_nu_at_t0 - zero_peak_at_t0
                 return kawamoto_BN_temp(current_t) - offset
+
+        if sensor == "quartz_464":
+            if t_scale == "quartz_schmidt_ziemann_2000":
+                def schmidt_quartz464_temp(temp_c):  # in degC !!
+                    return (
+                        2.50136e-11 * temp_c**4
+                        + 1.46454e-8 * temp_c**3
+                        - 1.801e-5 * temp_c**2
+                        - 0.01216 * temp_c
+                        + 0.29
+                    )
+                calc_nu_at_t0 = schmidt_quartz464_temp(t0 - 273.15)
+                offset = calc_nu_at_t0 - zero_peak_at_t0
+                return schmidt_quartz464_temp(current_t - 273.15) - offset
         return zero_peak_at_t0
 
     @staticmethod

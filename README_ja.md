@@ -99,6 +99,15 @@ Andor製またはPrinceton Instruments製のカメラ（検出器）および分
         * 温度シフト
             * 296 - 1223 K, Schmidt et al., <i>Am. Min.</i> (2013) [DOI: 10.2138/am.2013.4143](https://doi.org/10.2138/am.2013.4143)
             * 294 - 1078 K, Takahashi et al., <i>J. Raman Spectrosc.</i> (2024) [DOI: 10.1002/jrs.6663](https://doi.org/10.1002/jrs.6663)
+    * Quartz 464 cm<sup>-1</sup>
+        * 圧力シフト
+            * Schmidt and Ziemann, <i>Am. Min.</i> (2000) [23℃付近、2次式、0 < Δν ≤ 20 cm<sup>-1</sup>（~2.1 GPaまで）] [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
+            * Schmidt and Ziemann, <i>Am. Min.</i> (2000) [100–560℃、線形近似 9 cm<sup>-1</sup>/GPa] [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
+        * 温度シフト
+            * 77.15 - 833.15 K (-196 - 560℃), Schmidt and Ziemann, <i>Am. Min.</i> (2000) [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
+    * Quartz 128 cm<sup>-1</sup>
+        * 圧力シフト
+            * Li et al., <i>Chem. Geol.</i> (2025) [温度依存項を内包、基準温度T<sub>0</sub> = 296.15 K (23℃) 固定、有効範囲 296.15–973.15 K] [DOI: 10.1016/j.chemgeo.2024.122558](https://doi.org/10.1016/j.chemgeo.2024.122558)
 
 
 
