@@ -69,6 +69,8 @@ class FileIOMixin:
         self.configuration_label = label
         self.active_configuration_id = configuration_id
         self.active_configuration_slot_id = slot_id
+        self.positioned_configuration_id = configuration_id
+        self.positioned_configuration_slot_id = slot_id
         self.axis_source = axis_source
         self.lbl_loaded_configuration.setText(f"Loaded: {label}")
         self.update_plot_labels()
@@ -85,6 +87,8 @@ class FileIOMixin:
         self.configuration_label = "None"
         self.active_configuration_id = None
         self.active_configuration_slot_id = None
+        self.positioned_configuration_id = None
+        self.positioned_configuration_slot_id = None
         self.lbl_loaded_configuration.setText("Loaded: None")
         self.update_plot_labels()
 
@@ -238,7 +242,61 @@ class FileIOMixin:
             QMessageBox.warning(self, "Error", f"Failed to load configuration:\n{e}")
             self._clear_pending_configuration()
 
-    def _prepare_configuration_for_loading(self, record):
+    def _apply_pixel_configuration(self, label, configuration_id, slot_id):
+        """Keep the configuration's physical state but expose an uncalibrated axis."""
+        self.calib_coeffs = None
+        self.calib_unit = "Wavelength"
+        self.calib_laser_wl = None
+        self.configuration_label = label
+        self.active_configuration_id = None
+        self.active_configuration_slot_id = None
+        self.positioned_configuration_id = configuration_id
+        self.positioned_configuration_slot_id = slot_id
+        self.axis_source = "pixel"
+        self.lbl_loaded_configuration.setText(f"Loaded: {label} (pixel axis)")
+        self.update_plot_labels()
+        self.sync_fit_range_to_spectrum(force=True)
+        if (
+            getattr(self, "raw_1d_data", None) is not None
+            and hasattr(self.thread, "is_measuring")
+            and not self.thread.is_measuring
+        ):
+            self.update_display(is_new_data=False)
+
+    def _configuration_matches_current_state(self, record):
+        """Return whether a configuration move would be physically redundant."""
+        spectrometer = record["spectrometer"]
+        detector = record["detector"]
+        try:
+            current_grating = self._current_grating_definition(
+                self.configuration_hardware_context()
+            )
+            current_roi = self._current_roi_definition()
+            return (
+                int(current_grating["index"])
+                == int(spectrometer["grating_index"])
+                and int(current_grating["grooves_per_mm"])
+                == int(spectrometer["grating_grooves_per_mm"])
+                and abs(
+                    float(self.physical_center_wl)
+                    - float(spectrometer["target_center_wavelength_nm"])
+                )
+                < 5e-4
+                and current_roi["roi_mode"] == detector["roi_mode"]
+                and int(current_roi["roi_start"]) == int(detector["roi_start"])
+                and int(current_roi["roi_end"]) == int(detector["roi_end"])
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+
+    def _prepare_configuration_for_loading(
+        self,
+        record,
+        *,
+        axis_mode="calibrated",
+        completion_future=None,
+        skip_move=False,
+    ):
         detector = record["detector"]
         spectrometer = record["spectrometer"]
         display = record.get("display", {})
@@ -312,8 +370,59 @@ class FileIOMixin:
         self._pending_axis_source = "loaded_configuration"
         self._pending_configuration_id = record["configuration_id"]
         self._pending_configuration_slot_id = record["slot_id"]
+        self._pending_configuration_axis_mode = axis_mode
+        self._pending_configuration_future = completion_future
 
-        self.on_apply_spectrometer()
+        if skip_move:
+            self._finalize_pending_configuration()
+        else:
+            self.on_apply_spectrometer()
+
+    def _finalize_pending_configuration(self):
+        """Apply the staged axis state after a move, or immediately for a no-op move."""
+        configuration_id = self._pending_configuration_id
+        slot_id = self._pending_configuration_slot_id
+        completion_future = self._pending_configuration_future
+        try:
+            if self._pending_configuration_axis_mode == "pixel":
+                self._apply_pixel_configuration(
+                    self._pending_configuration_label, configuration_id, slot_id
+                )
+            else:
+                self.apply_calibration(
+                    self._pending_calib_coeffs,
+                    self._pending_configuration_label,
+                    calib_unit=self._pending_calib_unit,
+                    calib_laser_wl=self._pending_calib_laser_wl,
+                    axis_source=self._pending_axis_source,
+                    configuration_id=configuration_id,
+                    slot_id=slot_id,
+                )
+            try:
+                self.configuration_catalog.mark_used(configuration_id)
+            except Exception as exc:
+                print(f"Failed to update configuration usage metadata: {exc}")
+        except Exception as exc:
+            self._clear_pending_configuration()
+            self._loading_config = False
+            if completion_future is not None and not completion_future.done():
+                completion_future.set_exception(exc)
+                return
+            raise
+
+        self._clear_pending_configuration()
+        self._loading_config = False
+        if completion_future is not None and not completion_future.done():
+            completion_future.set_result(True)
+
+    def _fail_pending_configuration(self, message):
+        completion_future = getattr(self, "_pending_configuration_future", None)
+        self._clear_pending_configuration()
+        self._loading_config = False
+        if completion_future is not None and not completion_future.done():
+            completion_future.set_exception(RuntimeError(message))
+            return True
+        return False
 
     def _clear_pending_configuration(self):
         self._pending_calib_coeffs = None
@@ -323,6 +432,8 @@ class FileIOMixin:
         self._pending_axis_source = None
         self._pending_configuration_id = None
         self._pending_configuration_slot_id = None
+        self._pending_configuration_axis_mode = "calibrated"
+        self._pending_configuration_future = None
 
     def on_acq_bg_clicked(self):
         if not self._try_acquire_gate():

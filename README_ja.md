@@ -368,7 +368,9 @@ modelの完全一致へfallbackします。旧形式の任意保存calibration J
 ```
 
 ``configuration_id`` は変更されない特定version、``slot_id`` は同一のgrating・centre・ROI条件を表します。
-外部自動化から利用する将来のAPIも、GUIのLoad画面と同じcatalog summaryと互換性判定を使用できる構造です。
+外部自動化用の ``GET /configurations`` もGUIのLoad画面と同じcatalog summaryと互換性判定を使用します。
+取得APIへ ``configuration_id`` を指定するとconfiguration適用から測定までを一つの排他操作として実行し、
+省略すると現在と同じ条件のまま測定します。
 
 
 

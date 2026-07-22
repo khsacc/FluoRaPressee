@@ -15,6 +15,7 @@ from src.api.info_helpers import (
     normalize_camera_metadata,
     normalize_spectrometer_metadata,
 )
+from src.configuration_catalog import format_configuration_label
 from src.instrument_status import legacy_camera_snapshot, unavailable_device
 from src.measurement_metadata import capture_hardware_state
 from src.pressureCalc import PressureCalculator
@@ -207,15 +208,19 @@ class ApiMixin:
             stored_config=stored,
         )
 
-    def _api_start_acquire(self, exposure_s=None, accumulations=None):
+    def _api_start_acquire(
+        self, exposure_s=None, accumulations=None, *, gate_already_held=False
+    ):
         """Kick off a single-shot acquisition and return immediately.
 
         Does not wait for the frame to arrive - that happens asynchronously via
         the existing data_ready signal path; the returned Future is resolved
         later by _process_completed_data().
         """
-        if not self._try_acquire_gate():
+        if not gate_already_held and not self._try_acquire_gate():
             raise RuntimeError("acquisition busy")
+        if gate_already_held and not self._acquisition_gate.locked():
+            raise RuntimeError("configuration operation lost the acquisition gate")
 
         actual_exposure = exposure_s if exposure_s is not None else self.spin_acq_time.value()
         actual_accum = accumulations if accumulations is not None else self.spin_accumulate.value()
@@ -236,7 +241,13 @@ class ApiMixin:
 
         future = Future()
         self._api_pending_future = future
-        self.take_single_spectrum()
+        try:
+            self.take_single_spectrum()
+        except Exception:
+            self._active_target_accum = None
+            self._api_pending_future = None
+            self._release_acquisition_gate()
+            raise
 
         return future, actual_exposure, actual_accum
 
@@ -288,8 +299,156 @@ class ApiMixin:
     # API worker-thread entry point.
     # ------------------------------------------------------------------
 
-    def api_acquire(self, exposure_s=None, accumulations=None, dark_mode="none",
-                     dark_data=None, ignore_mismatch=False, timeout=30.0):
+    def _api_start_configuration_apply(self, record, axis_mode):
+        """Acquire the operation gate and stage/move a configuration on the GUI thread."""
+        if self._instrument_status_busy() or not self._try_acquire_gate():
+            raise RuntimeError("instrument busy")
+        completion_future = Future()
+        try:
+            self._prepare_configuration_for_loading(
+                record,
+                axis_mode=axis_mode,
+                completion_future=completion_future,
+                skip_move=self._configuration_matches_current_state(record),
+            )
+        except Exception:
+            self._clear_pending_configuration()
+            self._loading_config = False
+            self._release_acquisition_gate()
+            raise
+        return completion_future
+
+    def _api_release_gate_after_future(self):
+        try:
+            self.gui_bridge.call(self._release_acquisition_gate)
+        except Exception as exc:
+            print(f"Failed to release configuration operation gate: {exc}")
+
+    def _api_validate_configuration(self, configuration_id):
+        record = self.configuration_catalog.get_configuration(configuration_id)
+        hardware_context = self.gui_bridge.call(self.configuration_hardware_context)
+        self.configuration_catalog.assert_compatible(record, hardware_context)
+        return record
+
+    def _api_wait_for_configuration(self, record, axis_mode, timeout=120.0):
+        future = self.gui_bridge.call(
+            lambda: self._api_start_configuration_apply(record, axis_mode)
+        )
+        try:
+            future.result(timeout=timeout)
+        except FutureTimeoutError:
+            # Movement may still hold a controller lock. Release the operation
+            # gate only after the move callback has actually completed.
+            future.add_done_callback(
+                lambda _future: self._api_release_gate_after_future()
+            )
+            raise
+        return future
+
+    def _api_configuration_state(self):
+        hardware = self.configuration_hardware_context()
+        try:
+            grating = self._current_grating_definition(hardware)
+        except Exception:
+            grating = {"index": None, "grooves_per_mm": None}
+        roi = self._current_roi_definition()
+        calibrated = self.calib_coeffs is not None
+        positioned_id = getattr(self, "positioned_configuration_id", None)
+        positioned_slot_id = getattr(
+            self, "positioned_configuration_slot_id", None
+        )
+        if positioned_id is not None:
+            try:
+                positioned_record = self.configuration_catalog.get_configuration(
+                    positioned_id
+                )
+                if not self._configuration_matches_current_state(positioned_record):
+                    positioned_id = None
+                    positioned_slot_id = None
+            except Exception:
+                positioned_id = None
+                positioned_slot_id = None
+        return {
+            "configuration": {
+                "configuration_id": positioned_id,
+                "slot_id": positioned_slot_id,
+                "axis_mode": "calibrated" if calibrated else "pixel",
+                "calibration_applied": calibrated,
+                "unit": self.calib_unit if calibrated else "pixel",
+            },
+            "hardware_state": {
+                "grating_index": grating["index"],
+                "grooves_per_mm": grating["grooves_per_mm"],
+                "actual_center_wavelength_nm": float(
+                    hardware["actual_center_wavelength_nm"]
+                    if hardware["actual_center_wavelength_nm"] is not None
+                    else self.physical_center_wl
+                ),
+                "roi_mode": roi["roi_mode"],
+                "roi_start": roi["roi_start"],
+                "roi_end": roi["roi_end"],
+            },
+        }
+
+    def api_list_configurations(
+        self, *, active_only=True, include_incompatible=False, limit=100, offset=0
+    ):
+        hardware_context = self.gui_bridge.call(self.configuration_hardware_context)
+        return self.configuration_catalog.list_selectable(
+            hardware_context,
+            active_only=active_only,
+            include_incompatible=include_incompatible,
+            limit=limit,
+            offset=offset,
+        )
+
+    def api_get_configuration(self, configuration_id):
+        record = self.configuration_catalog.get_configuration(configuration_id)
+        hardware_context = self.gui_bridge.call(self.configuration_hardware_context)
+        reasons = self.configuration_catalog.compatibility_reasons(
+            record, hardware_context
+        )
+        return {
+            "catalog_revision": self.configuration_catalog.catalog_revision(),
+            "configuration": record,
+            "compatible": not reasons,
+            "incompatibility_reasons": reasons,
+        }
+
+    def api_resolve_configurations(self, slot_ids):
+        hardware_context = self.gui_bridge.call(self.configuration_hardware_context)
+        return self.configuration_catalog.resolve_slots(slot_ids, hardware_context)
+
+    def api_apply_configuration(self, configuration_id, axis_mode="calibrated"):
+        record = self._api_validate_configuration(configuration_id)
+        try:
+            self._api_wait_for_configuration(record, axis_mode)
+            state = self.gui_bridge.call(self._api_configuration_state)
+        except FutureTimeoutError:
+            raise
+        except Exception:
+            self.gui_bridge.call(self._release_acquisition_gate)
+            raise
+        self.gui_bridge.call(self._release_acquisition_gate)
+        return {
+            "applied": True,
+            "configuration_id": record["configuration_id"],
+            "slot_id": record["slot_id"],
+            "display_label": format_configuration_label(record),
+            **state,
+        }
+
+    def api_acquire(
+        self,
+        exposure_s=None,
+        accumulations=None,
+        dark_mode="none",
+        dark_data=None,
+        ignore_mismatch=False,
+        configuration_id=None,
+        axis_mode="calibrated",
+        timeout=30.0,
+    ):
         """Synchronous single-shot acquisition for API callers.
 
         Must be called from a non-GUI thread. Background subtraction is
@@ -300,18 +459,47 @@ class ApiMixin:
         if dark_mode == "provided" and dark_data is None:
             raise ValueError('dark_mode="provided" requires dark_data')
 
-        future, actual_exposure, actual_accum = self.gui_bridge.call(
-            lambda: self._api_start_acquire(exposure_s, accumulations)
+        configuration_applied = False
+        if configuration_id is not None:
+            record = self._api_validate_configuration(configuration_id)
+            try:
+                self._api_wait_for_configuration(record, axis_mode)
+                configuration_applied = True
+            except FutureTimeoutError:
+                raise
+            except Exception:
+                self.gui_bridge.call(self._release_acquisition_gate)
+                raise
+
+        try:
+            future, actual_exposure, actual_accum = self.gui_bridge.call(
+                lambda: self._api_start_acquire(
+                    exposure_s,
+                    accumulations,
+                    gate_already_held=configuration_applied,
+                )
+            )
+        except Exception:
+            if configuration_applied:
+                self.gui_bridge.call(self._release_acquisition_gate)
+            raise
+        acquisition_timeout = max(
+            float(timeout), float(actual_exposure) * int(actual_accum) + 15.0
         )
-        result = future.result(timeout=timeout)
+        result = future.result(timeout=acquisition_timeout)
         raw = result["raw"]
         mode = result["mode"]
 
         x, temp_text, bg_data, bg_mismatch = self.gui_bridge.call(
             lambda: self._api_finalize_acquire(
-                len(raw) if mode == "1d" else None, mode, dark_mode, actual_exposure, actual_accum
+                len(raw) if mode == "1d" else None,
+                mode,
+                dark_mode,
+                actual_exposure,
+                actual_accum,
             )
         )
+        configuration_state = self.gui_bridge.call(self._api_configuration_state)
 
         background_mismatch_warning = False
 
@@ -350,6 +538,7 @@ class ApiMixin:
             "accumulations": actual_accum,
             "detector_temperature_c": _parse_temp_c(temp_text),
             "timestamp": datetime.now().isoformat(),
+            **configuration_state,
         }
         if background_mismatch_warning:
             response["background_mismatch_warning"] = True
@@ -470,6 +659,7 @@ class ApiMixin:
         else:
             roi_mode = "1d_roi"
 
+        configuration_state = self._api_configuration_state()
         return {
             "busy": self._acquisition_gate.locked(),
             "camera_connected": hasattr(self, 'thread') and self.thread.isRunning(),
@@ -488,6 +678,7 @@ class ApiMixin:
                 "loaded": self.loaded_bg_data is not None,
                 "metadata": self.loaded_bg_metadata,
             },
+            **configuration_state,
         }
 
     # ------------------------------------------------------------------

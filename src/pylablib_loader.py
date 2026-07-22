@@ -29,7 +29,10 @@ class _BlockLegacyQtFinder(MetaPathFinder):
 @contextmanager
 def _without_legacy_qt():
     already_loaded = [
-        name for name in sys.modules
+        # Import hooks and extension modules may populate sys.modules from a
+        # helper thread while API/Qt modules are loading. Iterate a stable
+        # snapshot so this guard itself cannot raise "dictionary changed size".
+        name for name in list(sys.modules)
         if name in _BLOCKED_BINDINGS
         or name.startswith(tuple(f"{binding}." for binding in _BLOCKED_BINDINGS))
     ]

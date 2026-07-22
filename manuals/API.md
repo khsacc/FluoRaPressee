@@ -59,7 +59,17 @@ X-API-Key: <API Server パネルに表示されているキー>
   "exposure_time_s": 0.1,
   "calibration": {"applied": true, "unit": "Wavelength", "label": "manual-20260709"},
   "roi": {"mode": "1d_roi", "start": 100, "end": 140},
-  "background": {"loaded": false, "metadata": null}
+  "background": {"loaded": false, "metadata": null},
+  "configuration": {
+    "configuration_id": "cfg_...", "slot_id": "slot_...",
+    "axis_mode": "calibrated", "calibration_applied": true,
+    "unit": "Wavelength"
+  },
+  "hardware_state": {
+    "grating_index": 2, "grooves_per_mm": 1200,
+    "actual_center_wavelength_nm": 694.0,
+    "roi_mode": "1d_roi", "roi_start": 100, "roi_end": 140
+  }
 }
 ```
 
@@ -213,10 +223,64 @@ X-API-Key: <API Server パネルに表示されているキー>
 - `redacted_fields`: `api_key`, `password`, `token`, `secret` を名前に含むキーをレスポンスから
   除外した場合のパス一覧。APIキー用の別ファイル `fluora_pressee_api_key.json` は常に対象外。
 
-### `POST /calibration`
+### `GET /configurations`
 
-校正パラメータ(既にGUIまたは他の手段で計算済みの多項式係数)を適用する。校正計算そのものは
-このAPIでは行わない。
+GUIのLoad Configurationと同じcatalogから、configurationの軽量summaryを返す。既定では
+接続中の装置と互換性がある各slotのactive versionだけを返すため、同じ条件で校正を繰り返しても
+通常の選択肢は増えない。
+
+- `active_only=true`: `false`にすると旧versionも含める。
+- `include_incompatible=false`: `true`にすると非互換configurationも理由付きで含める。
+- `limit=100`: 1～1000。
+- `offset=0`: pagination offset。
+
+応答には`catalog_revision`, `items`, `total`, `limit`, `offset`を含む。summaryにはgrating、
+centre position、ROI、calibration unitを含むが、calibration係数は含まない。
+
+### `GET /configurations/{configuration_id}`
+
+immutableなconfiguration record全体を返す。`configuration.calibration.coefficients`を使えば、
+pixel軸で取得したデータへクライアント側で後から校正を適用できる。現在の装置との互換性も返す。
+
+### `POST /configurations/resolve`
+
+ES等が保持するstableな`slot_id`を、実行に使うexactな`configuration_id`へ固定する。
+
+```json
+{"slot_ids": ["slot_690nm", "slot_694nm", "slot_700nm"]}
+```
+
+```json
+{
+  "catalog_revision": 42,
+  "resolved": [
+    {"slot_id": "slot_690nm", "configuration_id": "cfg_exact_1"},
+    {"slot_id": "slot_694nm", "configuration_id": "cfg_exact_2"},
+    {"slot_id": "slot_700nm", "configuration_id": "cfg_exact_3"}
+  ]
+}
+```
+
+ESはsequence検証時にresolveし、実行中は返されたexact IDを使用する。これにより、検証後に
+同じslotへ新しい校正が保存されても実行中のconfigurationは暗黙に変化しない。
+
+### `POST /configurations/{configuration_id}/apply`
+
+指定configurationのgrating、centre position、ROIと横軸状態を適用し、移動完了後に応答する。
+
+```json
+{"axis_mode": "calibrated"}
+```
+
+- `axis_mode="calibrated"`（既定）: 保存済みcalibrationを適用する。
+- `axis_mode="pixel"`: grating・centre・ROIだけを適用し、横軸はpixelにする。
+
+現在のgrating・centre・ROIが同じslotと一致している場合、装置移動は省略して横軸状態だけを更新する。
+応答には`configuration`, `hardware_state`, `display_label`を含む。
+
+### `POST /calibration`（deprecated）
+
+係数を直接適用する旧endpoint。新規連携ではconfiguration endpointを使用すること。将来削除予定。
 
 **リクエスト:**
 ```json
@@ -243,11 +307,18 @@ X-API-Key: <API Server パネルに表示されているキー>
 **リクエスト:**
 ```json
 {
+  "configuration_id": "cfg_exact_1",
+  "axis_mode": "calibrated",
   "exposure_time_s": 0.5,
   "accumulations": 3,
   "dark": {"mode": "none"}
 }
 ```
+- `configuration_id`は省略可。省略時は分光器・ROI・横軸を変更せず、現在と同じ条件で取得する。
+- `configuration_id`指定時は、互換性確認、configuration適用、移動完了、取得を一つの排他操作として
+  実行する。同じ物理条件なら移動を省略する。
+- `axis_mode`は`configuration_id`指定時だけ使用でき、`"calibrated"`または`"pixel"`。
+  省略時は`"calibrated"`。configurationなしで`axis_mode`だけ指定すると`422`。
 - `exposure_time_s` / `accumulations` を省略すると、現在GUIに設定されている値がそのまま使われる。
 - `dark.mode`:
   - `"none"`(既定): 減算しない。
@@ -269,7 +340,17 @@ X-API-Key: <API Server パネルに表示されているキー>
   "exposure_time_s": 0.5,
   "accumulations": 3,
   "detector_temperature_c": -64.8,
-  "timestamp": "2026-07-09T10:11:06.677845"
+  "timestamp": "2026-07-09T10:11:06.677845",
+  "configuration": {
+    "configuration_id": "cfg_exact_1", "slot_id": "slot_690nm",
+    "axis_mode": "calibrated", "calibration_applied": true,
+    "unit": "Wavelength"
+  },
+  "hardware_state": {
+    "grating_index": 1, "grooves_per_mm": 600,
+    "actual_center_wavelength_nm": 690.0,
+    "roi_mode": "1d_roi", "roi_start": 45, "roi_end": 65
+  }
 }
 ```
 - `x` は較正済みなら較正後の単位(nm または cm⁻¹)、未較正ならpixel番号。GUIの "Flip X-axis" 設定
@@ -372,6 +453,7 @@ X-API-Key: <API Server パネルに表示されているキー>
 `zero_pressure_peak_at_current_t`/`temperature_warning` はすべて `null` になる。
 ダブルピークフィットの場合、圧力計算にはPeak1(較正済みx軸で値が小さい方の
 主ピーク)が使われる。
+横軸がpixelの場合は圧力計算できないため`400 Bad Request`を返す。
 
 ## エラーコード一覧
 
@@ -379,11 +461,12 @@ X-API-Key: <API Server パネルに表示されているキー>
 |---|---|
 | 400 | リクエストの内容が不正(`dark.data` の長さ不一致、2Dモードでのフィット要求など) |
 | 401 | `X-API-Key` が無い、または一致しない |
-| 409 | 他の取得、分光器移動、校正、ライブ状態照会が進行中 |
+| 404 | 指定configurationまたはslotが存在しない |
+| 409 | 他の操作が進行中、またはconfigurationが装置と非互換 |
 | 422 | リクエストボディのバリデーションエラー(Pydantic)、または `dark.mode="reuse_loaded"` の
       設定ミスマッチ |
 | 500 | 予期しないサーバーエラー |
-| 504 | 取得またはライブ状態照会がタイムアウトした |
+| 504 | configuration適用、取得またはライブ状態照会がタイムアウトした |
 
 ## 既知の制限
 
@@ -409,6 +492,14 @@ curl -H "X-API-Key: <キー>" "http://<IP>:8765/hardware/spectrometer?refresh=tr
 
 # 実行中・保存済みconfig
 curl -H "X-API-Key: <キー>" http://<IP>:8765/config
+
+# Load Configurationと同じactive候補
+curl -H "X-API-Key: <キー>" http://<IP>:8765/configurations
+
+# configurationを適用してpixel軸で取得
+curl -X POST -H "X-API-Key: <キー>" -H "Content-Type: application/json" \
+  -d '{"configuration_id":"cfg_...", "axis_mode":"pixel"}' \
+  http://<IP>:8765/acquire
 
 # データ取得+フィット+圧力算出
 curl -X POST -H "X-API-Key: <キー>" -H "Content-Type: application/json" \

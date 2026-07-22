@@ -98,6 +98,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.configuration_label = "None"
         self.active_configuration_id = None
         self.active_configuration_slot_id = None
+        # Physical grating/centre/ROI may correspond to a configuration even
+        # when its calibration is deliberately not applied (API pixel mode).
+        self.positioned_configuration_id = None
+        self.positioned_configuration_slot_id = None
         self.axis_source = "pixel"
         self._latest_hardware_capture = None
         self._hardware_capture_by_mode = {}
@@ -140,6 +144,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self._pending_axis_source = None
         self._pending_configuration_id = None
         self._pending_configuration_slot_id = None
+        self._pending_configuration_axis_mode = "calibrated"
+        self._pending_configuration_future = None
         # Set of "reasons the measurement controls are locked" (sequential run in progress,
         # API server running, etc.). Re-enabled only once every reason has been cleared
         # (see _lock_ui/_unlock_ui in sequential_mixin.py).

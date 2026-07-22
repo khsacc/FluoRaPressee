@@ -134,12 +134,18 @@ full local control.
 - `src/api/schemas.py` / `src/api/server.py` (`create_app`): Pydantic request/response models and the
   FastAPI app factory (routes, `X-API-Key` header auth). `src/ui_mixins/api_mixin.py` (`ApiMixin`)
   implements the actual logic each route calls into (`api_acquire`, `api_fit`, `api_pressure`,
-  `api_apply_calibration`, `api_get_status`, the read-only hardware/config endpoints) independent of
+  configuration list/get/resolve/apply, `api_get_status`, and the read-only hardware/config
+  endpoints) independent of
   the GUI's own `radio_bg_on`/`chk_flip_x`/fit-panel widgets, so a remote request never depends on or
   mutates what the operator is currently looking at. `GET /hardware/camera` and
   `GET /hardware/spectrometer` use cached metadata by default; `refresh=true` performs an exclusive
   live status query. `GET /config` distinguishes active startup hardware settings from values saved
   for the next restart and redacts secret-like keys.
+- `GET /configurations` uses the exact catalog discovery rules used by the GUI. Acquisition requests
+  may optionally supply an immutable `configuration_id`; when supplied, configuration movement and
+  acquisition share one exclusion-gate ownership, while omission preserves the current instrument
+  and axis state. `axis_mode="pixel"` positions the configuration without applying its calibration.
+  The inline-coefficient `POST /calibration` route is deprecated.
 - Background (dark) subtraction over the API defaults to rejecting a mismatched exposure/ROI outright
   (`BackgroundMismatchError` → HTTP 422) rather than silently subtracting an invalid dark frame;
   callers can opt into subtracting anyway (`dark.ignore_mismatch`) or supply their own dark spectrum

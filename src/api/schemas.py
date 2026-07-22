@@ -42,9 +42,17 @@ class DarkOptions(BaseModel):
 
 
 class AcquireRequest(BaseModel):
+    configuration_id: str | None = None
+    axis_mode: Literal["calibrated", "pixel"] | None = None
     exposure_time_s: float | None = None
-    accumulations: int = 1
+    accumulations: int | None = Field(default=None, ge=1)
     dark: DarkOptions = Field(default_factory=DarkOptions)
+
+    @model_validator(mode="after")
+    def _axis_mode_belongs_to_explicit_configuration(self):
+        if self.axis_mode is not None and self.configuration_id is None:
+            raise ValueError("axis_mode can only be set with configuration_id")
+        return self
 
 
 class FitRange(BaseModel):
@@ -108,6 +116,8 @@ class AcquireResponse(BaseModel):
     accumulations: int
     detector_temperature_c: float | None = None
     timestamp: str
+    configuration: dict[str, Any]
+    hardware_state: dict[str, Any]
     background_mismatch_warning: bool | None = None
 
 
@@ -136,6 +146,45 @@ class StatusResponse(BaseModel):
     calibration: dict
     roi: dict
     background: dict
+    configuration: dict[str, Any]
+    hardware_state: dict[str, Any]
+
+
+class ConfigurationListResponse(BaseModel):
+    catalog_revision: int
+    items: list[dict[str, Any]]
+    total: int
+    limit: int
+    offset: int
+
+
+class ConfigurationRecordResponse(BaseModel):
+    catalog_revision: int
+    configuration: dict[str, Any]
+    compatible: bool
+    incompatibility_reasons: list[str]
+
+
+class ResolveConfigurationsRequest(BaseModel):
+    slot_ids: list[str] = Field(min_length=1)
+
+
+class ResolveConfigurationsResponse(BaseModel):
+    catalog_revision: int
+    resolved: list[dict[str, str]]
+
+
+class ApplyConfigurationRequest(BaseModel):
+    axis_mode: Literal["calibrated", "pixel"] = "calibrated"
+
+
+class ApplyConfigurationResponse(BaseModel):
+    applied: bool
+    configuration_id: str
+    slot_id: str
+    display_label: str
+    configuration: dict[str, Any]
+    hardware_state: dict[str, Any]
 
 
 class HardwareIdentity(BaseModel):

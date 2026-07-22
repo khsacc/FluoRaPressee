@@ -10,12 +10,22 @@ from src.api.schemas import (
     AcquirePressureResponse,
     AcquireRequest,
     AcquireResponse,
+    ApplyConfigurationRequest,
+    ApplyConfigurationResponse,
     CalibrationRequest,
     CalibrationResponse,
     CameraInfoResponse,
     ConfigResponse,
+    ConfigurationListResponse,
+    ConfigurationRecordResponse,
+    ResolveConfigurationsRequest,
+    ResolveConfigurationsResponse,
     SpectrometerInfoResponse,
     StatusResponse,
+)
+from src.configuration_catalog import (
+    ConfigurationCompatibilityError,
+    ConfigurationError,
 )
 from src.ui_mixins.api_mixin import BackgroundMismatchError
 
@@ -76,9 +86,22 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
                 dark_mode=req.dark.mode,
                 dark_data=req.dark.data,
                 ignore_mismatch=req.dark.ignore_mismatch,
+                configuration_id=req.configuration_id,
+                axis_mode=req.axis_mode or "calibrated",
             )
+        except ConfigurationCompatibilityError as e:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "configuration_incompatible",
+                    "message": "Configuration is incompatible with the connected hardware.",
+                    "reasons": e.reasons,
+                },
+            )
+        except ConfigurationError as e:
+            raise HTTPException(status_code=404, detail=str(e))
         except RuntimeError as e:
-            if str(e) == "acquisition busy":
+            if str(e) in {"acquisition busy", "instrument busy"}:
                 raise HTTPException(status_code=409, detail=str(e))
             raise HTTPException(status_code=500, detail=str(e))
         except BackgroundMismatchError as e:
@@ -86,7 +109,10 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except FutureTimeoutError:
-            raise HTTPException(status_code=504, detail="Acquisition timed out")
+            raise HTTPException(
+                status_code=504,
+                detail="Configuration apply or acquisition timed out",
+            )
 
     def _run_hardware_info(fn, device_name):
         try:
@@ -111,6 +137,8 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
             "accumulations": result["accumulations"],
             "detector_temperature_c": result["detector_temperature_c"],
             "timestamp": result["timestamp"],
+            "configuration": result["configuration"],
+            "hardware_state": result["hardware_state"],
         }
         if "background_mismatch_warning" in result:
             payload["background_mismatch_warning"] = result["background_mismatch_warning"]
@@ -158,7 +186,83 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
     def get_config():
         return gui_bridge.call(gui_window.api_get_config)
 
-    @router.post("/calibration", response_model=CalibrationResponse)
+    @router.get("/configurations", response_model=ConfigurationListResponse)
+    def get_configurations(
+        active_only: bool = True,
+        include_incompatible: bool = False,
+        limit: int = 100,
+        offset: int = 0,
+    ):
+        try:
+            return gui_window.api_list_configurations(
+                active_only=active_only,
+                include_incompatible=include_incompatible,
+                limit=limit,
+                offset=offset,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    @router.post(
+        "/configurations/resolve", response_model=ResolveConfigurationsResponse
+    )
+    def resolve_configurations(req: ResolveConfigurationsRequest):
+        try:
+            return gui_window.api_resolve_configurations(req.slot_ids)
+        except ConfigurationCompatibilityError as e:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "configuration_incompatible",
+                    "message": "A configuration is incompatible with the connected hardware.",
+                    "reasons": e.reasons,
+                },
+            )
+        except ConfigurationError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @router.get(
+        "/configurations/{configuration_id}",
+        response_model=ConfigurationRecordResponse,
+    )
+    def get_configuration(configuration_id: str):
+        try:
+            return gui_window.api_get_configuration(configuration_id)
+        except ConfigurationError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    @router.post(
+        "/configurations/{configuration_id}/apply",
+        response_model=ApplyConfigurationResponse,
+    )
+    def apply_configuration(
+        configuration_id: str, req: ApplyConfigurationRequest
+    ):
+        try:
+            return gui_window.api_apply_configuration(
+                configuration_id, axis_mode=req.axis_mode
+            )
+        except ConfigurationCompatibilityError as e:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "configuration_incompatible",
+                    "message": "Configuration is incompatible with the connected hardware.",
+                    "reasons": e.reasons,
+                },
+            )
+        except ConfigurationError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except RuntimeError as e:
+            if str(e) == "instrument busy":
+                raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+        except FutureTimeoutError:
+            raise HTTPException(status_code=504, detail="Configuration apply timed out")
+
+    @router.post(
+        "/calibration", response_model=CalibrationResponse, deprecated=True
+    )
     def post_calibration(req: CalibrationRequest):
         return gui_bridge.call(lambda: gui_window.api_apply_calibration(
             req.c0, req.c1, req.c2, req.unit,
@@ -181,6 +285,11 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
     def post_acquire_pressure(req: AcquirePressureRequest):
         result = _run_acquire(req)
         payload = _acquire_response_payload(result)
+        if result["configuration"]["axis_mode"] != "calibrated":
+            raise HTTPException(
+                status_code=400,
+                detail="Pressure calculation requires a calibrated axis.",
+            )
         fit_payload = _fit_payload(req, result)
         payload["fit"] = fit_payload
 

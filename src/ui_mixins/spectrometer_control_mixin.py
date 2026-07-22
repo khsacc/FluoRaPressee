@@ -121,6 +121,11 @@ class SpectrometerControlMixin:
                 QMessageBox.warning(self, "Busy", "Could not resume measurement: acquisition is busy.")
 
     def _set_spectrometer_controls_enabled(self, enabled):
+        # A completed API-triggered move must not partially undo the broader
+        # API-server/sequential UI lock. _unlock_ui() will restore controls
+        # after every lock reason has been removed.
+        if enabled and getattr(self, "_ui_lock_reasons", set()):
+            enabled = False
         self.combo_grating.setEnabled(enabled)
         self.radio_spec_mode_wl.setEnabled(enabled)
         self.radio_spec_mode_raman.setEnabled(enabled)
@@ -240,14 +245,17 @@ class SpectrometerControlMixin:
 
             # Position no longer matches whatever the pixel calibration was taken at.
             self.clear_active_configuration()
-            self._clear_pending_configuration()
+            handled_by_api = self._fail_pending_configuration(
+                "The spectrometer move was cancelled."
+            )
 
             self._set_spectrometer_controls_enabled(True)
-            QMessageBox.information(
-                self, "Move cancelled",
-                f"The spectrometer move was cancelled. Actual position read back: "
-                f"grating index {actual_grating_idx}, {actual_wl:.3f} nm."
-            )
+            if not handled_by_api:
+                QMessageBox.information(
+                    self, "Move cancelled",
+                    f"The spectrometer move was cancelled. Actual position read back: "
+                    f"grating index {actual_grating_idx}, {actual_wl:.3f} nm."
+                )
             return
 
         if getattr(self.spec_move_thread, "success", True) is False:
@@ -256,11 +264,11 @@ class SpectrometerControlMixin:
                 "error_message",
                 "The spectrometer setting change failed."
             )
-            self._loading_config = False
-            self._clear_pending_configuration()
+            handled_by_api = self._fail_pending_configuration(message)
             self._close_spectrometer_moving_dialog()
             self._set_spectrometer_controls_enabled(True)
-            QMessageBox.warning(self, "Spectrometer error", message)
+            if not handled_by_api:
+                QMessageBox.warning(self, "Spectrometer error", message)
             return
 
         self.physical_grating = self.combo_grating.currentText()
@@ -274,22 +282,7 @@ class SpectrometerControlMixin:
         self.btn_apply_spec.setEnabled(False)
 
         if getattr(self, '_loading_config', False):
-            if hasattr(self, '_pending_calib_coeffs') and self._pending_calib_coeffs is not None:
-                self.apply_calibration(
-                    self._pending_calib_coeffs,
-                    self._pending_configuration_label,
-                    calib_unit=getattr(self, '_pending_calib_unit', 'Wavelength'),
-                    calib_laser_wl=getattr(self, '_pending_calib_laser_wl', None),
-                    axis_source=getattr(self, '_pending_axis_source', 'loaded_configuration'),
-                    configuration_id=getattr(self, '_pending_configuration_id', None),
-                    slot_id=getattr(self, '_pending_configuration_slot_id', None),
-                )
-                try:
-                    self.configuration_catalog.mark_used(self._pending_configuration_id)
-                except Exception as exc:
-                    print(f"Failed to update configuration usage metadata: {exc}")
-                self._clear_pending_configuration()
-            self._loading_config = False
+            self._finalize_pending_configuration()
         else:
             # Grating/centre-wavelength changes invalidate the pixel calibration (it was only
             # valid at the previous physical position), but must NOT touch the ROI: ROI is set

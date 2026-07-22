@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from concurrent.futures import Future
 
 from src.configuration_catalog import ConfigurationCatalog
 
@@ -94,8 +95,16 @@ class Window(FileIOMixin):
         self.spin_exc_wl = Value(532.0)
         self.spin_centre_wl = Value(690.0)
         self.lbl_centre = Label()
+        self.lbl_loaded_configuration = Label()
         self.roi_applied = False
         self.move_started = False
+        self.raw_1d_data = None
+
+    def update_plot_labels(self):
+        pass
+
+    def sync_fit_range_to_spectrum(self, force=False):
+        pass
 
     def apply_roi_settings(self):
         self.roi_applied = True
@@ -152,6 +161,38 @@ class ConfigurationUiFlowTests(unittest.TestCase):
         self.assertEqual(
             self.window._pending_configuration_id, record["configuration_id"]
         )
+
+    def test_api_noop_apply_skips_move_and_can_select_pixel_axis(self):
+        record = self.window.register_current_configuration((1.0, 2.0, 3.0))
+        calibrated_future = Future()
+
+        self.assertTrue(self.window._configuration_matches_current_state(record))
+        self.window._prepare_configuration_for_loading(
+            record,
+            completion_future=calibrated_future,
+            skip_move=True,
+        )
+
+        self.assertTrue(calibrated_future.result())
+        self.assertFalse(self.window.move_started)
+        self.assertEqual(
+            self.window.active_configuration_id, record["configuration_id"]
+        )
+
+        pixel_future = Future()
+        self.window._prepare_configuration_for_loading(
+            record,
+            axis_mode="pixel",
+            completion_future=pixel_future,
+            skip_move=True,
+        )
+
+        self.assertTrue(pixel_future.result())
+        self.assertIsNone(self.window.active_configuration_id)
+        self.assertEqual(
+            self.window.positioned_configuration_id, record["configuration_id"]
+        )
+        self.assertEqual(self.window.axis_source, "pixel")
 
 
 if __name__ == "__main__":
