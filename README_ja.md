@@ -115,7 +115,7 @@ Andor製またはPrinceton Instruments製のカメラ（検出器）および分
 ## 必須環境 (Requirements)
 
 * **OS**: Windows 10 / 11 (Andor SDK・Princeton Instruments PICam Runtime のいずれもWindows専用のため)
-* **Python**: Python 3.8 以上, 3.13以下
+* **Python**: Python 3.9 以上, 3.13以下
 * **Hardware**: 以下のいずれかの組み合わせに対応しています（起動時の設定ウィザードでどちらかを選択します）
   * Andor製 カメラ（検出器）+ Andor製 分光器（Kymera / Shamrock シリーズ、``ShamrockCIF.dll`` 経由で制御）
   * Princeton Instruments製 カメラ（検出器、PICam対応機種）+ Princeton Instruments製 分光器（Acton SP シリーズ、シリアル(COMポート)通信で制御）
@@ -127,7 +127,7 @@ Andor製またはPrinceton Instruments製のカメラ（検出器）および分
 
 1. リポジトリをクローンしたのち、``setup.bat``をダブルクリック（またはコマンドプロンプト/PowerShellから実行）します。
    プロジェクトフォルダ内に仮想環境``.venv``が作成され、``requirements.txt``に記載された必要なPythonパッケージ
-   （``PyQt5``, ``pyqtgraph``, ``numpy``, ``scipy``, ``pylablib``, ``pyserial``、および後述のAPI機能用の
+   （``PyQt6``, ``pyqtgraph``, ``numpy``, ``scipy``, ``pylablib``, ``pyserial``、および後述のAPI機能用の
    ``fastapi``, ``uvicorn``, ``pydantic``）がすべて自動的にインストールされます。
    手動でインストールする場合は、作成した仮想環境内で ``pip install -r requirements.txt`` を実行してください。
 2. 使用する装置メーカーに応じて、SDK/ドライバを正しくインストールします。

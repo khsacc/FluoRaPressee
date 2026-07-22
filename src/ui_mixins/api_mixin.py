@@ -7,7 +7,7 @@ from datetime import datetime
 
 import numpy as np
 import uvicorn
-from PyQt5.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from src.api.info_helpers import (
     build_config_response,
@@ -557,9 +557,10 @@ class ApiMixin:
             "This immediately invalidates the current API key. Any paired client still using the "
             "old key will get 401 Unauthorized until it's updated with the new one shown next.\n\n"
             "Continue?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         new_key = self.regenerate_api_key()

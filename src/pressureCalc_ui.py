@@ -1,7 +1,7 @@
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QComboBox,
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QComboBox,
                              QLabel, QDoubleSpinBox, QAbstractSpinBox, QWidget,
                              QRadioButton, QHBoxLayout, QGroupBox, QPushButton)
-from PyQt5.QtCore import Qt
+from PyQt6.QtCore import Qt
 from src.pressureCalc import PressureCalculator
 
 class CustomDoubleSpinBox(QDoubleSpinBox):
@@ -15,9 +15,9 @@ class PressureCalculatorWindow(QDialog):
         self.embedded = embedded
         self._fit_controls_owner = fit_controls_owner if fit_controls_owner is not None else parent
         if self.embedded:
-            # QDialog is normally always a top-level window.  Qt.Widget keeps this
+            # QDialog is normally always a top-level window. Qt.WindowType.Widget keeps this
             # exact same calculator UI usable as an in-layout child widget.
-            self.setWindowFlags(Qt.Widget)
+            self.setWindowFlags(Qt.WindowType.Widget)
         self.unit = mode
         self.setWindowTitle("Pressure Calculator")
         if not self.embedded:

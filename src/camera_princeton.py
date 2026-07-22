@@ -2,13 +2,15 @@ import os
 import time
 import numpy as np
 from threading import Lock, Condition
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal
+
+from src.pylablib_loader import import_pylablib_module
 
 # Wrapped in try-except so a missing SDK doesn't raise an error when running in debug (dummy) mode
 try:
-    import pylablib
-    from pylablib.devices import PrincetonInstruments
-    from pylablib.devices.PrincetonInstruments import picam as picam_module
+    pylablib = import_pylablib_module("pylablib")
+    PrincetonInstruments = import_pylablib_module("pylablib.devices.PrincetonInstruments")
+    picam_module = import_pylablib_module("pylablib.devices.PrincetonInstruments.picam")
 except ImportError:
     pylablib = None
     PrincetonInstruments = None

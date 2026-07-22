@@ -18,11 +18,12 @@ gc.enable()
 import threading
 
 import uvicorn
-from PyQt5.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication
 
 from src.ui import SpectrometerGUI
 from src.app_bootstrap import print_software_and_author_info, check_and_create_config
 from src.api.gui_bridge import GuiBridge
+from src.ui_theme import apply_application_style
 from src.api.server import create_app
 
 DEV_API_KEY = "devkey"
@@ -36,6 +37,7 @@ def main():
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
+    apply_application_style(app)
 
     bridge = GuiBridge()
     window = SpectrometerGUI(debug=True)

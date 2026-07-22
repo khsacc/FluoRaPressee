@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime
 import os
 
+from src.pylablib_loader import import_pylablib_module
+
 
 SUPPLIER_ANDOR = "Andor"
 SUPPLIER_PI = "PrincetonInstruments"
@@ -58,7 +60,7 @@ def _merge_identity(result, category, identity):
 
 
 def _probe_andor_camera(result, config):
-    from pylablib.devices import Andor
+    Andor = import_pylablib_module("pylablib.devices.Andor")
 
     camera = None
     try:
@@ -127,8 +129,8 @@ def _probe_andor_spectrometer(result, config):
 
 
 def _probe_pi_camera(result, config):
-    import pylablib
-    from pylablib.devices import PrincetonInstruments
+    pylablib = import_pylablib_module("pylablib")
+    PrincetonInstruments = import_pylablib_module("pylablib.devices.PrincetonInstruments")
 
     runtime_path = config.get("PIcam_dll_path", "")
     dll_cookie = None

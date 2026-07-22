@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from PyQt5.QtCore import QThread, QTimer, Qt, pyqtSignal
-from PyQt5.QtGui import QBrush, QColor, QFont
-from PyQt5.QtWidgets import (
+from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor, QFont
+from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
@@ -113,9 +113,9 @@ class InstrumentStatusDialog(QDialog):
         command_layout.addStretch()
         layout.addLayout(command_layout)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.close)
-        buttons.button(QDialogButtonBox.Close).clicked.connect(self.close)
+        buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.close)
         layout.addWidget(buttons)
 
         self._poll_timer = QTimer(self)
@@ -131,11 +131,11 @@ class InstrumentStatusDialog(QDialog):
     def _make_table():
         table = QTableWidget(0, 2)
         table.setHorizontalHeaderLabels(["Parameter", "Value"])
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         table.verticalHeader().setVisible(False)
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
-        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         return table
 
     def showEvent(self, event):
@@ -269,7 +269,7 @@ class InstrumentStatusDialog(QDialog):
         font.setBold(True)
         cell.setFont(font)
         cell.setBackground(QBrush(QColor("#e5e7eb")))
-        cell.setFlags(cell.flags() & ~Qt.ItemIsSelectable)
+        cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsSelectable)
         table.setItem(row, 0, cell)
         table.setSpan(row, 0, 1, 2)
 

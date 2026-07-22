@@ -1,6 +1,6 @@
 import json
 
-from PyQt5.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from src.menu.hardware_config_dialog import HardwareConfigDialog
 from src.menu.instrument_status_dialog import InstrumentStatusDialog
@@ -10,7 +10,7 @@ class ConfigMixin:
     def on_open_hardware_config_clicked(self):
         dialog = HardwareConfigDialog(self.config, parent=self)
         dialog.applied.connect(self._on_hardware_config_applied)
-        dialog.exec_()
+        dialog.exec()
 
     def on_open_camera_status_clicked(self):
         if self.instrument_status_window is None:
@@ -127,10 +127,10 @@ class ConfigMixin:
             "calibration/grating/ROI settings may not apply here.\n\n"
             "If this hardware was intentionally connected (e.g. a permanent replacement), "
             "update the recorded identity to match it now?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             recorded["model"] = model or recorded_model
             recorded["serial_number"] = serial_number or recorded_serial
             self.save_config_to_file()

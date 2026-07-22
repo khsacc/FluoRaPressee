@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QSpinBox, QDoubleSpinBox, QComboBox, QAbstractSpinBox
+from PyQt6.QtWidgets import QSpinBox, QDoubleSpinBox, QComboBox, QAbstractSpinBox
 
 class CustomSpinBox(QSpinBox):
     def __init__(self, *args, **kwargs):

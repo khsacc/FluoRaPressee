@@ -1,7 +1,9 @@
 import sys
 import os
 import json
-from PyQt5.QtWidgets import QApplication, QDialog, QMessageBox
+from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
+
+from src.ui_theme import apply_application_style
 
 def print_software_and_author_info():
     print(
@@ -35,10 +37,11 @@ def check_and_create_config():
     app_temp = QApplication.instance()
     if not app_temp:
         app_temp = QApplication(sys.argv)
+    apply_application_style(app_temp)
 
     from src.config_wizard import ConfigWizard
     wizard = ConfigWizard()
-    if wizard.exec_() == QDialog.Accepted:
+    if wizard.exec() == QDialog.DialogCode.Accepted:
         config = wizard.result_config()
     else:
         QMessageBox.information(

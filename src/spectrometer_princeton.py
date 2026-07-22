@@ -3,7 +3,7 @@ import threading
 import time
 
 import serial
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal
 
 from src.instrument_status import device_snapshot, item, safe_item, unavailable_device
 

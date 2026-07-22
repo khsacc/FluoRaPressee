@@ -2,17 +2,18 @@ import json
 import os
 from datetime import datetime
 import numpy as np
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QTableWidget, QTableWidgetItem,
                              QCheckBox, QComboBox, QHeaderView, QWidget,
                              QAbstractSpinBox, QDoubleSpinBox, QSplitter,
                              QScrollArea, QRadioButton, QFileDialog, QMessageBox, QSlider,
                              QListView, QButtonGroup)
-from PyQt5.QtCore import Qt
+from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 
 from src.calibration import CalibrationCore
 from src.calibration_helper import ReferenceHelperWindow
+from src.ui_theme import colored_button_style
 
 class CustomDoubleSpinBox(QDoubleSpinBox):
     def __init__(self, *args, **kwargs):
@@ -36,8 +37,10 @@ class CalibrationWindow(QDialog):
             QHeaderView::section { background-color: #E0E0E0; font-weight: bold; color: #000000; }
             QRadioButton { color: #000000; }
             QCheckBox { color: #000000; }
-            QPushButton { background-color: #E0E0E0; color: #000000; border: 1px solid #999; border-radius: 3px; }
-            QPushButton:hover { background-color: #D0D0D0; }
+            QPushButton { background-color: #E0E0E0; color: #000000; border: 1px solid #999; border-bottom: 3px solid #666; border-radius: 4px; padding: 5px 10px; min-height: 20px; }
+            QPushButton:hover:!pressed { background-color: #D0D0D0; border-color: #2196F3; border-bottom-color: #666; }
+            QPushButton:pressed { background-color: #C8C8C8; border-style: inset; border-bottom-width: 1px; padding-top: 7px; padding-bottom: 5px; }
+            QPushButton:disabled { background-color: #E8E8E8; color: #888; border-color: #AAA; }
             QComboBox { background-color: #FFFFFF; color: #000000; border: 1px solid #999; }
             QComboBox QAbstractItemView { background-color: #FFFFFF; color: #000000; selection-background-color: #2196F3; selection-color: #FFFFFF; }
             QDoubleSpinBox { background-color: #FFFFFF; color: #000000; border: 1px solid #999; }
@@ -203,7 +206,10 @@ class CalibrationWindow(QDialog):
         self.btn_calibrate.setAutoDefault(False)
         self.btn_calibrate.setDefault(False)
         self.btn_calibrate.clicked.connect(self.calibrate)
-        self.btn_calibrate.setStyleSheet("font-weight: bold; color: white; background-color: #2196F3; padding: 8px; border: none;")
+        self.btn_calibrate.setStyleSheet(colored_button_style(
+            "font-weight: bold; color: white; background-color: #2196F3;",
+            "font-weight: bold; color: white; background-color: #A0A0A0;",
+        ))
         
         self.lbl_calib_result = QLabel("y = c0 + c1*x + c2*x^2\nc0 = ...\nc1 = ...\nc2 = ...")
         self.lbl_calib_result.setStyleSheet("font-family: Consolas; background-color: #EEEEEE; padding: 10px; border: 1px solid #CCC; color: #000000;")
@@ -370,7 +376,7 @@ class CalibrationWindow(QDialog):
             chk_layout.addWidget(chk)
             self.table.setCellWidget(row, 1, chk_widget)
             self.row_widgets.append({"check": chk, "input": None, "px": center})
-            chk.stateChanged.connect(lambda state, r=row: self.on_use_toggled(state, r))
+            chk.checkStateChanged.connect(lambda state, r=row: self.on_use_toggled(state, r))
             line = pg.InfiniteLine(pos=center, angle=90, pen=pg.mkPen('r', style=Qt.PenStyle.DashLine))
             text = pg.TextItem(f"#{i+1}", color='r', anchor=(0, 1))
             text.setPos(center, max_y * 0.95)

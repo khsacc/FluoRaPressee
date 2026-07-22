@@ -17,13 +17,13 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QPushButton, QCheckBox, QFileDialog, QGroupBox,
     QRadioButton, QButtonGroup, QStackedWidget, QWidget,
     QMessageBox, QSizePolicy, QLineEdit,
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from src.ui_widgets import CustomSpinBox
 
@@ -188,9 +188,9 @@ class _PathField(QWidget):
 
         self._combo = QComboBox()
         self._combo.setEditable(True)
-        self._combo.setInsertPolicy(QComboBox.NoInsert)
+        self._combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._combo.lineEdit().setPlaceholderText(placeholder)
-        self._combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         btn = QPushButton("Browse…")
         btn.setFixedWidth(80)
@@ -198,7 +198,7 @@ class _PathField(QWidget):
 
         self._status = QLabel("–")
         self._status.setFixedWidth(20)
-        self._status.setAlignment(Qt.AlignCenter)
+        self._status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._status.setStyleSheet("color: gray; font-weight: bold;")
 
         layout.addWidget(self._combo)
@@ -745,10 +745,10 @@ class ConfigWizard(QDialog):
                     "You can go back and correct them, or proceed anyway\n"
                     "(the app will fall back to debug mode for unresolved hardware).\n\n"
                     "Proceed to the next step?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.No,
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
                 )
-                if reply == QMessageBox.No:
+                if reply == QMessageBox.StandardButton.No:
                     return
             if supplier == SUPPLIER_PI:
                 com_port = self._p_paths.values(SUPPLIER_PI).get("com_port", "")

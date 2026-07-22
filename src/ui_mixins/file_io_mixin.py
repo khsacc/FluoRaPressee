@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 import numpy as np
-from PyQt5.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
 from src.measurement_metadata import background_mismatch_fields, build_hardware_metadata
 

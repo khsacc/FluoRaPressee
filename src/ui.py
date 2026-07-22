@@ -4,12 +4,12 @@ import threading
 from copy import deepcopy
 from datetime import datetime
 import numpy as np
-from PyQt5.QtWidgets import (QMainWindow, QPushButton, QVBoxLayout,
+from PyQt6.QtWidgets import (QMainWindow, QPushButton, QVBoxLayout,
                              QHBoxLayout, QWidget, QLabel, QRadioButton, QGroupBox,
                              QStackedWidget,
                              QScrollArea, QFileDialog, QButtonGroup, QGridLayout,
                              QDialog, QTextEdit, QCheckBox, QMessageBox)
-from PyQt5.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer
 import pyqtgraph as pg
 
 # ---- Imports from the split-out modules ----
@@ -21,6 +21,7 @@ from src.pressureCalc import PressureCalculator
 from src.pressureCalc_ui import PressureCalculatorWindow
 from src.file_io import DataFileIO
 from src.ui_widgets import CustomSpinBox, CustomDoubleSpinBox, CustomComboBox
+from src.ui_theme import colored_button_style
 from src.fitting_config_widget import FittingConfigWidget
 from src.ui_mixins.config_mixin import ConfigMixin
 from src.ui_mixins.file_io_mixin import FileIOMixin
@@ -783,10 +784,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.thread.start()
 
     def _set_button_style(self, button, enabled_style):
-        button.setStyleSheet(
-            f"QPushButton {{ {enabled_style} }}\n"
-            f"QPushButton:disabled {{ {BUTTON_STYLE_DISABLED} }}"
-        )
+        button.setStyleSheet(colored_button_style(enabled_style, BUTTON_STYLE_DISABLED))
 
     def closeEvent(self, event):
         reply = QMessageBox.question(

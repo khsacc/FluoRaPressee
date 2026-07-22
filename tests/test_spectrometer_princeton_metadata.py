@@ -14,12 +14,12 @@ if "serial" not in sys.modules:
         serial_stub.Serial = None
         sys.modules["serial"] = serial_stub
 
-if "PyQt5.QtCore" not in sys.modules:
+if "PyQt6.QtCore" not in sys.modules:
     try:
-        from PyQt5.QtCore import QThread  # noqa: F401
+        from PyQt6.QtCore import QThread  # noqa: F401
     except ImportError:
-        pyqt_stub = types.ModuleType("PyQt5")
-        qtcore_stub = types.ModuleType("PyQt5.QtCore")
+        pyqt_stub = types.ModuleType("PyQt6")
+        qtcore_stub = types.ModuleType("PyQt6.QtCore")
 
         class QThread:
             pass
@@ -30,8 +30,8 @@ if "PyQt5.QtCore" not in sys.modules:
         qtcore_stub.QThread = QThread
         qtcore_stub.pyqtSignal = pyqtSignal
         pyqt_stub.QtCore = qtcore_stub
-        sys.modules["PyQt5"] = pyqt_stub
-        sys.modules["PyQt5.QtCore"] = qtcore_stub
+        sys.modules["PyQt6"] = pyqt_stub
+        sys.modules["PyQt6.QtCore"] = qtcore_stub
 
 from src.spectrometer_princeton import SpectrometerControllerPI
 

@@ -3,7 +3,7 @@ import time
 import json  
 import os    
 from threading import RLock
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal
 
 from src.andor_spectrometer_status import (
     collect_shamrock_status,

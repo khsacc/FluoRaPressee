@@ -1,6 +1,6 @@
 from concurrent.futures import Future
 
-from PyQt5.QtCore import QObject, QThread, QCoreApplication, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, QCoreApplication, pyqtSignal
 
 
 class GuiBridge(QObject):

@@ -1,6 +1,6 @@
 import math
 import numpy as np
-from PyQt5.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from src.accumulation import AccumulationCombiner
 from src.measurement_metadata import capture_hardware_state

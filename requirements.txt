@@ -1,11 +1,13 @@
-PyQt5
+PyQt6>=6.8
 pyqtgraph
 numpy
 scipy
 # pylablib depends on numba; pin to a version with prebuilt wheels on Windows/macOS
 # (Intel + Apple Silicon) so pip doesn't fall back to a slow/broken source build.
 numba<=0.62.1
-pylablib
+# src/pylablib_loader.py prevents pylablib's optional Qt5 GUI from loading;
+# the standard package is retained for current Python/Windows camera-driver wheels.
+pylablib==1.4.5
 pyserial
 # API layer (src/api/, src/ui_mixins/api_mixin.py)
 fastapi

@@ -1,6 +1,6 @@
 """Reusable fitting-configuration controls shared by live and analysis UIs."""
 
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,

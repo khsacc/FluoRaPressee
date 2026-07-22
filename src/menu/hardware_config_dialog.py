@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import copy
 
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QLabel,
     QComboBox, QLineEdit, QCheckBox, QPushButton, QStackedWidget,
     QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QDialogButtonBox, QMessageBox, QAbstractItemView,
 )
-from PyQt5.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 
 from src.ui_widgets import CustomSpinBox
 from src.config_wizard import _PathField, SUPPLIER_ANDOR, SUPPLIER_PI, DEFAULT_TEMPERATURE
@@ -153,8 +153,8 @@ class _GratingTab(QWidget):
 
         self._table = QTableWidget(0, len(self._COLUMNS))
         self._table.setHorizontalHeaderLabels(self._COLUMNS)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         layout.addWidget(self._table)
 
         btn_row = QHBoxLayout()
@@ -288,10 +288,14 @@ class HardwareConfigDialog(QDialog):
         tabs.addTab(self._tab_grating, "Grating")
         tabs.addTab(self._tab_display, "Display / Defaults")
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Apply | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Apply
+            | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self._on_ok)
         buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.Apply).clicked.connect(self._apply)
+        buttons.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self._apply)
 
         layout = QVBoxLayout(self)
         layout.addWidget(tabs)
@@ -310,9 +314,10 @@ class HardwareConfigDialog(QDialog):
                 f"{hw_warning}\n\n"
                 "Save anyway? (the app will fall back to debug mode for unresolved\n"
                 "hardware the next time it starts).",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if reply == QMessageBox.No:
+            if reply == QMessageBox.StandardButton.No:
                 return None
 
         new_config = copy.deepcopy(self._base_config)

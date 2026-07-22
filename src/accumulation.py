@@ -1,7 +1,7 @@
 """AccumulationCombiner: combines raw detector frames from one accumulation
 cycle into a single summed frame, with optional cosmic-ray spike rejection.
 
-Pure NumPy, no PyQt5 dependency - usable standalone and trivially testable,
+Pure NumPy, no Qt dependency - usable standalone and trivially testable,
 mirroring the style of DataAnalyzer (analysis.py) and CalibrationCore
 (calibration.py).
 """

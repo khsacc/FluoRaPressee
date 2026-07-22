@@ -16,9 +16,9 @@ import os
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt5.QtCore import Qt, QFileSystemWatcher
-from PyQt5.QtGui import QFont
-from PyQt5.QtWidgets import (
+from PyQt6.QtCore import Qt, QFileSystemWatcher
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QScrollArea,
     QLabel, QPushButton, QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
     QTextEdit, QFileDialog, QMessageBox,
@@ -244,7 +244,7 @@ class AnalysisWindow(QMainWindow):
     def _build_right_panel(self):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
 
         panel = QWidget()
         layout = QHBoxLayout(panel)

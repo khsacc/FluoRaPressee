@@ -42,7 +42,7 @@ This software was developed in the Geochemical Research Center (GcRC), Graduate 
 ## 🛠 Requirements
 
 * **OS**: Windows 10 / 11 (Depends on Andor SDK compatibility)
-* **Python**: Python 3.8 or higher
+* **Python**: Python 3.9 through 3.13
 * **Hardware**:
   * Andor Camera (Detector)
   * Andor Spectrometer
@@ -50,7 +50,7 @@ This software was developed in the Geochemical Research Center (GcRC), Graduate 
   * Andor SDK must be installed on the system.
 
 ### Dependencies
-* PyQt5
+* PyQt6
 * pyqtgraph
 * numpy
 * scipy
@@ -59,16 +59,16 @@ This software was developed in the Geochemical Research Center (GcRC), Graduate 
 
 1. Clone the repository, then double-click `setup.bat` (or run it from Command Prompt / PowerShell).
    This creates a `.venv` virtual environment in the project folder and installs all required
-   packages (`PyQt5`, `pyqtgraph`, `numpy`, `scipy`, `pylablib`, `pyserial`) into it.
+   packages (`PyQt6`, `pyqtgraph`, `numpy`, `scipy`, `pylablib`, `pyserial`) into it.
 2. Ensure the Andor SDK is properly installed on the system.
 
 ## 🚀 Usage
 
 ### Launching the Application
-Double-click `run.bat` (or run it from Command Prompt / PowerShell) to launch the app using the
+Double-click `FluoraPressee_run.bat` (or run it from Command Prompt / PowerShell) to launch the app using the
 virtual environment created by `setup.bat`.
 
-*Note: If you want to test the UI without connecting to the hardware, use `run_debug.bat` instead,
+*Note: If you want to test the UI without connecting to the hardware, use `FluoRaPressee_run_debug.bat` instead,
 which launches the app in debug mode.*
 
 On macOS/Linux (UI development only, no hardware support), use `./setup.sh` and `./run_debug.sh`

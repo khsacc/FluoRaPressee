@@ -1,6 +1,6 @@
 """DataFileIO: Pure file I/O operations for FluoraPressée.
 
-All methods operate on plain Python/NumPy data with no dependency on PyQt5 or UI state,
+All methods operate on plain Python/NumPy data with no dependency on Qt or UI state,
 enabling reuse from external scripts and other applications.
 """
 

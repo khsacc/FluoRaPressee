@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-FluoraPressée is a PyQt5 desktop GUI for controlling Andor/Princeton Instruments spectrometer+camera
+FluoraPressée is a PyQt6 desktop GUI for controlling Andor/Princeton Instruments spectrometer+camera
 rigs and analyzing the resulting spectra for high-pressure experiments (ruby
 fluorescence pressure scale, Raman shift, etc.). It is a lab instrument-control tool, not a library or
 service. 
@@ -16,15 +16,18 @@ python main.py            # normal mode — requires real hardware + Andor SDK i
 python main.py --debug    # debug mode — simulates camera/spectrometer, no hardware needed
 ```
 
-Dependencies are listed in `requirements.txt` (no `pyproject.toml`): `PyQt5`, `pyqtgraph`, `numpy`,
-`scipy`, plus `pylablib` (Andor SDK wrapper) and `pyserial` (Princeton spectrometer serial control)
+Dependencies are listed in `requirements.txt` (no `pyproject.toml`): `PyQt6`, `pyqtgraph`, `numpy`,
+`scipy`, plus `pylablib` (Andor/Princeton camera SDK wrappers; its optional Qt5 GUI import is blocked
+by `src/pylablib_loader.py`, so only PyQt6 is loaded into the process) and `pyserial` (Princeton
+spectrometer serial control)
 for hardware mode, plus `fastapi`/`uvicorn`/`pydantic` for the optional HTTP API layer (see
 Architecture below). Install with `pip install -r requirements.txt`. The app targets Windows (Andor
 SDK is Windows-only, and `ShamrockCIF.dll` at repo root is loaded via `ctypes` for Shamrock
 spectrometer control), but `--debug` mode runs fine cross-platform for UI development.
 
-There are no automated tests, build step, or lint config in this repo. Verify changes by running the
-app in `--debug` mode and exercising the relevant UI flow.
+Automated tests use the standard-library `unittest` runner. Run them headlessly with
+`QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -v`, then verify GUI changes by
+running the app in `--debug` mode and exercising the relevant UI flow.
 
 It is not required to verify screenshots once you made changes to GUI. If something is needed to be checked, ask the user. 
 
@@ -91,7 +94,7 @@ usable standalone or from scripts:
   per-scale temperature-validity ranges; `src/pressureCalc_ui.py` wraps it in a `QDialog`.
 - `src/file_io.py` (`DataFileIO`): all file I/O (spectrum CSV, background JSON, calibration JSON,
   fitting-result files, sequential-measurement summaries) is deliberately isolated here with **no
-  PyQt5 dependency**, so it can be reused from external scripts. Keep new save/load logic here rather
+  Qt dependency**, so it can be reused from external scripts. Keep new save/load logic here rather
   than inlining it in `ui.py`.
 
 **Config/state files** (generated at runtime, not checked in): `spectrometerConfig.json` (grating list,

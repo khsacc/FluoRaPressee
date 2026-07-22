@@ -4,7 +4,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PyQt5.QtWidgets import QApplication
+    from PyQt6.QtWidgets import QApplication
     from src.analysis_ui import AnalysisWindow
     from src.fitting_config_widget import FittingConfigWidget
 except ImportError:
@@ -21,7 +21,7 @@ class SharedAnalysisControlsTests(unittest.TestCase):
 
     def setUp(self):
         if AnalysisWindow is None:
-            self.skipTest("PyQt5 is not importable in this environment")
+            self.skipTest("PyQt6 is not importable in this environment")
 
     def test_fitting_widget_owns_all_exposed_controls_and_defaults(self):
         live_config = FittingConfigWidget(fitting_enabled=False)
