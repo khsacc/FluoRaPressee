@@ -36,7 +36,7 @@ class SharedAnalysisControlsTests(unittest.TestCase):
         self.assertEqual(
             [analysis_config.combo_fit_func.itemText(i)
              for i in range(analysis_config.combo_fit_func.count())],
-            ["Pseudo Voigt", "Moffat", "Gauss", "Lorentz"],
+            ["Pseudo Voigt", "Moffat", "Gauss", "Lorentz", "Diamond Raman Edge"],
         )
         self.assertEqual(analysis_config.combo_fit_peak_count.currentData(), 2)
         self.assertEqual(analysis_config.combo_baseline_model.currentData(), "Constant")

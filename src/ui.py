@@ -197,6 +197,11 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.fit_curve = self.plot_widget.plot(pen=pg.mkPen('y', width=2))
         self.fit_curve_sub1 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
         self.fit_curve_sub2 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
+        self.edge_marker = pg.InfiniteLine(
+            angle=90, movable=False, pen=pg.mkPen('#00E5FF', width=2, style=Qt.PenStyle.DashLine)
+        )
+        self.edge_marker.hide()
+        self.plot_widget.addItem(self.edge_marker)
         
         self.stacked_widget.addWidget(self.plot_widget) 
 

@@ -175,6 +175,7 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
         pressure_result = gui_window.api_pressure(
             peak, peak_err, req.sensor, req.pressure_scale, req.zero_pressure_peak,
             temperature_correction=temperature_correction,
+            fit_function=req.fit_function,
         )
         payload["pressure_gpa"] = _jsonify(pressure_result["pressure"])
         payload["pressure_err_gpa"] = _jsonify(pressure_result["pressure_err"])

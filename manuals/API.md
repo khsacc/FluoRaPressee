@@ -137,7 +137,9 @@ X-API-Key: <API Server パネルに表示されているキー>
   "fit_range": {"start": 690.0, "end": 700.0}
 }
 ```
-- `fit_function`: `"Gauss"`, `"Lorentz"`, `"Pseudo Voigt"`, `"Moffat"` のいずれか。
+- `fit_function`: `"Gauss"`, `"Lorentz"`, `"Pseudo Voigt"`, `"Moffat"`,
+  `"Diamond Raman Edge"` のいずれか。Diamond Raman Edge は負の一次微分を
+  pseudo-Voigt＋線形背景でフィットし、`fit_peak_count` は必ず `1` にする。
 - `fit_peak_count`: フィットするピーク数。1～5、既定値は2。
 - `peak_sort_order`: `"x_desc"`, `"x_asc"`, `"intensity_desc"`, `"intensity_asc"` のいずれか。
 - `baseline_model`: `"constant"`, `"linear"`, `"quadratic"`, `"auto_polynomial"` のいずれか。
@@ -188,6 +190,11 @@ X-API-Key: <API Server パネルに表示されているキー>
 }
 ```
 - `sensor`/`pressure_scale`: `src/pressureCalc.py` の `SENSORS` / `PRESSURE_SCALES` で定義された key。
+- Diamond Raman Edge の場合は `sensor: "diamond_raman_edge"` と
+  `diamond_edge_...` スケールを指定する。`fit_function: "Diamond Raman Edge"` と通常の
+  ピーク圧力スケール、または通常のピークフィットとDiamond Edgeスケールを組み合わせると
+  測定開始前に422エラーになる。Edgeスケール固有の `nu0` を使うため、
+  `zero_pressure_peak` の値は計算には使用されない（互換性のためフィールド自体は必須）。
 - `zero_pressure_peak`: 温度補正を使わない場合のゼロ圧力ピーク位置。
 - `temperature_correction` は省略可。`enabled: false`、または省略した場合は温度補正無しで
   `zero_pressure_peak` がそのまま使われる。`enabled: true` の場合のみ、`scale` に

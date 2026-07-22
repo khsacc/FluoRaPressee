@@ -39,6 +39,12 @@ class PressureCalculator:
             "unit": "cm-1",
             "initial_value": 1287.79,
         },
+        "diamond_raman_edge": {
+            "label": "Diamond Raman Edge",
+            "kind": "raman_edge",
+            "unit": "cm-1",
+            "initial_value": 1334.0,
+        },
         "cubic_bn_to": {
             "label": "Cubic BN TO",
             "kind": "raman",
@@ -68,9 +74,9 @@ class PressureCalculator:
             "sm_srb4o7_datchi_1997_mxb1986": {"label": "0-0 line: Datchi et al. 1997 (MXB1986)", "temperature_mode": "none"},
             "sm_srb4o7_datchi_2007_do2007": {"label": "0-0 line: Datchi et al. 2007 (DO2007)", "temperature_mode": "none"},
             "sm_srb4o7_rashchenko_2015_lam11": {"label": "0-0 line (lam1): Rashchenko et al. 2015", "temperature_mode": "none"},
-            "sm_srb4o7_rashchenko_2015_lam12": {"label": "0-1 line (lam2): Rashchenko et al. 2015", "temperature_mode": "none"},
-            "sm_srb4o7_rashchenko_2015_lam13": {"label": "0-1 line (lam3): Rashchenko et al. 2015", "temperature_mode": "none"},
-            "sm_srb4o7_rashchenko_2015_lam14": {"label": "0-1 line (lam4): Rashchenko et al. 2015", "temperature_mode": "none"},
+            # "sm_srb4o7_rashchenko_2015_lam12": {"label": "0-1 line (lam2): Rashchenko et al. 2015", "temperature_mode": "none"},
+            # "sm_srb4o7_rashchenko_2015_lam13": {"label": "0-1 line (lam3): Rashchenko et al. 2015", "temperature_mode": "none"},
+            # "sm_srb4o7_rashchenko_2015_lam14": {"label": "0-1 line (lam4): Rashchenko et al. 2015", "temperature_mode": "none"},
         },
         "sm_srfcl": {
             "sm_srfcl_lorenz_1994": {"label": "Lorenz et al. 1994", "temperature_mode": "none"},
@@ -87,6 +93,39 @@ class PressureCalculator:
                 "temperature_mode": "embedded_pt",
                 "fixed_t0": 298.15,
                 "fixed_t0_note": "T0 is fixed at 25 C (298.15 K) for this scale.",
+            },
+        },
+        "diamond_raman_edge": {
+            "diamond_edge_hilberer_2026": {
+                "label": "Hilberer et al. 2026",
+                "temperature_mode": "none",
+                "measurement_kind": "diamond_raman_edge",
+                "formula": "k0_k0prime",
+                "nu0": 1334.0,
+                "k0": 575.0,
+                "k0_err": 7.0,
+                "k0_prime": 3.3,
+                "k0_prime_err": 0.1,
+            },
+            "diamond_edge_eremets_2023": {
+                "label": "Eremets et al. 2023",
+                "temperature_mode": "none",
+                "measurement_kind": "diamond_raman_edge",
+                "formula": "quadratic",
+                "nu0": 1332.5,
+                "a": 517.0,
+                "b": 764.0,
+            },
+            "diamond_edge_akahama_kawamura_2006": {
+                "label": "Akahama and Kawamura 2006",
+                "temperature_mode": "none",
+                "measurement_kind": "diamond_raman_edge",
+                "formula": "k0_k0prime",
+                "nu0": 1334.0,
+                "k0": 547.0,
+                "k0_err": 11.0,
+                "k0_prime": 3.75,
+                "k0_prime_err": 0.20,
             },
         },
         "cubic_bn_to": {
@@ -134,6 +173,29 @@ class PressureCalculator:
     @staticmethod
     def get_pressure_scale_label(sensor: str, p_scale: str) -> str:
         return PressureCalculator.PRESSURE_SCALES.get(sensor, {}).get(p_scale, {}).get("label", p_scale)
+
+    @staticmethod
+    def is_diamond_edge_scale(*, sensor: str, p_scale: str) -> bool:
+        scale = PressureCalculator.PRESSURE_SCALES.get(sensor, {}).get(p_scale, {})
+        return scale.get("measurement_kind") == "diamond_raman_edge"
+
+    @staticmethod
+    def validate_fit_pressure_pair(*, fit_function: str, sensor: str, p_scale: str) -> None:
+        """Reject configurations that mix edge extraction and peak-based scales."""
+        edge_fit = fit_function == "Diamond Raman Edge"
+        edge_scale = PressureCalculator.is_diamond_edge_scale(sensor=sensor, p_scale=p_scale)
+        if edge_fit and not edge_scale:
+            raise ValueError(
+                "Diamond Raman Edge fitting requires a Diamond Raman Edge pressure scale."
+            )
+        if edge_scale and not edge_fit:
+            raise ValueError(
+                "A Diamond Raman Edge pressure scale requires Diamond Raman Edge fitting."
+            )
+
+    @staticmethod
+    def get_scale_zero_peak(*, sensor: str, p_scale: str) -> Optional[float]:
+        return PressureCalculator.PRESSURE_SCALES.get(sensor, {}).get(p_scale, {}).get("nu0")
 
     @staticmethod
     def get_temperature_scale_label(sensor: str, t_scale: str) -> str:
@@ -241,6 +303,10 @@ class PressureCalculator:
                     wavenumber_err=peak_err,
                     current_t=current_t, t0=t0,
                 )
+            elif kind == "raman_edge":
+                pressure, pressure_err, zero_peak_override = PressureCalculator._calculate_diamond_edge(
+                    sensor=sensor, p_scale=p_scale, edge=peak, edge_err=peak_err
+                )
             else:
                 return PressureCalculationResult(None, None, None)
 
@@ -263,6 +329,38 @@ class PressureCalculator:
         except Exception as e:
             print(f"Unexpected error in pressure calculation ({sensor}, {p_scale}): {e}")
             return PressureCalculationResult(None, None, None)
+
+    @staticmethod
+    def _calculate_diamond_edge(*, sensor: str, p_scale: str,
+                                edge: float, edge_err: float):
+        meta = PressureCalculator.PRESSURE_SCALES.get(sensor, {}).get(p_scale, {})
+        if meta.get("measurement_kind") != "diamond_raman_edge":
+            return None, None, None
+
+        nu0 = float(meta["nu0"])
+        x = edge / nu0 - 1.0
+        dx = edge_err / nu0
+        if meta["formula"] == "quadratic":
+            a = float(meta["a"])
+            b = float(meta["b"])
+            pressure = a * x + b * x**2
+            variance = ((a + 2.0 * b * x) * dx) ** 2
+            if "a_err" in meta:
+                variance += (x * float(meta["a_err"])) ** 2
+            if "b_err" in meta:
+                variance += (x**2 * float(meta["b_err"])) ** 2
+        elif meta["formula"] == "k0_k0prime":
+            k0 = float(meta["k0"])
+            k0_prime = float(meta["k0_prime"])
+            factor = 1.0 + 0.5 * (k0_prime - 1.0) * x
+            pressure = k0 * x * factor
+            variance = (k0 * (1.0 + (k0_prime - 1.0) * x) * dx) ** 2
+            variance += (x * factor * float(meta.get("k0_err", 0.0))) ** 2
+            variance += (0.5 * k0 * x**2 * float(meta.get("k0_prime_err", 0.0))) ** 2
+        else:
+            return None, None, None
+
+        return pressure, float(np.sqrt(variance)), nu0
 
     @staticmethod
     def _calc_mao_type(peak, zero_peak, peak_err, A, B, A_err, B_err):

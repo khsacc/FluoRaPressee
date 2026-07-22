@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from src.pressureCalc import PressureCalculator
+
 
 class CalibrationRequest(BaseModel):
     c0: float
@@ -51,11 +53,17 @@ class FitRange(BaseModel):
 
 
 class AcquireFitRequest(AcquireRequest):
-    fit_function: Literal["Pseudo Voigt", "Moffat", "Gauss", "Lorentz"]
+    fit_function: Literal["Pseudo Voigt", "Moffat", "Gauss", "Lorentz", "Diamond Raman Edge"]
     fit_peak_count: int = Field(default=2, ge=1, le=5)
     peak_sort_order: Literal["x_desc", "x_asc", "intensity_desc", "intensity_asc"] = "x_desc"
     baseline_model: Literal["constant", "linear", "quadratic", "auto_polynomial"] = "constant"
     fit_range: FitRange | None = None
+
+    @model_validator(mode="after")
+    def _edge_fit_uses_one_result(self):
+        if self.fit_function == "Diamond Raman Edge" and self.fit_peak_count != 1:
+            raise ValueError("Diamond Raman Edge fitting requires fit_peak_count=1")
+        return self
 
 
 class TemperatureCorrection(BaseModel):
@@ -77,6 +85,11 @@ class AcquirePressureRequest(AcquireFitRequest):
     def _pressure_peak_must_exist_in_fit(self):
         if self.pressure_peak_index > self.fit_peak_count:
             raise ValueError("pressure_peak_index must be less than or equal to fit_peak_count")
+        PressureCalculator.validate_fit_pressure_pair(
+            fit_function=self.fit_function,
+            sensor=self.sensor,
+            p_scale=self.pressure_scale,
+        )
         return self
 
 

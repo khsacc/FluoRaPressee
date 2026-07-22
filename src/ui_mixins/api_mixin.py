@@ -202,7 +202,7 @@ class ApiMixin:
         return {"success": True, "x_fit": x_fit, "y_fit": y_fit_curve, "fit": res}
 
     def api_pressure(self, peak, peak_err, sensor, pressure_scale, zero_pressure_peak,
-                      temperature_correction=None):
+                      temperature_correction=None, fit_function=""):
         """Calculate pressure using PressureCalculator's internal keys.
 
         `sensor`, `pressure_scale`, and `temperature_correction["scale"]` are
@@ -214,6 +214,10 @@ class ApiMixin:
         PressureCalculator.calculate(); this method only gathers request values
         and formats the API response.
         """
+        PressureCalculator.validate_fit_pressure_pair(
+            fit_function=fit_function, sensor=sensor, p_scale=pressure_scale
+        )
+
         zero_peak_at_t0 = None
         current_t = 298.15
         t0 = 298.15

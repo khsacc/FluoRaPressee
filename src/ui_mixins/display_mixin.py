@@ -26,6 +26,7 @@ class DisplayMixin:
             self.fit_baseline_curve.clear()
             self.fit_curve_sub1.clear()
             self.fit_curve_sub2.clear()
+            self.edge_marker.hide()
             self.current_w_peak1 = None
             self.latest_fit_res = None
             self.latest_fit_func = None
@@ -143,7 +144,14 @@ class DisplayMixin:
                 if x_fit is not None:
                     self._seq_fit_failed = False
                     self.fit_curve.setData(x_fit, y_fit)
-                    self.fit_baseline_curve.setData(x_fit, res["y_baseline"])
+                    is_edge = res.get("analysis_type") == "diamond_raman_edge"
+                    if is_edge:
+                        self.fit_baseline_curve.clear()
+                        self.edge_marker.setValue(res["edge_position"])
+                        self.edge_marker.show()
+                    else:
+                        self.fit_baseline_curve.setData(x_fit, res["y_baseline"])
+                        self.edge_marker.hide()
 
                     first_peak = res["peaks"][0]
                     w_peak1 = first_peak["position"]
@@ -163,22 +171,26 @@ class DisplayMixin:
 
                     text = (
                         f"<span><b>Function:</b> {func}<br>"
-                        f"<b>Fit Peaks:</b> {peak_count}<br>"
-                        f"<b>Sort peaks:</b> {self.combo_peak_sort.currentText()}<br>"
                     )
-
-                    baseline = res["baseline"]
-                    baseline_text = baseline["requested"]
-                    if baseline["requested"] != baseline["selected"]:
-                        baseline_text += f" &rarr; {baseline['selected']}"
-                    text += f"<b>Baseline:</b> {baseline_text}<br><br>"
+                    if is_edge:
+                        text += "<b>Method:</b> -dI/dν, pseudo-Voigt + linear baseline<br><br>"
+                    else:
+                        text += (
+                            f"<b>Fit Peaks:</b> {peak_count}<br>"
+                            f"<b>Sort peaks:</b> {self.combo_peak_sort.currentText()}<br>"
+                        )
+                        baseline = res["baseline"]
+                        baseline_text = baseline["requested"]
+                        if baseline["requested"] != baseline["selected"]:
+                            baseline_text += f" &rarr; {baseline['selected']}"
+                        text += f"<b>Baseline:</b> {baseline_text}<br><br>"
 
                     self.latest_fit_res = res.copy()
                     self.latest_fit_func = func
 
                     for peak in res["peaks"]:
                         i = peak["index"]
-                        text += f"<u>Peak {i}</u><br>"
+                        text += f"<u>{'Diamond edge' if is_edge else f'Peak {i}'}</u><br>"
                         text += f" Pos: {peak['position']:.3f} ± {peak['position_err']:.3f}<br>"
                         text += f" Width: {peak['width']:.3f} ± {peak['width_err']:.3f}<br><br>"
 
@@ -204,6 +216,7 @@ class DisplayMixin:
                     self.fit_baseline_curve.clear()
                     self.fit_curve_sub1.clear()
                     self.fit_curve_sub2.clear()
+                    self.edge_marker.hide()
                     self.current_w_peak1 = None
                     self.latest_fit_res = None
                     self.latest_fit_func = None
@@ -220,6 +233,7 @@ class DisplayMixin:
                 self.fit_baseline_curve.clear()
                 self.fit_curve_sub1.clear()
                 self.fit_curve_sub2.clear()
+                self.edge_marker.hide()
                 self.current_w_peak1 = None
                 self.latest_fit_res = None
                 self.latest_fit_func = None

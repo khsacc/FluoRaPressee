@@ -47,7 +47,9 @@ class FittingConfigWidget(QGroupBox):
         fit_radio_layout.addWidget(self.radio_fit_off)
 
         self.combo_fit_func = CustomComboBox()
-        self.combo_fit_func.addItems(["Pseudo Voigt", "Moffat", "Gauss", "Lorentz"])
+        self.combo_fit_func.addItems([
+            "Pseudo Voigt", "Moffat", "Gauss", "Lorentz", "Diamond Raman Edge"
+        ])
         self.combo_fit_func.setCurrentText("Pseudo Voigt")
 
         self.combo_fit_peak_count = CustomComboBox()
@@ -94,6 +96,19 @@ class FittingConfigWidget(QGroupBox):
         layout.addWidget(self.spin_fit_start, 5, 1)
         layout.addWidget(QLabel("Range End:"), 6, 0)
         layout.addWidget(self.spin_fit_end, 6, 1)
+
+        self.combo_fit_func.currentTextChanged.connect(self._update_function_controls)
+        self._update_function_controls(self.combo_fit_func.currentText())
+
+    def _update_function_controls(self, function_name):
+        is_edge = function_name == "Diamond Raman Edge"
+        if is_edge:
+            self.combo_fit_peak_count.setCurrentIndex(
+                self.combo_fit_peak_count.findData(1)
+            )
+        self.combo_fit_peak_count.setEnabled(not is_edge)
+        self.combo_peak_sort.setEnabled(not is_edge)
+        self.combo_baseline_model.setEnabled(not is_edge)
 
     def expose_controls_on(self, owner):
         """Keep existing mixin/controller attribute names without duplicating UI."""

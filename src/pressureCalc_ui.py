@@ -199,6 +199,21 @@ class PressureCalculatorWindow(QDialog):
         if sensor is None or p_scale is None:
             return
 
+        try:
+            PressureCalculator.validate_fit_pressure_pair(
+                fit_function=self._current_fit_function(), sensor=sensor, p_scale=p_scale
+            )
+        except ValueError as exc:
+            self.current_pressure = None
+            self.current_pressure_err = None
+            self._set_zero_peak_at_current_t(None)
+            self.lbl_result.setText(
+                "<div style='text-align:center; color:#ff8a80;'>"
+                "<span style='font-size:20px; font-weight:bold;'>Configuration Error</span><br>"
+                f"<span style='font-size:16px;'>{exc}</span></div>"
+            )
+            return
+
         is_valid, rng = PressureCalculator.is_temp_in_range(
             sensor=sensor, p_scale=p_scale, t_scale=t_scale, temp=curr_t
         )
@@ -267,7 +282,10 @@ class PressureCalculatorWindow(QDialog):
 
         self.combo_p_scale.blockSignals(False); self.combo_t_scale.blockSignals(False)
         self.on_p_scale_changed()
-        self.lbl_result.setText(self._build_result_html(self.current_pressure, self.current_pressure_err))
+        # Re-run validation after all sensor/scale widgets have settled.  In
+        # particular, do not overwrite a fit/scale configuration error with an
+        # empty pressure result while switching sensors.
+        self.calculate()
 
     def on_p_scale_changed(self):
         sensor = self.combo_sensor.currentData()
@@ -286,7 +304,36 @@ class PressureCalculatorWindow(QDialog):
             self.lbl_t_mandatory.setStyleSheet("height: 0em;")
         self._apply_t0_constraint()
         self.toggle_temp_ui()
+        self._apply_edge_scale_ui()
         self._apply_recommended_fit_peak_count()
+
+    def _current_fit_function(self):
+        owner = self._fit_controls_owner
+        if owner is not None and hasattr(owner, "combo_fit_func"):
+            return owner.combo_fit_func.currentText()
+        return ""
+
+    def _apply_edge_scale_ui(self):
+        sensor = self.combo_sensor.currentData()
+        scale = self.combo_p_scale.currentData()
+        is_edge = PressureCalculator.is_diamond_edge_scale(sensor=sensor, p_scale=scale)
+        scale_zero = PressureCalculator.get_scale_zero_peak(sensor=sensor, p_scale=scale)
+        if is_edge and scale_zero is not None:
+            for spin in (self.spin_lam0, self.spin_lam0_t0):
+                spin.blockSignals(True)
+                spin.setValue(scale_zero)
+                spin.blockSignals(False)
+                spin.setEnabled(False)
+            self.lbl_lam0_tag.setText(f"Scale reference ν0 ({self.unit}):")
+            self.btn_apply_current.setVisible(False)
+            self.temp_group.setVisible(False)
+        else:
+            self.lbl_lam0_tag.setText(f"Zero-pressure peak ({self.unit}):")
+            self.spin_lam0.setEnabled(not self.radio_on.isChecked())
+            self.spin_lam0_t0.setEnabled(True)
+            self.btn_apply_current.setVisible(not self.radio_on.isChecked())
+            self.temp_group.setVisible(True)
+        self.calculate()
 
     def _apply_recommended_fit_peak_count(self):
         sensor = self.combo_sensor.currentData()
@@ -294,6 +341,8 @@ class PressureCalculatorWindow(QDialog):
         if sensor == "ruby":
             recommended = 2
         elif sensor == "sm_srb4o7":
+            recommended = 1
+        elif sensor == "diamond_raman_edge":
             recommended = 1
 
         if recommended is None:

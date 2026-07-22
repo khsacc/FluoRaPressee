@@ -224,6 +224,11 @@ class AnalysisWindow(QMainWindow):
         self.fit_curve_sub2 = self.plot_widget.plot(
             pen=pg.mkPen('#7B1FA2', width=1, style=Qt.PenStyle.DashLine), name="Peak 2"
         )
+        self.edge_marker = pg.InfiniteLine(
+            angle=90, movable=False, pen=pg.mkPen('#00838F', width=2, style=Qt.PenStyle.DashLine)
+        )
+        self.edge_marker.hide()
+        self.plot_widget.addItem(self.edge_marker)
 
         # LegendItem.addItem() builds its row labels with hardcoded style keys that
         # don't include "family", so the legend text needs a second pass to pick up
@@ -422,7 +427,14 @@ class AnalysisWindow(QMainWindow):
         self.btn_save_fit.setEnabled(True)
 
         self.fit_curve.setData(x_fit, y_fit)
-        self.fit_baseline_curve.setData(x_fit, res["y_baseline"])
+        is_edge = res.get("analysis_type") == "diamond_raman_edge"
+        if is_edge:
+            self.fit_baseline_curve.clear()
+            self.edge_marker.setValue(res["edge_position"])
+            self.edge_marker.show()
+        else:
+            self.fit_baseline_curve.setData(x_fit, res["y_baseline"])
+            self.edge_marker.hide()
         if res.get("peak_count", 1) > 1 and "y_fit1" in res:
             self.fit_curve_sub1.setData(x_fit, res["y_fit1"])
             if "y_fit2" in res:
@@ -441,17 +453,22 @@ class AnalysisWindow(QMainWindow):
 
         text = (
             f"<span><b>Function:</b> {func}<br>"
-            f"<b>Fit Peaks:</b> {peak_count}<br>"
-            f"<b>Sort peaks:</b> {self.combo_peak_sort.currentText()}<br>"
         )
-        baseline = res["baseline"]
-        baseline_text = baseline["requested"]
-        if baseline["requested"] != baseline["selected"]:
-            baseline_text += f" &rarr; {baseline['selected']}"
-        text += f"<b>Baseline:</b> {baseline_text}<br><br>"
+        if is_edge:
+            text += "<b>Method:</b> -dI/dν, pseudo-Voigt + linear baseline<br><br>"
+        else:
+            text += (
+                f"<b>Fit Peaks:</b> {peak_count}<br>"
+                f"<b>Sort peaks:</b> {self.combo_peak_sort.currentText()}<br>"
+            )
+            baseline = res["baseline"]
+            baseline_text = baseline["requested"]
+            if baseline["requested"] != baseline["selected"]:
+                baseline_text += f" &rarr; {baseline['selected']}"
+            text += f"<b>Baseline:</b> {baseline_text}<br><br>"
         for peak in res["peaks"]:
             i = peak["index"]
-            text += f"<u>Peak {i}</u><br>"
+            text += f"<u>{'Diamond edge' if is_edge else f'Peak {i}'}</u><br>"
             text += f" Pos: {peak['position']:.3f} &plusmn; {peak['position_err']:.3f}<br>"
             text += f" Width: {peak['width']:.3f} &plusmn; {peak['width_err']:.3f}<br><br>"
         text += f"<b>R-value:</b><br> {res['R2']:.4f}</span>"
@@ -469,6 +486,7 @@ class AnalysisWindow(QMainWindow):
         self.fit_baseline_curve.clear()
         self.fit_curve_sub1.clear()
         self.fit_curve_sub2.clear()
+        self.edge_marker.hide()
 
     def on_save_fit_clicked(self):
         if self.latest_fit_res is None or self.current_file_path is None:
