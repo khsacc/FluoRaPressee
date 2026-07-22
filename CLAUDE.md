@@ -95,6 +95,8 @@ usable standalone or from scripts:
   every JSON file. A slot is identified by hardware namespace + grating + target centre + ROI, and
   saving another calibration for the same slot atomically makes the new record active. Both the GUI
   and future API discovery endpoints must call this class rather than duplicating selection rules.
+  Hardware identity requires an exact saved serial when available and otherwise falls back to an
+  exact model match; model identity is indexed in catalog schema v2.
 - `src/configuration_browser.py` (`ConfigurationBrowserDialog`): the GUI's Load Configuration
   selector. It shows active, hardware-compatible catalog summaries by default and can expose
   compatible history explicitly; it never browses arbitrary legacy configuration JSON files.

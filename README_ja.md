@@ -328,6 +328,9 @@ Configurationはgrating、centre position、ROI、装置互換性と横軸calibr
 露光時間、積算数、試料・物質名、background、fitting条件は測定ごとに変更する値なので含みません。
 保存場所はOSのユーザー別application data領域にある ``FluoraPressee/configurations`` です。個々の
 JSON recordを正本とし、一覧検索には全JSONを読み込まずSQLite catalogを使用します。
+装置互換性は、保存時にserial numberを取得できた場合はその完全一致を必須とし、取得できないbackendでは
+modelの完全一致へfallbackします。旧形式の任意保存calibration JSONはこのcatalogへimportされず、
+ファイル自体は削除されませんがLoad画面の対象にはなりません。
 
 ```json
 {
@@ -336,7 +339,9 @@ JSON recordを正本とし、一覧検索には全JSONを読み込まずSQLite c
     "slot_id": "slot_...",
     "created_at": "2026-07-22T15:30:00+09:00",
     "compatibility": {
+        "spectrometer_model": "SP-2750",
         "spectrometer_serial_number": "SPEC-001",
+        "camera_model": "DU-401",
         "camera_serial_number": "CAM-001"
     },
     "spectrometer": {

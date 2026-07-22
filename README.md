@@ -104,6 +104,8 @@ instead.
 * Per-measurement spectrometer configurations: immutable JSON records indexed by SQLite below the
   user's `FluoraPressee/configurations` application-data directory. Each active slot is distinguished
   by hardware, grating, centre position, and ROI; exposure and sample/material are not part of it.
+  Hardware compatibility uses an exact serial number when available and an exact model fallback
+  otherwise. Legacy free-form calibration JSON files are not imported into this catalog.
 
 # Acknowledgement
 

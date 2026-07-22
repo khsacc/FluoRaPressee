@@ -23,7 +23,7 @@ from typing import Any
 
 
 CONFIGURATION_SCHEMA_VERSION = 1
-CATALOG_SCHEMA_VERSION = 1
+CATALOG_SCHEMA_VERSION = 2
 
 
 class ConfigurationError(Exception):
@@ -118,7 +118,9 @@ class ConfigurationCatalog:
                 CREATE TABLE IF NOT EXISTS slots (
                     slot_id TEXT PRIMARY KEY,
                     signature TEXT NOT NULL UNIQUE,
+                    spectrometer_model TEXT,
                     spectrometer_serial TEXT,
+                    camera_model TEXT,
                     camera_serial TEXT,
                     grating_index INTEGER NOT NULL,
                     grating_grooves_per_mm INTEGER NOT NULL,
@@ -159,6 +161,80 @@ class ConfigurationCatalog:
             conn.execute(
                 "INSERT OR IGNORE INTO catalog_meta(key, value) VALUES('revision', '0')"
             )
+            self._migrate_catalog(conn)
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_slots_hardware_identity
+                ON slots(
+                    spectrometer_serial, spectrometer_model,
+                    camera_serial, camera_model
+                )
+                """
+            )
+
+    def _migrate_catalog(self, conn: sqlite3.Connection) -> None:
+        """Upgrade catalog metadata while keeping immutable JSON records canonical."""
+        version_row = conn.execute(
+            "SELECT value FROM catalog_meta WHERE key = 'schema_version'"
+        ).fetchone()
+        version = int(version_row["value"])
+        if version >= CATALOG_SCHEMA_VERSION:
+            return
+
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(slots)").fetchall()
+        }
+        for column in ("spectrometer_model", "camera_model"):
+            if column not in columns:
+                conn.execute(f"ALTER TABLE slots ADD COLUMN {column} TEXT")
+
+        # Catalog v1 indexed only serial numbers. Rebuild each slot signature
+        # from its active canonical record so serial-less hardware is separated
+        # and discoverable by model rather than collapsed into one namespace.
+        rows = conn.execute(
+            """
+            SELECT s.slot_id, c.relative_path
+            FROM slots s
+            JOIN configurations c
+              ON c.configuration_id = s.active_configuration_id
+            """
+        ).fetchall()
+        for row in rows:
+            try:
+                record = json.loads(
+                    (self.root / row["relative_path"]).read_text(encoding="utf-8")
+                )
+                compatibility = record.get("compatibility", {})
+                signature = self._signature(record)
+            except (
+                OSError,
+                json.JSONDecodeError,
+                ConfigurationError,
+                KeyError,
+                TypeError,
+                ValueError,
+            ):
+                # A damaged record must not prevent the rest of the catalog opening.
+                continue
+            conn.execute(
+                """
+                UPDATE slots
+                SET signature = ?, spectrometer_model = ?, camera_model = ?
+                WHERE slot_id = ?
+                """,
+                (
+                    signature,
+                    compatibility.get("spectrometer_model"),
+                    compatibility.get("camera_model"),
+                    row["slot_id"],
+                ),
+            )
+
+        conn.execute(
+            "UPDATE catalog_meta SET value = ? WHERE key = 'schema_version'",
+            (str(CATALOG_SCHEMA_VERSION),),
+        )
+        self._increment_revision(conn)
 
     @staticmethod
     def _new_id(prefix: str) -> str:
@@ -212,6 +288,14 @@ class ConfigurationCatalog:
             )
         if not isinstance(compatibility, dict):
             raise ConfigurationValidationError("compatibility must be an object")
+        for device in ("spectrometer", "camera"):
+            if not (
+                compatibility.get(f"{device}_serial_number")
+                or compatibility.get(f"{device}_model")
+            ):
+                raise ConfigurationValidationError(
+                    f"{device} compatibility requires a serial number or model"
+                )
 
     @classmethod
     def _signature(cls, draft: dict[str, Any]) -> str:
@@ -219,7 +303,9 @@ class ConfigurationCatalog:
         spectrometer = draft["spectrometer"]
         detector = draft["detector"]
         identity = {
+            "spectrometer_model": compatibility.get("spectrometer_model"),
             "spectrometer_serial_number": compatibility.get("spectrometer_serial_number"),
+            "camera_model": compatibility.get("camera_model"),
             "camera_serial_number": compatibility.get("camera_serial_number"),
             "grating_index": int(spectrometer["grating_index"]),
             "grating_grooves_per_mm": int(spectrometer["grating_grooves_per_mm"]),
@@ -284,16 +370,20 @@ class ConfigurationCatalog:
                     conn.execute(
                         """
                         INSERT INTO slots(
-                            slot_id, signature, spectrometer_serial, camera_serial,
+                            slot_id, signature,
+                            spectrometer_model, spectrometer_serial,
+                            camera_model, camera_serial,
                             grating_index, grating_grooves_per_mm, center_position_pm,
                             roi_mode, roi_start, roi_end, active_configuration_id,
                             created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
                         """,
                         (
                             slot_id,
                             signature,
+                            compatibility.get("spectrometer_model"),
                             compatibility.get("spectrometer_serial_number"),
+                            compatibility.get("camera_model"),
                             compatibility.get("camera_serial_number"),
                             int(spectrometer["grating_index"]),
                             int(spectrometer["grating_grooves_per_mm"]),
@@ -412,7 +502,9 @@ class ConfigurationCatalog:
                 "unit": row["calibration_unit"],
             },
             "compatibility": {
+                "spectrometer_model": row["spectrometer_model"],
                 "spectrometer_serial_number": row["spectrometer_serial"],
+                "camera_model": row["camera_model"],
                 "camera_serial_number": row["camera_serial"],
             },
         }
@@ -425,14 +517,25 @@ class ConfigurationCatalog:
     ) -> list[str]:
         compatibility = configuration.get("compatibility", {})
         reasons: list[str] = []
-        for key, label in (
-            ("spectrometer_serial_number", "Spectrometer serial number"),
-            ("camera_serial_number", "Camera serial number"),
-        ):
-            expected = compatibility.get(key)
-            current = hardware_context.get(key)
-            if expected and current != expected:
-                reasons.append(f"{label} does not match")
+        for device, label in (("spectrometer", "Spectrometer"), ("camera", "Camera")):
+            expected_serial = compatibility.get(f"{device}_serial_number")
+            current_serial = hardware_context.get(f"{device}_serial_number")
+            expected_model = compatibility.get(f"{device}_model")
+            current_model = hardware_context.get(f"{device}_model")
+
+            if expected_serial:
+                if current_serial != expected_serial:
+                    reasons.append(f"{label} serial number does not match")
+                    continue
+                if expected_model and current_model and current_model != expected_model:
+                    reasons.append(f"{label} model does not match")
+            elif expected_model:
+                if not current_model:
+                    reasons.append(f"{label} model is unavailable")
+                elif current_model != expected_model:
+                    reasons.append(f"{label} model does not match")
+            else:
+                reasons.append(f"{label} identity is unavailable in the configuration")
 
         spectrometer = configuration.get("spectrometer", {})
         grating = configuration.get("grating") or spectrometer.get("grating")
@@ -496,16 +599,29 @@ class ConfigurationCatalog:
         if active_only:
             conditions.append("c.configuration_id = s.active_configuration_id")
         if not include_incompatible:
-            for column, context_key in (
-                ("s.spectrometer_serial", "spectrometer_serial_number"),
-                ("s.camera_serial", "camera_serial_number"),
+            for serial_column, model_column, device in (
+                ("s.spectrometer_serial", "s.spectrometer_model", "spectrometer"),
+                ("s.camera_serial", "s.camera_model", "camera"),
             ):
-                current = hardware_context.get(context_key)
-                if current:
-                    conditions.append(f"({column} IS NULL OR {column} = ?)")
-                    parameters.append(current)
+                current_serial = hardware_context.get(f"{device}_serial_number")
+                current_model = hardware_context.get(f"{device}_model")
+                if current_serial and current_model:
+                    conditions.append(
+                        f"(({serial_column} = ? AND "
+                        f"({model_column} IS NULL OR {model_column} = ?)) OR "
+                        f"({serial_column} IS NULL AND {model_column} = ?))"
+                    )
+                    parameters.extend([current_serial, current_model, current_model])
+                elif current_serial:
+                    conditions.append(f"{serial_column} = ?")
+                    parameters.append(current_serial)
+                elif current_model:
+                    conditions.append(
+                        f"{serial_column} IS NULL AND {model_column} = ?"
+                    )
+                    parameters.append(current_model)
                 else:
-                    conditions.append(f"{column} IS NULL")
+                    conditions.append("0")
 
             gratings = hardware_context.get("gratings", [])
             if gratings:
@@ -529,7 +645,8 @@ class ConfigurationCatalog:
             SELECT
                 c.configuration_id, c.slot_id, c.created_at, c.calibration_unit,
                 s.active_configuration_id, s.updated_at,
-                s.spectrometer_serial, s.camera_serial,
+                s.spectrometer_model, s.spectrometer_serial,
+                s.camera_model, s.camera_serial,
                 s.grating_index, s.grating_grooves_per_mm,
                 s.center_position_pm, s.roi_mode, s.roi_start, s.roi_end
             FROM configurations c

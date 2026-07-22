@@ -99,9 +99,17 @@ class FileIOMixin:
         configured_camera = configured.get("camera", {})
         configured_spectrometer = configured.get("spectrometer", {})
         return {
+            "spectrometer_model": (
+                spec_metadata.get("model")
+                or configured_spectrometer.get("model")
+                or self.config.get("model")
+            ),
             "spectrometer_serial_number": (
                 spec_metadata.get("serial_number")
                 or configured_spectrometer.get("serial_number")
+            ),
+            "camera_model": (
+                camera_identity.get("model") or configured_camera.get("model")
             ),
             "camera_serial_number": (
                 camera_identity.get("serial_number")
@@ -159,17 +167,12 @@ class FileIOMixin:
         hardware = self.configuration_hardware_context()
         grating = self._current_grating_definition(hardware)
         roi = self._current_roi_definition()
-        configured = self.config.get("hardware_identity", {})
-        spec_identity = configured.get("spectrometer", {})
-        camera_identity = getattr(self, "_camera_identity", {})
-        if not camera_identity.get("model"):
-            camera_identity = configured.get("camera", {})
         c0, c1, c2 = coeffs
         draft = {
             "compatibility": {
-                "spectrometer_model": spec_identity.get("model"),
+                "spectrometer_model": hardware["spectrometer_model"],
                 "spectrometer_serial_number": hardware["spectrometer_serial_number"],
-                "camera_model": camera_identity.get("model"),
+                "camera_model": hardware["camera_model"],
                 "camera_serial_number": hardware["camera_serial_number"],
             },
             "spectrometer": {

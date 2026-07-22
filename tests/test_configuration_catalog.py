@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,13 +22,15 @@ def draft(
     roi_end=65,
     spectrometer_serial="SPEC-1",
     camera_serial="CAM-1",
+    spectrometer_model="SP-2750",
+    camera_model="DU-401",
     c0=669.4,
 ):
     return {
         "compatibility": {
-            "spectrometer_model": "SP-2750",
+            "spectrometer_model": spectrometer_model,
             "spectrometer_serial_number": spectrometer_serial,
-            "camera_model": "DU-401",
+            "camera_model": camera_model,
             "camera_serial_number": camera_serial,
         },
         "spectrometer": {
@@ -57,10 +60,17 @@ def draft(
 
 
 def hardware_context(
-    *, spectrometer_serial="SPEC-1", camera_serial="CAM-1", detector_height=127
+    *,
+    spectrometer_serial="SPEC-1",
+    camera_serial="CAM-1",
+    spectrometer_model="SP-2750",
+    camera_model="DU-401",
+    detector_height=127,
 ):
     return {
+        "spectrometer_model": spectrometer_model,
         "spectrometer_serial_number": spectrometer_serial,
+        "camera_model": camera_model,
         "camera_serial_number": camera_serial,
         "gratings": [
             {"index": 1, "grooves": 600},
@@ -197,6 +207,86 @@ class ConfigurationCatalogTests(unittest.TestCase):
             "Grating type does not match the configured slot",
             raised.exception.reasons,
         )
+
+    def test_saved_serial_is_required_even_when_current_query_returns_none(self):
+        record = self.catalog.register_configuration(draft())
+        context = hardware_context(camera_serial=None)
+
+        with self.assertRaises(ConfigurationCompatibilityError) as raised:
+            self.catalog.assert_compatible(record, context)
+
+        self.assertIn("Camera serial number does not match", raised.exception.reasons)
+        self.assertEqual(self.catalog.list_selectable(context)["total"], 0)
+
+    def test_model_is_fallback_when_backend_has_no_serial(self):
+        record = self.catalog.register_configuration(
+            draft(spectrometer_serial=None, camera_serial=None)
+        )
+        same_models = hardware_context(
+            spectrometer_serial=None, camera_serial=None
+        )
+        wrong_camera = hardware_context(
+            spectrometer_serial=None,
+            camera_serial=None,
+            camera_model="DIFFERENT-CAMERA",
+        )
+
+        self.catalog.assert_compatible(record, same_models)
+        self.assertEqual(self.catalog.list_selectable(same_models)["total"], 1)
+        self.assertEqual(self.catalog.list_selectable(wrong_camera)["total"], 0)
+
+    def test_models_are_verified_and_part_of_slot_identity(self):
+        first = self.catalog.register_configuration(draft())
+        second = self.catalog.register_configuration(
+            draft(spectrometer_model="DIFFERENT-SPECTROMETER")
+        )
+
+        self.assertNotEqual(first["slot_id"], second["slot_id"])
+        with self.assertRaises(ConfigurationCompatibilityError) as raised:
+            self.catalog.assert_compatible(
+                first, hardware_context(spectrometer_model="DIFFERENT-SPECTROMETER")
+            )
+        self.assertIn("Spectrometer model does not match", raised.exception.reasons)
+
+    def test_registration_rejects_identityless_device(self):
+        with self.assertRaises(ConfigurationValidationError):
+            self.catalog.register_configuration(
+                draft(camera_serial=None, camera_model=None)
+            )
+
+    def test_catalog_v1_is_migrated_with_model_identity(self):
+        record = self.catalog.register_configuration(
+            draft(spectrometer_serial=None, camera_serial=None)
+        )
+        database_path = Path(self.tempdir.name) / "catalog.sqlite3"
+        with sqlite3.connect(database_path) as conn:
+            conn.execute(
+                "UPDATE catalog_meta SET value = '1' WHERE key = 'schema_version'"
+            )
+            conn.execute(
+                "UPDATE slots SET signature = ? WHERE slot_id = ?",
+                ("legacy-v1-signature", record["slot_id"]),
+            )
+            conn.execute("DROP INDEX idx_slots_hardware_identity")
+            conn.execute("ALTER TABLE slots DROP COLUMN spectrometer_model")
+            conn.execute("ALTER TABLE slots DROP COLUMN camera_model")
+
+        migrated = ConfigurationCatalog(self.tempdir.name)
+        result = migrated.list_selectable(
+            hardware_context(spectrometer_serial=None, camera_serial=None)
+        )
+        with sqlite3.connect(database_path) as conn:
+            schema_version = conn.execute(
+                "SELECT value FROM catalog_meta WHERE key = 'schema_version'"
+            ).fetchone()[0]
+            columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(slots)").fetchall()
+            }
+
+        self.assertEqual(schema_version, "2")
+        self.assertIn("spectrometer_model", columns)
+        self.assertIn("camera_model", columns)
+        self.assertEqual(result["total"], 1)
 
     def test_record_is_json_and_does_not_add_acquisition_or_sample_fields(self):
         record = self.catalog.register_configuration(draft())

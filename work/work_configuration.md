@@ -23,9 +23,14 @@ identity or payload fields.
 A stable slot is selected by the canonical signature:
 
 ```
-(spectrometer serial, camera serial, grating index/type,
+(spectrometer identity, camera identity, grating index/type,
  target centre rounded to 0.001 nm, ROI mode/start/end)
 ```
+
+Instrument identity uses a serial number when one was recorded. If a backend cannot report a
+serial number, the configured/detected model is the required fallback. A missing current serial
+does not silently bypass a saved serial check, and model-only records are accepted only for the same
+model. Model names are also checked when both sides provide them.
 
 Each Save and Apply creates an immutable `configuration_id`. If its signature already exists, the
 new record becomes that slot's active record and the previous one becomes archived. The `slot_id`
@@ -45,6 +50,8 @@ FluoraPressee/configurations/records/YYYY/MM/cfg_<uuid>.json
 does not load record JSON. Queries default to active and hardware-compatible rows and are paginated;
 history requires an explicit request. Every write increments a catalog revision. SQLite uses WAL and
 a separate short-lived connection for each call so GUI and future API worker threads can share it.
+Catalog schema upgrades are automatic; schema v2 adds indexed model identity and rebuilds v1 slot
+signatures from their canonical active records.
 
 ## GUI workflow
 
@@ -54,6 +61,10 @@ a separate short-lived connection for each call so GUI and future API worker thr
 - A selected record restores ROI/display/excitation and moves the grating/centre. Calibration is
   applied only after the move succeeds. A cancelled or failed move clears pending configuration.
 - Manual grating/centre movement invalidates the active configuration and returns the axis to pixels.
+
+The previous free-form calibration JSON format is intentionally not imported during this
+development-phase breaking change. Existing files are left untouched on disk, but the GUI only
+loads records registered in the versioned catalog.
 
 ## Future API boundary (not routed yet)
 
