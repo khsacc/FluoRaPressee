@@ -40,6 +40,10 @@ X-API-Key: <API Server パネルに表示されているキー>
 
 同時に実行できる取得は1つだけ(ローカルのGUI操作・他のAPIリクエストを含めて)。取得中に別の
 取得リクエストが来た場合、後から来た方は `409 Conflict`(`{"detail": "acquisition busy"}`)を返す。
+`GET /hardware/camera?refresh=true` と `GET /hardware/spectrometer?refresh=true` のライブ状態照会も
+同じ排他ゲートを使用する。測定・校正・分光器移動・別のライブ照会と競合した場合は
+`409 Conflict`(`{"detail": "instrument busy"}`)を返す。`refresh=false` のキャッシュ取得と
+`GET /config` はこの排他ゲートを使用しない。
 
 ## エンドポイント一覧
 
@@ -58,6 +62,156 @@ X-API-Key: <API Server パネルに表示されているキー>
   "background": {"loaded": false, "metadata": null}
 }
 ```
+
+### `GET /hardware/camera`
+
+カメラの識別情報、センサー寸法、露光時間、ROI、binning、温度などを返す。
+
+- `refresh=false`(既定): カメラスレッドが保持しているキャッシュだけを読み、SDK呼び出しを行わない。
+- `refresh=true`: カメラスレッドへライブ状態照会を依頼し、共通形式の `status` を追加する。
+  測定・分光器移動・別のライブ照会と競合した場合は `409`、10秒以内に完了しない場合は `504`。
+
+**レスポンス例:**
+```json
+{
+  "schema_version": 1,
+  "captured_at": "2026-07-22T15:30:00+09:00",
+  "mode": "hardware",
+  "operational": true,
+  "hardware_connected": true,
+  "busy": false,
+  "backend": "andor_sdk2",
+  "metadata_source": "cache",
+  "metadata": {
+    "identity": {
+      "controller_model": "C-1",
+      "model": "DU-401",
+      "serial_number": "CAM-001"
+    },
+    "detector_size_px": {"width": 1024, "height": 127},
+    "pixel_pitch_um": {"width": 26.0, "height": 26.0},
+    "exposure_time_s": 0.1,
+    "accumulations": 3,
+    "accumulation_mode": "software_sum",
+    "roi": {
+      "mode": "1d_roi",
+      "horizontal_start": 0,
+      "horizontal_end": 1024,
+      "vertical_start": 100,
+      "vertical_end": 127
+    },
+    "binning": {"horizontal": 1, "vertical": 27},
+    "read_mode": "image",
+    "output_rows": 1,
+    "software_vertical_sum": false,
+    "temperature": {
+      "current_c": -64.9,
+      "setpoint_c": -65.0,
+      "status": "locked"
+    }
+  },
+  "status": null
+}
+```
+
+`mode` は `hardware` または `debug`。`operational` はデバッグバックエンドを含めてAPIから
+利用可能か、`hardware_connected` は物理デバイスに接続されているかを表す。debugモードでは
+`operational: true`, `hardware_connected: false` となる。
+
+### `GET /hardware/spectrometer`
+
+分光器の識別情報、中心波長、現在のグレーティングを返す。Andor/Princeton Instrumentsとも
+同じ公開形式で、通常は各コントローラの `get_cached_hardware_metadata()` の結果を利用する。
+
+- `refresh=false`(既定): DLL/RS-232通信なし。
+- `refresh=true`: `get_status_snapshot()` で実機を照会し、`status` を追加する。
+  測定・分光器移動・別のライブ照会と競合した場合は `409`、30秒以内に完了しない場合は `504`。
+
+**レスポンス例:**
+```json
+{
+  "schema_version": 1,
+  "captured_at": "2026-07-22T15:30:00+09:00",
+  "mode": "hardware",
+  "operational": true,
+  "hardware_connected": true,
+  "busy": false,
+  "backend": "princeton_acton",
+  "metadata_source": "cache",
+  "metadata": {
+    "identity": {"model": "SP-2750", "serial_number": "SPEC-001"},
+    "center_wavelength_nm": 694.0,
+    "grating": {"index": 1, "grooves_per_mm": 600, "blaze": null},
+    "wavelength_limits_nm": null
+  },
+  "status": null
+}
+```
+
+`refresh=true` の `status` は以下の共通形式。取得できない機器固有項目は推測せず
+`state: "unsupported"` とする。一部項目だけ失敗した場合はその項目を `state: "error"` とし、
+他の取得結果は返す。
+
+```json
+{
+  "backend": "princeton_acton",
+  "available": true,
+  "error": null,
+  "sections": {
+    "Current position": [
+      {
+        "key": "centre_wavelength",
+        "label": "Centre wavelength",
+        "value": 694.0,
+        "unit": "nm",
+        "state": "ok",
+        "error": null
+      }
+    ]
+  }
+}
+```
+
+未接続はHTTP通信の失敗ではないため `200` を返し、`hardware_connected: false`、
+`status.available: false` で表現する。
+
+### `GET /config`
+
+現在のプロセスで有効な設定と、`spectrometerConfig.json` に保存されている設定を返す。
+
+```json
+{
+  "schema_version": 1,
+  "captured_at": "2026-07-22T15:30:00+09:00",
+  "source_file": "spectrometerConfig.json",
+  "active_config": {
+    "model": "PrincetonInstruments",
+    "com_port": "COM3",
+    "grating": [],
+    "flip_x": false,
+    "default_temperature": -65
+  },
+  "stored_config": {
+    "model": "PrincetonInstruments",
+    "com_port": "COM3",
+    "grating": [],
+    "flip_x": false,
+    "default_temperature": -65
+  },
+  "restart_required": false,
+  "pending_restart_keys": [],
+  "redacted_fields": []
+}
+```
+
+- `active_config`: 実行中プロセスへ現在適用されている設定。グレーティング、ROI、表示設定などの
+  ライブ変更は反映するが、起動時にしか読まれない接続設定は起動時の値を返す。
+- `stored_config`: 現在の `spectrometerConfig.json` の内容。
+- `restart_required`: `model`, `com_port`, `dll_path`, `PIcam_dll_path`,
+  `camera_serial_number` のいずれかに未反映の変更があるか。
+- `pending_restart_keys`: 再起動待ちのキー一覧。
+- `redacted_fields`: `api_key`, `password`, `token`, `secret` を名前に含むキーをレスポンスから
+  除外した場合のパス一覧。APIキー用の別ファイル `fluora_pressee_api_key.json` は常に対象外。
 
 ### `POST /calibration`
 
@@ -225,11 +379,11 @@ X-API-Key: <API Server パネルに表示されているキー>
 |---|---|
 | 400 | リクエストの内容が不正(`dark.data` の長さ不一致、2Dモードでのフィット要求など) |
 | 401 | `X-API-Key` が無い、または一致しない |
-| 409 | 他の取得が進行中(ローカルGUIまたは他のAPIリクエスト) |
+| 409 | 他の取得、分光器移動、校正、ライブ状態照会が進行中 |
 | 422 | リクエストボディのバリデーションエラー(Pydantic)、または `dark.mode="reuse_loaded"` の
       設定ミスマッチ |
 | 500 | 予期しないサーバーエラー |
-| 504 | 取得がタイムアウトした |
+| 504 | 取得またはライブ状態照会がタイムアウトした |
 
 ## 既知の制限
 
@@ -246,6 +400,15 @@ X-API-Key: <API Server パネルに表示されているキー>
 ```bash
 # 状態確認
 curl -H "X-API-Key: <キー>" http://<IP>:8765/status
+
+# キャッシュ済みカメラ情報
+curl -H "X-API-Key: <キー>" http://<IP>:8765/hardware/camera
+
+# 分光器のライブ詳細情報
+curl -H "X-API-Key: <キー>" "http://<IP>:8765/hardware/spectrometer?refresh=true"
+
+# 実行中・保存済みconfig
+curl -H "X-API-Key: <キー>" http://<IP>:8765/config
 
 # データ取得+フィット+圧力算出
 curl -X POST -H "X-API-Key: <キー>" -H "Content-Type: application/json" \

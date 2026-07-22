@@ -5,6 +5,8 @@ import time
 import serial
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from src.instrument_status import device_snapshot, item, safe_item, unavailable_device
+
 
 class MoveCancelled(Exception):
     """Raised by _send_command when a cancellable command was interrupted via MONO-STOP."""
@@ -20,19 +22,32 @@ class SpectrometerControllerPI:
 
     def __init__(self, config=None, debug=False):
         self.debug = debug
-        self.config = config
+        self.config = config or {}
 
         self.is_initialized = False
         self.spec = None
 
-        self.com_port = (self.config or {}).get("com_port", "COM3")
+        self.com_port = self.config.get("com_port", "COM3")
 
+        # RLock is deliberately shared by live status reads and motion commands.
+        # A status refresh can therefore never interleave bytes with an in-flight
+        # GOTO/GRATING command, while nested helpers may safely call _send_command().
+        self._hw_lock = threading.RLock()
         self._cancel_event = threading.Event()
         self.last_move_cancelled = False
+
+        # Hardware values are cached as they are read or successfully changed.
+        # get_cached_hardware_metadata() only reads these fields and never touches
+        # the serial port, matching SpectrometerControllerAndor's API contract.
+        self._device_identity = {"model": None, "serial_number": None}
+        self._gratings = []
+        self._current_grating = 1
+        self._current_wavelength_nm = 694.0
 
     def initialize(self):
         if self.debug:
             print("[DEBUG MODE] Spectrometer dummy mode forced.")
+            self._ensure_debug_cache()
             self.is_initialized = False
             return False
 
@@ -42,6 +57,12 @@ class SpectrometerControllerPI:
 
             response = " ".join(self._send_command("?NM", timeout_s=3.0))
             if response:
+                try:
+                    self._current_wavelength_nm = self._parse_wavelength(response)
+                except ValueError:
+                    # Preserve the old connection criterion: any non-empty ?NM
+                    # response is enough to consider the controller connected.
+                    pass
                 print(
                     f"Connected to SP2750 on {self.com_port}. "
                     f"(Response: {response})"
@@ -66,6 +87,11 @@ class SpectrometerControllerPI:
         return False
 
     def _send_command(self, command, timeout_s=5.0, cancellable=False):
+        """Serialize one complete RS-232 request/response transaction."""
+        with self._hw_lock:
+            return self._send_command_locked(command, timeout_s, cancellable)
+
+    def _send_command_locked(self, command, timeout_s=5.0, cancellable=False):
         """Send one command and return response lines after its ``ok`` reply.
 
         If ``cancellable`` and a cancellation was requested (see
@@ -151,27 +177,44 @@ class SpectrometerControllerPI:
         self._cancel_event.set()
 
     def get_wavelength(self):
+        if self.debug:
+            self._ensure_debug_cache()
+            return self._current_wavelength_nm
         if not self.is_initialized:
-            return 694.0  # Dummy value (used when not initialized/connected)
+            return self._current_wavelength_nm  # Dummy/cached value when disconnected
 
         try:
-            response = " ".join(self._send_command("?NM", timeout_s=3.0))
-            match = re.search(r"[-+]?\d*\.\d+|\d+", response)
-            if match:
-                return float(match.group())
+            return self._read_wavelength()
         except Exception as e:
             print(f"Failed to read spectrometer wavelength: {e}")
-        return 694.0
+        return self._current_wavelength_nm
+
+    @staticmethod
+    def _parse_wavelength(response):
+        match = re.search(r"[-+]?\d*\.\d+|\d+", str(response))
+        if not match:
+            raise ValueError(f"Invalid ?NM response: {response!r}")
+        return float(match.group())
+
+    def _read_wavelength(self):
+        """Read and cache the centre wavelength, raising on invalid replies."""
+        response = " ".join(self._send_command("?NM", timeout_s=3.0))
+        wavelength = self._parse_wavelength(response)
+        self._current_wavelength_nm = wavelength
+        return wavelength
 
     def get_grating(self):
+        if self.debug:
+            self._ensure_debug_cache()
+            return self._current_grating
         if not self.is_initialized:
-            return 1  # Dummy value (used when not initialized/connected)
+            return self._current_grating  # Dummy/cached value when disconnected
 
         try:
             return self._read_grating()
         except Exception as e:
             print(f"Failed to read spectrometer grating: {e}")
-        return 1
+        return self._current_grating
 
     def _read_grating(self):
         """Read the grating number, raising if the response cannot be parsed."""
@@ -179,7 +222,9 @@ class SpectrometerControllerPI:
         match = re.search(r"\d+", " ".join(response))
         if not match:
             raise RuntimeError(f"Invalid ?GRATING response: {response!r}")
-        return int(match.group())
+        grating = int(match.group())
+        self._current_grating = grating
+        return grating
 
     def get_device_identity(self):
         """Return {"model": str|None, "serial_number": str|None} for hardware_identity
@@ -190,23 +235,88 @@ class SpectrometerControllerPI:
         """
         if self.debug:
             # Fabricated so --debug mode can exercise the identity check without hardware.
-            return {"model": "SP-2750 [DEBUG]", "serial_number": "DEBUG-SP2750-0000000"}
+            self._ensure_debug_cache()
+            return dict(self._device_identity)
         if not self.is_initialized:
             return {"model": None, "serial_number": None}
 
-        model = None
-        try:
-            model = " ".join(self._send_command("MODEL", timeout_s=3.0)).strip() or None
-        except Exception as e:
-            print(f"Failed to read spectrometer model: {e}")
+        with self._hw_lock:
+            model = None
+            try:
+                model = self._read_identity_field("MODEL", "model")
+            except Exception as e:
+                print(f"Failed to read spectrometer model: {e}")
 
-        serial = None
-        try:
-            serial = " ".join(self._send_command("SERIAL", timeout_s=3.0)).strip() or None
-        except Exception as e:
-            print(f"Failed to read spectrometer serial number: {e}")
+            serial = None
+            try:
+                serial = self._read_identity_field("SERIAL", "serial_number")
+            except Exception as e:
+                print(f"Failed to read spectrometer serial number: {e}")
 
         return {"model": model, "serial_number": serial}
+
+    def _read_identity_field(self, command, cache_key):
+        value = " ".join(self._send_command(command, timeout_s=3.0)).strip()
+        if not value:
+            raise RuntimeError(f"Empty {command} response")
+        self._device_identity[cache_key] = value
+        return value
+
+    def get_status_snapshot(self):
+        """Return a complete read-only spectrograph status snapshot.
+
+        Unlike get_cached_hardware_metadata(), this method queries the instrument.
+        The whole snapshot is serialized under _hw_lock so its commands cannot race
+        a wavelength or grating move.
+        """
+        if self.debug:
+            with self._hw_lock:
+                self._ensure_debug_cache()
+                return self._debug_status_snapshot()
+        if not self.is_initialized or self.spec is None:
+            return unavailable_device(
+                "princeton_acton", "Spectrograph is not connected."
+            )
+
+        with self._hw_lock:
+            return device_snapshot(
+                "princeton_acton",
+                {
+                    "Spectrograph identification": [
+                        safe_item(
+                            "model", "Model",
+                            lambda: self._read_identity_field("MODEL", "model"),
+                        ),
+                        safe_item(
+                            "serial_number", "Serial number",
+                            lambda: self._read_identity_field("SERIAL", "serial_number"),
+                        ),
+                        item("com_port", "COM port", self.com_port),
+                    ],
+                    "Current position": [
+                        safe_item(
+                            "centre_wavelength", "Centre wavelength",
+                            self._read_wavelength, "nm",
+                        ),
+                        safe_item("grating", "Current grating", self._read_grating),
+                    ],
+                    "Installed gratings": self._status_grating_rows(),
+                    "Optical geometry": [
+                        item(
+                            "optical_geometry", "Optical geometry",
+                            state="unsupported",
+                            error="The Acton serial protocol does not expose optical geometry.",
+                        )
+                    ],
+                    "Accessories": [
+                        item(
+                            "accessories", "Accessories",
+                            state="unsupported",
+                            error="Accessory status is not implemented for this controller.",
+                        )
+                    ],
+                },
+            )
 
     def get_gratings(self):
         """Query all grating slots via ?GRATINGS.
@@ -217,14 +327,23 @@ class SpectrometerControllerPI:
         work/work_PI_grating.md Step A); parsing is defensive and simply
         yields no results rather than raising if it doesn't match.
         """
+        if self.debug:
+            self._ensure_debug_cache()
+            return [dict(grating) for grating in self._gratings]
         if not self.is_initialized:
             return []
         try:
-            response = self._send_command("?GRATINGS", timeout_s=5.0)
-            return self._parse_gratings_response(response)
+            return self._read_gratings()
         except Exception as e:
             print(f"Failed to read grating list: {e}")
             return []
+
+    def _read_gratings(self):
+        response = self._send_command("?GRATINGS", timeout_s=5.0)
+        gratings = self._parse_gratings_response(response)
+        if gratings:
+            self._gratings = [dict(grating) for grating in gratings]
+        return [dict(grating) for grating in gratings]
 
     @classmethod
     def _parse_gratings_response(cls, lines):
@@ -239,6 +358,7 @@ class SpectrometerControllerPI:
     def set_wavelength(self, wavelength_nm):
         if not self.is_initialized:
             print(f"(Dummy) Setting spectrometer wavelength to {wavelength_nm} nm...")
+            self._current_wavelength_nm = float(wavelength_nm)
             time.sleep(1.5)
             return False
 
@@ -248,7 +368,15 @@ class SpectrometerControllerPI:
             # As with GRATING, the SP2750 returns "ok" only after movement
             # finishes.  _send_command accepts both a standalone "ok" and an
             # echoed "<command> ok" response from the actual instrument.
-            self._send_command(f"{wavelength_nm:.3f} GOTO", timeout_s=30.0, cancellable=True)
+            with self._hw_lock:
+                self._send_command(f"{wavelength_nm:.3f} GOTO", timeout_s=30.0, cancellable=True)
+                try:
+                    self._read_wavelength()
+                except Exception as e:
+                    # GOTO completed successfully; retain the requested value if
+                    # the optional readback failed, as the Andor backend does.
+                    print(f"Warning: failed to read back centre wavelength: {e}")
+                    self._current_wavelength_nm = float(wavelength_nm)
             return True
         except MoveCancelled:
             print(f"Wavelength move to {wavelength_nm} nm was cancelled by user request.")
@@ -264,6 +392,7 @@ class SpectrometerControllerPI:
 
         if not self.is_initialized:
             print(f"(Dummy) Changing grating to index {grating_index}...")
+            self._current_grating = int(grating_index)
             time.sleep(2.0)
             return False
 
@@ -271,8 +400,9 @@ class SpectrometerControllerPI:
         try:
             # The parameter precedes GRATING; TURRET selects calibration data
             # and does not move a grating into the optical path.
-            self._send_command(f"{grating_index} GRATING", timeout_s=30.0)
-            actual_grating = self._read_grating()
+            with self._hw_lock:
+                self._send_command(f"{grating_index} GRATING", timeout_s=30.0)
+                actual_grating = self._read_grating()
             if actual_grating != grating_index:
                 print(
                     "Failed to verify grating change: "
@@ -284,14 +414,128 @@ class SpectrometerControllerPI:
             print(f"Failed to set spectrometer grating: {e}")
             return False
 
+    def get_cached_hardware_metadata(self):
+        """Return spectrograph metadata without issuing serial commands."""
+        with self._hw_lock:
+            if self.debug:
+                self._ensure_debug_cache()
+            selected = next(
+                (
+                    dict(grating)
+                    for grating in self._gratings
+                    if grating.get("index") == self._current_grating
+                ),
+                {},
+            )
+            limits = selected.pop("wavelength_limits_nm", None)
+            return {
+                "serial_number": self._device_identity.get("serial_number"),
+                "grating": {
+                    "index": self._current_grating,
+                    "grooves_per_mm": selected.get("grooves"),
+                    "blaze": selected.get("blaze"),
+                },
+                "center_wavelength_nm": self._current_wavelength_nm,
+                "wavelength_limits_nm": limits,
+            }
+
+    def _status_grating_rows(self):
+        try:
+            gratings = self._read_gratings()
+        except Exception as exc:
+            return [item("grating_count", "Grating count", state="error", error=exc)]
+
+        rows = [item("grating_count", "Grating count", len(gratings))]
+        for grating in gratings:
+            index = grating.get("index")
+            value = {"lines_per_mm": grating.get("grooves")}
+            if grating.get("blaze") is not None:
+                value["blaze"] = grating["blaze"]
+            limits = grating.get("wavelength_limits_nm")
+            if limits is not None:
+                value.update({
+                    "wavelength_min_nm": limits.get("min"),
+                    "wavelength_max_nm": limits.get("max"),
+                })
+            rows.append(item(f"grating_{index}", f"Grating {index}", value))
+        return rows
+
+    def _ensure_debug_cache(self):
+        self._device_identity.update({
+            "model": "SP-2750 [DEBUG]",
+            "serial_number": "DEBUG-SP2750-0000000",
+        })
+        if not self._gratings:
+            configured = self.config.get("grating") or [
+                {"index": 1, "grooves": 600},
+                {"index": 2, "grooves": 1200},
+                {"index": 3, "grooves": 1800},
+            ]
+            self._gratings = [dict(grating) for grating in configured]
+
+    def _debug_status_snapshot(self):
+        selected = next(
+            (g for g in self._gratings if g.get("index") == self._current_grating),
+            {},
+        )
+        rows = [item("grating_count", "Grating count", len(self._gratings))]
+        rows.extend(
+            item(
+                f"grating_{grating.get('index')}",
+                f"Grating {grating.get('index')}",
+                {"lines_per_mm": grating.get("grooves")},
+            )
+            for grating in self._gratings
+        )
+        return device_snapshot(
+            "princeton_acton_debug",
+            {
+                "Spectrograph identification": [
+                    item("model", "Model", self._device_identity["model"]),
+                    item(
+                        "serial_number", "Serial number",
+                        self._device_identity["serial_number"],
+                    ),
+                    item("com_port", "COM port", self.com_port),
+                ],
+                "Current position": [
+                    item(
+                        "centre_wavelength", "Centre wavelength",
+                        self._current_wavelength_nm, "nm",
+                    ),
+                    item("grating", "Current grating", self._current_grating),
+                    item(
+                        "grooves", "Grooves",
+                        selected.get("grooves"), "g/mm",
+                    ),
+                ],
+                "Installed gratings": rows,
+                "Optical geometry": [
+                    item(
+                        "optical_geometry", "Optical geometry",
+                        state="unsupported",
+                        error="The Acton serial protocol does not expose optical geometry.",
+                    )
+                ],
+                "Accessories": [
+                    item(
+                        "accessories", "Accessories",
+                        state="unsupported",
+                        error="Accessory status is not implemented for this controller.",
+                    )
+                ],
+            },
+        )
+
     def _close_serial(self):
-        if self.spec:
-            try:
-                self.spec.close()
-            except Exception:
-                pass
-            finally:
-                self.spec = None
+        with self._hw_lock:
+            if self.spec:
+                try:
+                    self.spec.close()
+                except Exception:
+                    pass
+                finally:
+                    self.spec = None
 
     def close(self):
         self._close_serial()

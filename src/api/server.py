@@ -12,6 +12,9 @@ from src.api.schemas import (
     AcquireResponse,
     CalibrationRequest,
     CalibrationResponse,
+    CameraInfoResponse,
+    ConfigResponse,
+    SpectrometerInfoResponse,
     StatusResponse,
 )
 from src.ui_mixins.api_mixin import BackgroundMismatchError
@@ -85,6 +88,19 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
         except FutureTimeoutError:
             raise HTTPException(status_code=504, detail="Acquisition timed out")
 
+    def _run_hardware_info(fn, device_name):
+        try:
+            return fn()
+        except RuntimeError as e:
+            if str(e) == "instrument busy":
+                raise HTTPException(status_code=409, detail=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+        except FutureTimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail=f"{device_name} status refresh timed out",
+            )
+
     def _acquire_response_payload(result: dict) -> dict:
         payload = {
             "x": _to_list(result["x"]),
@@ -123,6 +139,24 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
     @router.get("/status", response_model=StatusResponse)
     def get_status():
         return gui_bridge.call(gui_window.api_get_status)
+
+    @router.get("/hardware/camera", response_model=CameraInfoResponse)
+    def get_camera_info(refresh: bool = False):
+        return _run_hardware_info(
+            lambda: gui_window.api_get_camera_info(refresh=refresh),
+            "Camera",
+        )
+
+    @router.get("/hardware/spectrometer", response_model=SpectrometerInfoResponse)
+    def get_spectrometer_info(refresh: bool = False):
+        return _run_hardware_info(
+            lambda: gui_window.api_get_spectrometer_info(refresh=refresh),
+            "Spectrometer",
+        )
+
+    @router.get("/config", response_model=ConfigResponse)
+    def get_config():
+        return gui_bridge.call(gui_window.api_get_config)
 
     @router.post("/calibration", response_model=CalibrationResponse)
     def post_calibration(req: CalibrationRequest):

@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -136,3 +136,124 @@ class StatusResponse(BaseModel):
     calibration: dict
     roi: dict
     background: dict
+
+
+class HardwareIdentity(BaseModel):
+    controller_model: str | None = None
+    model: str | None = None
+    serial_number: str | None = None
+
+
+class DetectorSize(BaseModel):
+    width: int | None = None
+    height: int | None = None
+
+
+class PixelPitch(BaseModel):
+    width: float | None = None
+    height: float | None = None
+
+
+class RoiMetadata(BaseModel):
+    mode: str | None = None
+    horizontal_start: int | None = None
+    horizontal_end: int | None = None
+    vertical_start: int | None = None
+    vertical_end: int | None = None
+
+
+class BinningMetadata(BaseModel):
+    horizontal: int | None = None
+    vertical: int | None = None
+
+
+class TemperatureMetadata(BaseModel):
+    current_c: float | None = None
+    setpoint_c: float | None = None
+    status: str | None = None
+
+
+class CameraMetadata(BaseModel):
+    identity: HardwareIdentity
+    detector_size_px: DetectorSize
+    pixel_pitch_um: PixelPitch | None = None
+    exposure_time_s: float
+    accumulations: int
+    accumulation_mode: str
+    roi: RoiMetadata
+    binning: BinningMetadata
+    read_mode: str | None = None
+    output_rows: int | None = None
+    software_vertical_sum: bool | None = None
+    temperature: TemperatureMetadata
+
+
+class GratingMetadata(BaseModel):
+    index: int | None = None
+    grooves_per_mm: int | None = None
+    blaze: str | None = None
+
+
+class WavelengthLimits(BaseModel):
+    min: float | None = None
+    max: float | None = None
+
+
+class SpectrometerMetadata(BaseModel):
+    identity: HardwareIdentity
+    center_wavelength_nm: float | None = None
+    grating: GratingMetadata
+    wavelength_limits_nm: WavelengthLimits | None = None
+
+
+class DeviceStatusItem(BaseModel):
+    key: str
+    label: str
+    value: Any = None
+    unit: str | None = None
+    state: Literal["ok", "error", "unsupported"] = "ok"
+    error: str | None = None
+
+
+class DeviceStatusSnapshot(BaseModel):
+    backend: str
+    available: bool
+    error: str | None = None
+    sections: dict[str, list[DeviceStatusItem]]
+
+
+class CameraInfoResponse(BaseModel):
+    schema_version: int
+    captured_at: str
+    mode: Literal["hardware", "debug"]
+    operational: bool
+    hardware_connected: bool
+    busy: bool
+    backend: str
+    metadata_source: Literal["cache"]
+    metadata: CameraMetadata
+    status: DeviceStatusSnapshot | None = None
+
+
+class SpectrometerInfoResponse(BaseModel):
+    schema_version: int
+    captured_at: str
+    mode: Literal["hardware", "debug"]
+    operational: bool
+    hardware_connected: bool
+    busy: bool
+    backend: str
+    metadata_source: Literal["cache"]
+    metadata: SpectrometerMetadata
+    status: DeviceStatusSnapshot | None = None
+
+
+class ConfigResponse(BaseModel):
+    schema_version: int
+    captured_at: str
+    source_file: str
+    active_config: dict[str, Any]
+    stored_config: dict[str, Any]
+    restart_required: bool
+    pending_restart_keys: list[str]
+    redacted_fields: list[str]

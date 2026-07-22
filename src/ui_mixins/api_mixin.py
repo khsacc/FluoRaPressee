@@ -1,13 +1,22 @@
+import json
 import secrets
 import socket
 import threading
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from datetime import datetime
 
 import numpy as np
 import uvicorn
 from PyQt5.QtWidgets import QMessageBox
 
+from src.api.info_helpers import (
+    build_config_response,
+    build_device_response,
+    normalize_camera_metadata,
+    normalize_spectrometer_metadata,
+)
+from src.instrument_status import legacy_camera_snapshot, unavailable_device
+from src.measurement_metadata import capture_hardware_state
 from src.pressureCalc import PressureCalculator
 
 
@@ -32,6 +41,171 @@ class ApiMixin:
     # a non-GUI thread (GuiBridge itself refuses to be called from the GUI
     # thread, see src/api/gui_bridge.py).
     # ------------------------------------------------------------------
+
+    def _api_camera_backend(self):
+        module = type(self.thread).__module__
+        return "princeton_picam" if module.endswith("camera_princeton") else "andor_sdk2"
+
+    def _api_spectrometer_backend(self):
+        module = type(self.spec_ctrl).__module__
+        return "princeton_acton" if module.endswith("spectrometer_princeton") else "andor_shamrock"
+
+    def _api_build_camera_info(self, status=None):
+        """Build a camera response on the GUI thread from cached state."""
+        capture = capture_hardware_state(self, self.spin_accumulate.value())
+        metadata = normalize_camera_metadata(capture["camera"])
+        running = bool(self.thread.isRunning())
+        debug = bool(getattr(self.thread, "debug", self.debug))
+        hardware_connected = bool(
+            not debug and running and getattr(self.thread, "cam", None) is not None
+        )
+        return build_device_response(
+            backend=self._api_camera_backend(),
+            debug=debug,
+            operational=running and (debug or hardware_connected),
+            hardware_connected=hardware_connected,
+            busy=self._instrument_status_busy(),
+            metadata=metadata,
+            status=status,
+        )
+
+    def _api_build_spectrometer_info(self, status=None):
+        """Build a spectrometer response on the GUI thread from cached state."""
+        capture = capture_hardware_state(self, self.spin_accumulate.value())
+        configured_identity = self.config.get("hardware_identity", {}).get("spectrometer", {})
+        metadata = normalize_spectrometer_metadata(
+            capture["spectrometer"], configured_identity
+        )
+        debug = bool(getattr(self.spec_ctrl, "debug", self.debug))
+        hardware_connected = bool(getattr(self.spec_ctrl, "is_initialized", False))
+        return build_device_response(
+            backend=self._api_spectrometer_backend(),
+            debug=debug,
+            operational=debug or hardware_connected,
+            hardware_connected=hardware_connected,
+            busy=self._instrument_status_busy(),
+            metadata=metadata,
+            status=status,
+        )
+
+    def _api_begin_hardware_refresh(self):
+        """Acquire the same exclusion gate used by measurement/calibration."""
+        if self._instrument_status_busy() or not self._try_acquire_gate():
+            raise RuntimeError("instrument busy")
+
+    def _api_end_hardware_refresh(self):
+        self._release_acquisition_gate()
+
+    def _api_start_camera_status_refresh(self):
+        self._api_begin_hardware_refresh()
+        future = Future()
+        self._api_camera_status_future = future
+        try:
+            if not self.thread.isRunning():
+                future.set_result(unavailable_device(
+                    self._api_camera_backend(), "Camera is not connected."
+                ))
+            elif not hasattr(self.thread, "request_status"):
+                future.set_result(unavailable_device(
+                    self._api_camera_backend(), "Camera status reporting is unavailable."
+                ))
+            else:
+                self.thread.request_status()
+        except Exception:
+            self._api_camera_status_future = None
+            self._api_end_hardware_refresh()
+            raise
+        return future
+
+    def _api_on_camera_status_ready(self, snapshot):
+        """Resolve an API live-status request from the camera thread signal."""
+        future = getattr(self, "_api_camera_status_future", None)
+        if future is None or future.done():
+            return
+        if isinstance(snapshot, dict) and "Error" in snapshot and "sections" not in snapshot:
+            rows = snapshot.get("Error") or []
+            message = rows[0][1] if rows and len(rows[0]) > 1 else "Camera status query failed."
+            normalized = unavailable_device(self._api_camera_backend(), message)
+        else:
+            normalized = legacy_camera_snapshot(snapshot, self._api_camera_backend())
+        future.set_result(normalized)
+
+    def api_get_camera_info(self, refresh=False, timeout=10.0):
+        """Worker-thread entry point for GET /hardware/camera."""
+        if not refresh:
+            return self.gui_bridge.call(self._api_build_camera_info)
+
+        future = self.gui_bridge.call(self._api_start_camera_status_refresh)
+        try:
+            snapshot = future.result(timeout=timeout)
+            return self.gui_bridge.call(
+                lambda: self._api_build_camera_info(status=snapshot)
+            )
+        finally:
+            self.gui_bridge.call(lambda: self._api_finish_camera_status_refresh(future))
+
+    def _api_finish_camera_status_refresh(self, future):
+        if getattr(self, "_api_camera_status_future", None) is future:
+            self._api_camera_status_future = None
+        self._api_end_hardware_refresh()
+
+    def api_get_spectrometer_info(self, refresh=False, timeout=30.0):
+        """Worker-thread entry point for GET /hardware/spectrometer."""
+        if not refresh:
+            return self.gui_bridge.call(self._api_build_spectrometer_info)
+
+        self.gui_bridge.call(self._api_begin_hardware_refresh)
+        result_future = Future()
+
+        def collect_status():
+            try:
+                result_future.set_result(self.spec_ctrl.get_status_snapshot())
+            except Exception as exc:
+                result_future.set_exception(exc)
+
+        worker = threading.Thread(
+            target=collect_status,
+            name="FluoraPressee-SpectrometerStatus",
+            daemon=True,
+        )
+        worker.start()
+
+        release_in_finally = True
+        try:
+            snapshot = result_future.result(timeout=timeout)
+            return self.gui_bridge.call(
+                lambda: self._api_build_spectrometer_info(status=snapshot)
+            )
+        except FutureTimeoutError:
+            # The hardware worker may still hold its controller lock. Keep the
+            # acquisition gate until it really exits, even though HTTP returns 504.
+            release_in_finally = False
+            result_future.add_done_callback(
+                lambda _future: self._api_release_refresh_after_timeout()
+            )
+            raise
+        finally:
+            if release_in_finally:
+                self.gui_bridge.call(self._api_end_hardware_refresh)
+
+    def _api_release_refresh_after_timeout(self):
+        try:
+            self.gui_bridge.call(self._api_end_hardware_refresh)
+        except Exception as exc:
+            print(f"Failed to release API hardware-status gate after timeout: {exc}")
+
+    def api_get_config(self):
+        """GUI-thread helper for GET /config."""
+        try:
+            with open("spectrometerConfig.json", "r", encoding="utf-8") as handle:
+                stored = json.load(handle)
+        except Exception:
+            stored = self.config
+        return build_config_response(
+            self.config,
+            getattr(self, "_startup_config", self.config),
+            stored_config=stored,
+        )
 
     def _api_start_acquire(self, exposure_s=None, accumulations=None):
         """Kick off a single-shot acquisition and return immediately.

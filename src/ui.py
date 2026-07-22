@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+from copy import deepcopy
 from datetime import datetime
 import numpy as np
 from PyQt5.QtWidgets import (QMainWindow, QPushButton, QVBoxLayout,
@@ -77,6 +78,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.resize(1400, 900)
 
         self.config = self.load_spectrometer_config()
+        # Hardware/connection keys are consumed only when the controller objects
+        # are constructed. Keep the startup snapshot so GET /config can distinguish
+        # currently active values from changes saved for the next restart.
+        self._startup_config = deepcopy(self.config)
         _cache = self._load_local_cache()
         self._api_key = self.get_or_create_api_key()
 
@@ -121,6 +126,9 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # Future that api_acquire() waits on for a single-shot acquisition to complete (set from the
         # API worker thread via GuiBridge, resolved on the GUI thread by _process_completed_data()).
         self._api_pending_future = None
+        # Future used only by GET /hardware/camera?refresh=true. The camera owns
+        # its SDK and reports the live snapshot asynchronously via status_ready.
+        self._api_camera_status_future = None
         # Set of "reasons the measurement controls are locked" (sequential run in progress,
         # API server running, etc.). Re-enabled only once every reason has been cleared
         # (see _lock_ui/_unlock_ui in sequential_mixin.py).
@@ -760,6 +768,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.thread.acquisition_failed.connect(self.on_acquisition_failed)
         self.thread.em_gain_info_ready.connect(self.on_em_gain_info_ready)
         self.thread.identity_ready.connect(self.on_camera_identity_ready)
+        if hasattr(self.thread, "status_ready"):
+            self.thread.status_ready.connect(self._api_on_camera_status_ready)
         if hasattr(self.thread, "exposure_applied"):
             self.thread.exposure_applied.connect(self.on_exposure_applied)
         if hasattr(self.thread, "roi_applied"):
