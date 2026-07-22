@@ -331,6 +331,9 @@ class ApiMixin:
         return record
 
     def _api_wait_for_configuration(self, record, axis_mode, timeout=120.0):
+        # If this call raises, _api_start_configuration_apply either never
+        # acquired the gate (busy), or acquired and released it while rolling
+        # back a staging failure. Do not release an unknown owner's gate here.
         future = self.gui_bridge.call(
             lambda: self._api_start_configuration_apply(record, axis_mode)
         )
@@ -342,6 +345,12 @@ class ApiMixin:
             future.add_done_callback(
                 lambda _future: self._api_release_gate_after_future()
             )
+            raise
+        except Exception:
+            # Receiving a Future proves that this configuration operation
+            # acquired the gate. A completed move failure will not release it
+            # in the GUI callback, so release this operation's ownership here.
+            self.gui_bridge.call(self._release_acquisition_gate)
             raise
         return future
 
@@ -421,15 +430,13 @@ class ApiMixin:
 
     def api_apply_configuration(self, configuration_id, axis_mode="calibrated"):
         record = self._api_validate_configuration(configuration_id)
+        self._api_wait_for_configuration(record, axis_mode)
         try:
-            self._api_wait_for_configuration(record, axis_mode)
             state = self.gui_bridge.call(self._api_configuration_state)
-        except FutureTimeoutError:
-            raise
-        except Exception:
+        finally:
+            # _api_wait_for_configuration returned successfully, so this call
+            # owns the gate and is responsible for releasing it.
             self.gui_bridge.call(self._release_acquisition_gate)
-            raise
-        self.gui_bridge.call(self._release_acquisition_gate)
         return {
             "applied": True,
             "configuration_id": record["configuration_id"],
@@ -462,14 +469,8 @@ class ApiMixin:
         configuration_applied = False
         if configuration_id is not None:
             record = self._api_validate_configuration(configuration_id)
-            try:
-                self._api_wait_for_configuration(record, axis_mode)
-                configuration_applied = True
-            except FutureTimeoutError:
-                raise
-            except Exception:
-                self.gui_bridge.call(self._release_acquisition_gate)
-                raise
+            self._api_wait_for_configuration(record, axis_mode)
+            configuration_applied = True
 
         try:
             future, actual_exposure, actual_accum = self.gui_bridge.call(

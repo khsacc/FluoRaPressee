@@ -236,7 +236,8 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
         response_model=ApplyConfigurationResponse,
     )
     def apply_configuration(
-        configuration_id: str, req: ApplyConfigurationRequest
+        configuration_id: str,
+        req: ApplyConfigurationRequest = ApplyConfigurationRequest(),
     ):
         try:
             return gui_window.api_apply_configuration(

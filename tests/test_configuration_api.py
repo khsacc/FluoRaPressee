@@ -1,3 +1,4 @@
+import threading
 import unittest
 
 import numpy as np
@@ -17,6 +18,11 @@ except (ImportError, ModuleNotFoundError):
     ApplyConfigurationRequest = None
     ResolveConfigurationsRequest = None
     create_app = None
+
+try:
+    from src.ui_mixins.api_mixin import ApiMixin
+except (ImportError, ModuleNotFoundError):
+    ApiMixin = None
 
 
 class DirectBridge:
@@ -135,6 +141,32 @@ class FakeGui:
         }
 
 
+class BusyConfigurationHarness(ApiMixin if ApiMixin is not None else object):
+    """Model another operation holding the process-wide acquisition gate."""
+
+    def __init__(self):
+        self.gui_bridge = DirectBridge()
+        self._acquisition_gate = threading.Lock()
+        self._acquisition_gate.acquire()
+        # This deliberately reproduces the current unscoped ownership flag:
+        # the busy operation set it before this API call began.
+        self._gate_held_by_me = True
+
+    def _api_validate_configuration(self, configuration_id):
+        return {
+            "configuration_id": configuration_id,
+            "slot_id": "slot-1",
+        }
+
+    def _instrument_status_busy(self):
+        return True
+
+    def _release_acquisition_gate(self):
+        if self._gate_held_by_me:
+            self._gate_held_by_me = False
+            self._acquisition_gate.release()
+
+
 @unittest.skipIf(create_app is None, "FastAPI test dependencies are unavailable")
 class ConfigurationApiTests(unittest.TestCase):
     def setUp(self):
@@ -182,9 +214,7 @@ class ConfigurationApiTests(unittest.TestCase):
         )
         applied = self.endpoint(
             "/configurations/{configuration_id}/apply", "POST"
-        )(
-            "cfg-1", ApplyConfigurationRequest(axis_mode="calibrated")
-        )
+        )("cfg-1")
 
         self.assertEqual(listing["catalog_revision"], 7)
         self.assertEqual(len(resolved["resolved"]), 2)
@@ -202,6 +232,29 @@ class ConfigurationApiTests(unittest.TestCase):
             schema_name = acquire_schema["$ref"].rsplit("/", 1)[-1]
             acquire_schema = self.app.openapi()["components"]["schemas"][schema_name]
         self.assertIn("configuration_id", acquire_schema["properties"])
+        apply_operation = paths["/configurations/{configuration_id}/apply"]["post"]
+        self.assertFalse(apply_operation.get("requestBody", {}).get("required", False))
+
+
+@unittest.skipIf(ApiMixin is None, "GUI API dependencies are unavailable")
+class ConfigurationGateOwnershipTests(unittest.TestCase):
+    def test_apply_does_not_release_another_operations_gate_when_busy(self):
+        gui = BusyConfigurationHarness()
+
+        with self.assertRaisesRegex(RuntimeError, "instrument busy"):
+            gui.api_apply_configuration("cfg-1")
+
+        self.assertTrue(gui._acquisition_gate.locked())
+        self.assertTrue(gui._gate_held_by_me)
+
+    def test_acquire_with_configuration_does_not_release_busy_gate(self):
+        gui = BusyConfigurationHarness()
+
+        with self.assertRaisesRegex(RuntimeError, "instrument busy"):
+            gui.api_acquire(configuration_id="cfg-1")
+
+        self.assertTrue(gui._acquisition_gate.locked())
+        self.assertTrue(gui._gate_held_by_me)
 
 
 class ConfigurationApiSchemaTests(unittest.TestCase):
