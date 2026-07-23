@@ -63,7 +63,7 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
     block uvicorn's single event loop for the whole duration of a blocking
     acquisition, stalling every other concurrent request.
     """
-    app = FastAPI(title="FluoraPressée API")
+    app = FastAPI(title="FluoRaPressée API")
 
     def verify_api_key(x_api_key: str | None = Header(default=None)):
         # Reads gui_window._api_key live on every request (rather than

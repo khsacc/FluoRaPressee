@@ -432,7 +432,7 @@ class ApiMixin:
         # vocabulary (matching self.calib_unit and POST /calibration's request/response,
         # see docs-site/docs/api/calibration.md) rather than axis_unit's "nm"/"cm-1"/None - the two fields serve
         # different callers. It must still track axis_kind rather than only
-        # `calibrated`, though: a native-wavelength axis (Ocean Optics, no FluoraPressée
+        # `calibrated`, though: a native-wavelength axis (Ocean Optics, no FluoRaPressée
         # calibration loaded) is a real Wavelength/Raman-shift axis, not a pixel index.
         if calibrated:
             display_unit = self.calib_unit

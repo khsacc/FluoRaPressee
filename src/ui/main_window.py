@@ -78,7 +78,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
     def __init__(self, debug=False):
         super().__init__()
         self.debug = debug
-        self.setWindowTitle("FluoraPressée: Spectrometer Live View" + (" [DEBUG MODE]" if self.debug else ""))
+        self.setWindowTitle("FluoRaPressée: Spectrometer Live View" + (" [DEBUG MODE]" if self.debug else ""))
         self.resize(1400, 900)
 
         self.config = self.load_spectrometer_config()
@@ -198,7 +198,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         plot_layout.addWidget(self.lbl_accum_status)
 
         # Shown only while displaying Ocean Optics' native (factory-calibrated) wavelength
-        # axis with no FluoraPressée calibration loaded - see
+        # axis with no FluoRaPressée calibration loaded - see
         # SpectrometerControlMixin.update_plot_labels() (work/work_OceanOptics.md Step 6).
         self.lbl_axis_warning = QLabel(
             "X-axis: uncalibrated (Ocean Optics factory-calibrated values)"
@@ -888,6 +888,6 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         ):
             return (
                 "Closing this window will terminate the cooler of the camera. "
-                "Are you sure you want to close FluoraPressée?"
+                "Are you sure you want to close FluoRaPressée?"
             )
-        return "Are you sure you want to close FluoraPressée?"
+        return "Are you sure you want to close FluoRaPressée?"

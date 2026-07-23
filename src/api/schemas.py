@@ -122,7 +122,7 @@ class AcquireResponse(BaseModel):
     # {"source": "pixel"|"native_wavelength"|"calibrated", "unit": "nm"|"cm-1"|None,
     #  "calibrated": bool} - same vocabulary and single source of truth
     # (measurement_metadata.public_axis_kind/public_axis_unit) as configuration.axis_mode.
-    # "calibrated": false means no FluoraPressée calibration is applied; it does not imply
+    # "calibrated": false means no FluoRaPressée calibration is applied; it does not imply
     # the axis itself is meaningless (Ocean Optics' native_wavelength is factory-calibrated).
     x_axis: dict[str, Any] | None = None
 

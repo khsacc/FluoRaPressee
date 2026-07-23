@@ -15,7 +15,7 @@ class CoolerMessageTests(unittest.TestCase):
 
         message = SpectrometerGUI._close_confirmation_message(state)
 
-        self.assertEqual(message, "Are you sure you want to close FluoraPressée?")
+        self.assertEqual(message, "Are you sure you want to close FluoRaPressée?")
 
     def test_close_message_mentions_cooler_when_available(self):
         state = _CapabilityState()

@@ -80,7 +80,7 @@ class AcquisitionMixin:
 
         native_wavelengths = getattr(self.thread, "native_wavelengths", None)
         if native_wavelengths is not None and len(native_wavelengths) == num_pixels:
-            # Ocean Optics: no FluoraPressée calibration loaded, but the device reports its
+            # Ocean Optics: no FluoRaPressée calibration loaded, but the device reports its
             # own factory-calibrated wavelength axis (nm) - use it instead of a bare pixel
             # index. See public_axis_kind() in measurement_metadata.py for the flip_x/display
             # implications of this being a real physical axis rather than an arbitrary index.

@@ -126,7 +126,7 @@ def _spectrometer_state(window):
 def _native_wavelengths(window):
     """Direct, hardware-derived check (never a separately-maintained flag) for whether the
     connected camera thread has a factory wavelength calibration to fall back on when no
-    FluoraPressée calibration is loaded - currently only CameraThreadOceanOptics. Used by both
+    FluoRaPressée calibration is loaded - currently only CameraThreadOceanOptics. Used by both
     _axis_state() below and public_axis_kind()."""
     native_wavelengths = getattr(getattr(window, "thread", None), "native_wavelengths", None)
     if native_wavelengths is not None and len(native_wavelengths) > 0:

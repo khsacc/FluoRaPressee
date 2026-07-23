@@ -235,8 +235,8 @@ class ExposureFailureBlocksAcquisitionTests(unittest.TestCase):
 
 class ConfigurationUnitLabelTests(unittest.TestCase):
     """Regression test for review round 5, point 2: configuration.unit hardcoded "pixel"
-    whenever no FluoraPressée calibration was loaded, even when axis_mode was already
-    "native_wavelength" (a real Wavelength/Raman-shift axis, just not FluoraPressée-
+    whenever no FluoRaPressée calibration was loaded, even when axis_mode was already
+    "native_wavelength" (a real Wavelength/Raman-shift axis, just not FluoRaPressée-
     calibrated) - the two fields contradicted each other in the very same response."""
 
     def _gui(self, *, native_wavelengths, calib_coeffs, raman):

@@ -139,6 +139,19 @@ class PressureCalculator:
                 "k0_prime": 3.75,
                 "k0_prime_err": 0.20,
             },
+            "diamond_edge_akahama_kawamura_2010": {
+                "label": "Akahama and Kawamura 2010",
+                "temperature_mode": "none",
+                "measurement_kind": "diamond_raman_edge",
+                "formula": "quadratic_absolute",
+                "nu0": 1334.0,
+                "c0": 3141.0,
+                "c0_err": 3.0,
+                "c1": -4.157,
+                "c1_err": 0.020,
+                "c2": 1.429e-3,
+                "c2_err": 1.2e-5,
+            },
         },
         "cubic_bn_to": {
             "cubic_bn_kawamoto_2004": {"label": "Kawamoto et al. 2004", "temperature_mode": "none"},
@@ -391,6 +404,18 @@ class PressureCalculator:
             variance = (k0 * (1.0 + (k0_prime - 1.0) * x) * dx) ** 2
             variance += (x * factor * float(meta.get("k0_err", 0.0))) ** 2
             variance += (0.5 * k0 * x**2 * float(meta.get("k0_prime_err", 0.0))) ** 2
+        elif meta["formula"] == "quadratic_absolute":
+            c0 = float(meta["c0"])
+            c1 = float(meta["c1"])
+            c2 = float(meta["c2"])
+            pressure = c0 + c1 * edge + c2 * edge**2
+            variance = ((c1 + 2.0 * c2 * edge) * edge_err) ** 2
+            if "c0_err" in meta:
+                variance += float(meta["c0_err"]) ** 2
+            if "c1_err" in meta:
+                variance += (edge * float(meta["c1_err"])) ** 2
+            if "c2_err" in meta:
+                variance += (edge**2 * float(meta["c2_err"])) ** 2
         else:
             return None, None, None
 

@@ -104,7 +104,7 @@ class DisplayMixin:
 
             x_data = self.get_x_axis(len(disp_data))
             if self.chk_flip_x.isChecked() and public_axis_kind(self) != "pixel":
-                # A meaningful physical x-axis (native wavelength or FluoraPressée-calibrated)
+                # A meaningful physical x-axis (native wavelength or FluoRaPressée-calibrated)
                 # must flip together with y, unlike a bare pixel index (see public_axis_kind()
                 # docstring) - otherwise flip_x desyncs wavelength/Raman-shift from intensity.
                 x_data = x_data[::-1]

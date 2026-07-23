@@ -1,6 +1,6 @@
 """Temporary dev helper for Step 7 verification (work/work_API.md).
 
-Launches FluoraPressée in --debug mode with the API server started immediately
+Launches FluoRaPressée in --debug mode with the API server started immediately
 on a fixed dev key/port, so the HTTP layer can be exercised with curl without
 waiting for Step 8's Start/Stop API Server GUI button.
 

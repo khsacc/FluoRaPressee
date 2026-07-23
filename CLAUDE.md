@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-FluoraPressée is a PyQt6 desktop GUI for controlling Andor/Princeton Instruments spectrometer+camera
+FluoRaPressée is a PyQt6 desktop GUI for controlling Andor/Princeton Instruments spectrometer+camera
 rigs and analyzing the resulting spectra for high-pressure experiments (ruby
 fluorescence pressure scale, Raman shift, etc.). It is a lab instrument-control tool, not a library or
 service. 

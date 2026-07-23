@@ -1,4 +1,4 @@
-"""DataFileIO: Pure file I/O operations for FluoraPressée.
+"""DataFileIO: Pure file I/O operations for FluoRaPressée.
 
 All methods operate on plain Python/NumPy data with no dependency on Qt or UI state,
 enabling reuse from external scripts and other applications.
@@ -139,7 +139,7 @@ class DataFileIO:
         grating = find(r"Grating:\s*(\S+)")
         if grating is None:
             raise ValueError(
-                "Not a FluoraPressée spectrum file: missing 'Grating' header field."
+                "Not a FluoRaPressée spectrum file: missing 'Grating' header field."
             )
 
         spec_mode = find(r"Spectrometer Mode:\s*(.+)$", default="Wavelength")

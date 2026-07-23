@@ -58,7 +58,7 @@ def _axis_tick_font():
 class AnalysisWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("FluoraPressée: Analysis Mode")
+        self.setWindowTitle("FluoRaPressée: Analysis Mode")
         self.resize(1650, 900)
 
         self.analyzer = DataAnalyzer()
