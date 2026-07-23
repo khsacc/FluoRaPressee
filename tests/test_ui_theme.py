@@ -35,6 +35,8 @@ class UiThemeTests(unittest.TestCase):
 
         self.assertIn("background-color: blue", style)
         self.assertIn("border-bottom: 3px", style)
+        self.assertIn("padding: 5px 10px", style)
+        self.assertIn("min-height: 16px", style)
         self.assertIn("QPushButton:hover:!pressed", style)
         self.assertIn("QPushButton:pressed", style)
         self.assertIn("QPushButton:focus", style)

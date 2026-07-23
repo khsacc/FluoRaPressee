@@ -13,7 +13,7 @@ QPushButton {{
     border-bottom: 3px solid palette(dark);
     border-radius: 4px;
     padding: 5px 10px;
-    min-height: 20px;
+    min-height: 16px;
 }}
 QPushButton:hover:!pressed {{
     border-color: palette(highlight);
@@ -28,7 +28,7 @@ QPushButton:pressed {{
 QPushButton:focus {{
     border: 2px solid palette(highlight);
     border-bottom: 3px solid palette(highlight);
-    padding: 4px 9px;
+    padding: 4px 9px 5px 9px;
 }}
 QPushButton:disabled {{
     background-color: palette(midlight);
@@ -54,8 +54,8 @@ QPushButton {{
     border: 1px solid rgba(0, 0, 0, 120);
     border-bottom: 3px solid rgba(0, 0, 0, 175);
     border-radius: 4px;
-    padding: 6px 10px;
-    min-height: 20px;
+    padding: 5px 10px;
+    min-height: 16px;
 }}
 QPushButton:hover:!pressed {{
     border-color: rgba(255, 255, 255, 210);
@@ -64,13 +64,13 @@ QPushButton:hover:!pressed {{
 QPushButton:pressed {{
     border-style: inset;
     border-bottom-width: 1px;
-    padding-top: 8px;
-    padding-bottom: 6px;
+    padding-top: 7px;
+    padding-bottom: 5px;
 }}
 QPushButton:focus {{
     border: 2px solid #90CAF9;
     border-bottom: 3px solid #64B5F6;
-    padding: 5px 9px;
+    padding: 4px 9px 5px 9px;
 }}
 QPushButton:disabled {{
     {disabled_style}

@@ -37,7 +37,7 @@ class CalibrationWindow(QDialog):
             QHeaderView::section { background-color: #E0E0E0; font-weight: bold; color: #000000; }
             QRadioButton { color: #000000; }
             QCheckBox { color: #000000; }
-            QPushButton { background-color: #E0E0E0; color: #000000; border: 1px solid #999; border-bottom: 3px solid #666; border-radius: 4px; padding: 5px 10px; min-height: 20px; }
+            QPushButton { background-color: #E0E0E0; color: #000000; border: 1px solid #999; border-bottom: 3px solid #666; border-radius: 4px; padding: 5px 10px; min-height: 16px; }
             QPushButton:hover:!pressed { background-color: #D0D0D0; border-color: #2196F3; border-bottom-color: #666; }
             QPushButton:pressed { background-color: #C8C8C8; border-style: inset; border-bottom-width: 1px; padding-top: 7px; padding-bottom: 5px; }
             QPushButton:disabled { background-color: #E8E8E8; color: #888; border-color: #AAA; }
