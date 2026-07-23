@@ -4,111 +4,7 @@
     * https://orcid.org/0000-0002-3682-7558 
     * E-mail as of 2026: hiroki (at) eqchem.s.u-tokyo.ac.jp
 
-Andor製またはPrinceton Instruments製のカメラ（検出器）および分光器を制御し、スペクトルのリアルタイム取得からバックグラウンド補正、キャリブレーション、ピークフィッティング、そして高圧実験における圧力計算までを一貫して行うためのPythonベースのGUIアプリケーションです。
-
-## スクリーンショット
-
-
-### メイン画面
-
-![](manuals/img/MainWindowFull.jpg)
-
-* スペクトルの取得、保存
-    * 単発測定および連続測定
-    * インターバルを指定した連続保存・連続解析もできます。
-* 分光器の基本的な制御（回折格子の変更、中心位置の変更）
-* ROI の設定、イメージモード（CCDで取得した画像をそのまま出力）への切り替え
-* バックグラウンドの取得と差し引き
-* ピーク函数を用いたフィッティング
-* 圧力計算ウィンドウを開く
-
-
-
-### 横軸較正画面（「Calibrate x-axis」ボタンをクリックして開く）
-
-![](manuals/img/CalibrationWindow.png)
-
-* 標準試料のスペクトルを取得し、ピーク検索、Gaussian函数によるピークフィット、波長の較正までを行えます。
-
-
-### 横軸較正補助画面
-
-![](manuals/img/CalibrationHelperWindow.png)
-
-* よく使うネオンの波長領域のスペクトル（事前に測定してプログラム中に保存したもの）を表示してピークの帰属の参考にできます。
-
-
-### フィッティング
-
-* Pseudo-Voigt, Moffat, Gaussian, Lorenzian の4種類の関数に対応
-* ピーク数の最大は５まで。
-
-
-
-### 圧力計算画面（「Open pressure calculator」ボタンをクリックして開く）
-
-![](manuals/img/PressureCalculator.png)
-
-* 横軸が波長のモードの場合、蛍光スケール、横軸がRaman shiftのモードの場合、Ramanスケールを用いた圧力計算が可能です。使用できるスケールは以下の通りです
-* 蛍光スケール
-    * ルビー（Cr<sup>3+</sup>:Al<sub>2</sub>O<sub>3</sub>）
-        * 圧力シフト
-            * Shen et al., <i>High Press. Res.</i> (2020) [DOI: 10.1080/08957959.2020.1791107](https://doi.org/10.1080/08957959.2020.1791107)
-            * Kraus et al., <i>Phys. Rev. B.</i> (2016) [DOI: 10.1103/PhysRevB.93.134105](https://doi.org/10.1103/PhysRevB.93.134105)
-            * Sokolova et al., <i>Russ. Geol. Geophys.</i> (2013) [DOI: 10.1016/j.rgg.2013.01.005](https://doi.org/10.1016/j.rgg.2013.01.005)
-            * Jacobsen et al., <i>Am. Min.</i> (2008) [for helium pressure medium, calibrated against the MgO scale] [DOI: 10.2138/am.2008.2988](https://doi.org/10.2138/am.2008.2988)
-            * Dorogokupets and Oganov, <i>Phys. Rev. B.</i> (2007) [DOI: 10.1103/PhysRevB.75.024115](https://doi.org/10.1103/PhysRevB.75.024115)
-            * Holzapfel, <i>J. Appl. Phys.</i> (2003) [DOI: 10.1063/1.1525856](https://doi.org/10.1063/1.1525856)
-            * Mao et al., <i>J. Geophys. Res.</i> (1986) [DOI: 10.1029/JB091iB05p04673](https://doi.org/10.1029/JB091iB05p04673)
-            * Piermarini et al., <i>J. Appl. Phys.</i> (1975) [DOI: 10.1063/1.321957](https://doi.org/10.1063/1.321957)
-        * 温度シフト
-            * 0 - 600 K, Ragan et al., <i>J. Appl. Phys.</i> (1992) [DOI: 10.1063/1.351951](https://doi.org/10.1063/1.351951)
-            * 0 - 600 K, Yen and Nicol, <i>J. Appl. Phys.</i> (1992) [DOI: 10.1063/1.351950](https://doi.org/10.1063/1.351950)
-            * 0 - 296 K [低温域], Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
-            * 296 - 900 K [高温域], Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
-            * 0 - 300 K, Kobayashi et al., unpublished
-    * Sm<sup>2+</sup>:SrB<sub>4</sub>O<sub>7</sub>
-        * 圧力シフト
-            * Datchi et al., <i>J. Appl. Phys.</i> (1997) [calibrated using the MXB1986 ruby scale] [DOI: 10.1063/1.365025](https://doi.org/10.1063/1.365025)
-            * Datchi et al., <i>High Press. Res.</i> (2007) [calibrated using the DO2007 ruby scale] [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
-            * Rashchenko et al., <i>J. Appl. Phys.</i> (2015) [0-0線(λ1)・0-1線(λ2–λ4)の4系統から選択可] [DOI: 10.1063/1.4918304](https://doi.org/10.1063/1.4918304)
-        * 温度シフト
-            * 296 - 900 K, Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
-    * Sm<sup>2+</sup>:SrFCl
-        * 圧力シフト
-            * Lorenz et al., <i>High Press. Res.</i> (1994) [DOI: 10.1080/08957959408203170](https://doi.org/10.1080/08957959408203170)
-            * Shen et al., <i>High Press. Res.</i> (2021) [DOI: 10.1080/08957959.2021.1931168](https://doi.org/10.1080/08957959.2021.1931168)
-            * Shen et al., <i>High Press. Res.</i> (1991) [DOI: 10.1080/08957959108245510](https://doi.org/10.1080/08957959108245510)
-        * 温度シフト
-            * 20 - 650 K, Lorenz et al., <i>High Press. Res.</i> (1994) [DOI: 10.1080/08957959408203170](https://doi.org/10.1080/08957959408203170)
-* Raman スケール
-    * <sup>13</sup>C diamond first order
-        * 圧力シフト
-            * Schiferl et al., <i>J. Appl. Phys.</i> (1997) [DOI: 10.1063/1.366268](https://doi.org/10.1063/1.366268)
-            * Mysen and Yamashita, <i>Geochim. Cosmochim. Acta</i> (2010) [温度依存項を内包、基準温度T<sub>0</sub> = 298.15 K (25℃) 固定] [DOI: 10.1016/j.gca.2010.05.004](https://doi.org/10.1016/j.gca.2010.05.004)
-    * Cubic BN TO
-        * 圧力シフト
-            * Datchi et al., <i>Phys. Rev. B.</i> (2004) [温度依存項を内包、有効範囲 300–723 K] [DOI: 10.1103/PhysRevB.69.144106](https://doi.org/10.1103/PhysRevB.69.144106)
-            * Kawamoto et al., <i>Rev. Sci. Instrum.</i> (2004) [DOI: 10.1063/1.1765756](https://doi.org/10.1063/1.1765756)
-        * 温度シフト
-            * 300 - 1000 K, Kawamoto et al., <i>Rev. Sci. Instrum.</i> (2004) [DOI: 10.1063/1.1765756](https://doi.org/10.1063/1.1765756)
-    * Zircon B<sub>1g</sub>
-        * 圧力シフト
-            * Schmidt et al., <i>Am. Min.</i> (2013) [DOI: 10.2138/am.2013.4143](https://doi.org/10.2138/am.2013.4143)
-            * Takahashi et al., <i>J. Raman Spectrosc.</i> (2024) [DOI: 10.1002/jrs.6663](https://doi.org/10.1002/jrs.6663)
-        * 温度シフト
-            * 296 - 1223 K, Schmidt et al., <i>Am. Min.</i> (2013) [DOI: 10.2138/am.2013.4143](https://doi.org/10.2138/am.2013.4143)
-            * 294 - 1078 K, Takahashi et al., <i>J. Raman Spectrosc.</i> (2024) [DOI: 10.1002/jrs.6663](https://doi.org/10.1002/jrs.6663)
-    * Quartz 464 cm<sup>-1</sup>
-        * 圧力シフト
-            * Schmidt and Ziemann, <i>Am. Min.</i> (2000) [23℃付近、2次式、0 < Δν ≤ 20 cm<sup>-1</sup>（~2.1 GPaまで）] [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
-            * Schmidt and Ziemann, <i>Am. Min.</i> (2000) [100–560℃、線形近似 9 cm<sup>-1</sup>/GPa] [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
-        * 温度シフト
-            * 77.15 - 833.15 K (-196 - 560℃), Schmidt and Ziemann, <i>Am. Min.</i> (2000) [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
-    * Quartz 128 cm<sup>-1</sup>
-        * 圧力シフト
-            * Li et al., <i>Chem. Geol.</i> (2025) [温度依存項を内包、基準温度T<sub>0</sub> = 296.15 K (23℃) 固定、有効範囲 296.15–973.15 K] [DOI: 10.1016/j.chemgeo.2024.122558](https://doi.org/10.1016/j.chemgeo.2024.122558)
-
+スペクトルのリアルタイム取得からバックグラウンド補正、キャリブレーション、ピークフィッティング、そして高圧実験における圧力計算までを一貫して行うためのPythonベースのGUIアプリケーションです。現在、Andor、Princeton Instruments、Ocean Opticsの分光器に対応しています。
 
 
 
@@ -116,9 +12,10 @@ Andor製またはPrinceton Instruments製のカメラ（検出器）および分
 
 * **OS**: Windows 10 / 11 (Andor SDK・Princeton Instruments PICam Runtime のいずれもWindows専用のため)
 * **Python**: Python 3.9 以上, 3.13以下
-* **Hardware**: 以下のいずれかの組み合わせに対応しています（起動時の設定ウィザードでどちらかを選択します）
+* **Hardware**: 以下のいずれかの組み合わせに対応しています（起動時の設定ウィザードで選択します）
   * Andor製 カメラ（検出器）+ Andor製 分光器（Kymera / Shamrock シリーズ、``ShamrockCIF.dll`` 経由で制御）
   * Princeton Instruments製 カメラ（検出器、PICam対応機種）+ Princeton Instruments製 分光器（Acton SP シリーズ、シリアル(COMポート)通信で制御）
+  * Ocean Optics製分光器
 * **Drivers/SDK**:
   * Andorの場合: Andor SDK (ドライバパッケージがPCにインストールされている必要があります)
   * Princeton Instrumentsの場合: PICam Runtime（カメラSDK。分光器側は追加ドライバ不要でシリアルポート経由で通信します）
@@ -258,6 +155,112 @@ macOS/Linux（``setup.sh``で作成した仮想環境を直接使用する場合
 ```
 
 Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``spectrometerConfig.json``は必要ありません。未較正のpixel軸データでもフィッティングは可能ですが、圧力計算には波長またはRaman shiftで較正されたデータが必要です。
+
+## スクリーンショット
+
+
+### メイン画面
+
+![](manuals/img/MainWindowFull.jpg)
+
+* スペクトルの取得、保存
+    * 単発測定および連続測定
+    * インターバルを指定した連続保存・連続解析もできます。
+* 分光器の基本的な制御（回折格子の変更、中心位置の変更）
+* ROI の設定、イメージモード（CCDで取得した画像をそのまま出力）への切り替え
+* バックグラウンドの取得と差し引き
+* ピーク函数を用いたフィッティング
+* 圧力計算ウィンドウを開く
+
+
+
+### 横軸較正画面（「Calibrate x-axis」ボタンをクリックして開く）
+
+![](manuals/img/CalibrationWindow.png)
+
+* 標準試料のスペクトルを取得し、ピーク検索、Gaussian函数によるピークフィット、波長の較正までを行えます。
+
+
+### 横軸較正補助画面
+
+![](manuals/img/CalibrationHelperWindow.png)
+
+* よく使うネオンの波長領域のスペクトル（事前に測定してプログラム中に保存したもの）を表示してピークの帰属の参考にできます。
+
+
+### フィッティング
+
+* Pseudo-Voigt, Moffat, Gaussian, Lorenzian の4種類の関数に対応
+* ピーク数の最大は５まで。
+
+
+
+### 圧力計算画面（「Open pressure calculator」ボタンをクリックして開く）
+
+![](manuals/img/PressureCalculator.png)
+
+* 横軸が波長のモードの場合、蛍光スケール、横軸がRaman shiftのモードの場合、Ramanスケールを用いた圧力計算が可能です。使用できるスケールは以下の通りです
+* 蛍光スケール
+    * ルビー（Cr<sup>3+</sup>:Al<sub>2</sub>O<sub>3</sub>）
+        * 圧力シフト
+            * Shen et al., <i>High Press. Res.</i> (2020) [DOI: 10.1080/08957959.2020.1791107](https://doi.org/10.1080/08957959.2020.1791107)
+            * Kraus et al., <i>Phys. Rev. B.</i> (2016) [DOI: 10.1103/PhysRevB.93.134105](https://doi.org/10.1103/PhysRevB.93.134105)
+            * Sokolova et al., <i>Russ. Geol. Geophys.</i> (2013) [DOI: 10.1016/j.rgg.2013.01.005](https://doi.org/10.1016/j.rgg.2013.01.005)
+            * Jacobsen et al., <i>Am. Min.</i> (2008) [for helium pressure medium, calibrated against the MgO scale] [DOI: 10.2138/am.2008.2988](https://doi.org/10.2138/am.2008.2988)
+            * Dorogokupets and Oganov, <i>Phys. Rev. B.</i> (2007) [DOI: 10.1103/PhysRevB.75.024115](https://doi.org/10.1103/PhysRevB.75.024115)
+            * Holzapfel, <i>J. Appl. Phys.</i> (2003) [DOI: 10.1063/1.1525856](https://doi.org/10.1063/1.1525856)
+            * Mao et al., <i>J. Geophys. Res.</i> (1986) [DOI: 10.1029/JB091iB05p04673](https://doi.org/10.1029/JB091iB05p04673)
+            * Piermarini et al., <i>J. Appl. Phys.</i> (1975) [DOI: 10.1063/1.321957](https://doi.org/10.1063/1.321957)
+        * 温度シフト
+            * 0 - 600 K, Ragan et al., <i>J. Appl. Phys.</i> (1992) [DOI: 10.1063/1.351951](https://doi.org/10.1063/1.351951)
+            * 0 - 600 K, Yen and Nicol, <i>J. Appl. Phys.</i> (1992) [DOI: 10.1063/1.351950](https://doi.org/10.1063/1.351950)
+            * 0 - 296 K [低温域], Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
+            * 296 - 900 K [高温域], Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
+            * 0 - 300 K, Kobayashi et al., unpublished
+    * Sm<sup>2+</sup>:SrB<sub>4</sub>O<sub>7</sub>
+        * 圧力シフト
+            * Datchi et al., <i>J. Appl. Phys.</i> (1997) [calibrated using the MXB1986 ruby scale] [DOI: 10.1063/1.365025](https://doi.org/10.1063/1.365025)
+            * Datchi et al., <i>High Press. Res.</i> (2007) [calibrated using the DO2007 ruby scale] [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
+            * Rashchenko et al., <i>J. Appl. Phys.</i> (2015) [0-0線(λ1)・0-1線(λ2–λ4)の4系統から選択可] [DOI: 10.1063/1.4918304](https://doi.org/10.1063/1.4918304)
+        * 温度シフト
+            * 296 - 900 K, Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
+    * Sm<sup>2+</sup>:SrFCl
+        * 圧力シフト
+            * Lorenz et al., <i>High Press. Res.</i> (1994) [DOI: 10.1080/08957959408203170](https://doi.org/10.1080/08957959408203170)
+            * Shen et al., <i>High Press. Res.</i> (2021) [DOI: 10.1080/08957959.2021.1931168](https://doi.org/10.1080/08957959.2021.1931168)
+            * Shen et al., <i>High Press. Res.</i> (1991) [DOI: 10.1080/08957959108245510](https://doi.org/10.1080/08957959108245510)
+        * 温度シフト
+            * 20 - 650 K, Lorenz et al., <i>High Press. Res.</i> (1994) [DOI: 10.1080/08957959408203170](https://doi.org/10.1080/08957959408203170)
+* Raman スケール
+    * <sup>13</sup>C diamond first order
+        * 圧力シフト
+            * Schiferl et al., <i>J. Appl. Phys.</i> (1997) [DOI: 10.1063/1.366268](https://doi.org/10.1063/1.366268)
+            * Mysen and Yamashita, <i>Geochim. Cosmochim. Acta</i> (2010) [温度依存項を内包、基準温度T<sub>0</sub> = 298.15 K (25℃) 固定] [DOI: 10.1016/j.gca.2010.05.004](https://doi.org/10.1016/j.gca.2010.05.004)
+    * Cubic BN TO
+        * 圧力シフト
+            * Datchi et al., <i>Phys. Rev. B.</i> (2004) [温度依存項を内包、有効範囲 300–723 K] [DOI: 10.1103/PhysRevB.69.144106](https://doi.org/10.1103/PhysRevB.69.144106)
+            * Kawamoto et al., <i>Rev. Sci. Instrum.</i> (2004) [DOI: 10.1063/1.1765756](https://doi.org/10.1063/1.1765756)
+        * 温度シフト
+            * 300 - 1000 K, Kawamoto et al., <i>Rev. Sci. Instrum.</i> (2004) [DOI: 10.1063/1.1765756](https://doi.org/10.1063/1.1765756)
+    * Zircon B<sub>1g</sub>
+        * 圧力シフト
+            * Schmidt et al., <i>Am. Min.</i> (2013) [DOI: 10.2138/am.2013.4143](https://doi.org/10.2138/am.2013.4143)
+            * Takahashi et al., <i>J. Raman Spectrosc.</i> (2024) [DOI: 10.1002/jrs.6663](https://doi.org/10.1002/jrs.6663)
+        * 温度シフト
+            * 296 - 1223 K, Schmidt et al., <i>Am. Min.</i> (2013) [DOI: 10.2138/am.2013.4143](https://doi.org/10.2138/am.2013.4143)
+            * 294 - 1078 K, Takahashi et al., <i>J. Raman Spectrosc.</i> (2024) [DOI: 10.1002/jrs.6663](https://doi.org/10.1002/jrs.6663)
+    * Quartz 464 cm<sup>-1</sup>
+        * 圧力シフト
+            * Schmidt and Ziemann, <i>Am. Min.</i> (2000) [23℃付近、2次式、0 < Δν ≤ 20 cm<sup>-1</sup>（~2.1 GPaまで）] [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
+            * Schmidt and Ziemann, <i>Am. Min.</i> (2000) [100–560℃、線形近似 9 cm<sup>-1</sup>/GPa] [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
+        * 温度シフト
+            * 77.15 - 833.15 K (-196 - 560℃), Schmidt and Ziemann, <i>Am. Min.</i> (2000) [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
+    * Quartz 128 cm<sup>-1</sup>
+        * 圧力シフト
+            * Li et al., <i>Chem. Geol.</i> (2025) [温度依存項を内包、基準温度T<sub>0</sub> = 296.15 K (23℃) 固定、有効範囲 296.15–973.15 K] [DOI: 10.1016/j.chemgeo.2024.122558](https://doi.org/10.1016/j.chemgeo.2024.122558)
+
+
+
 
 ## API機能（同一LAN内の他PCからの操作）
 

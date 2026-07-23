@@ -245,7 +245,9 @@ def _probe_oceanoptics(result, config):
 
     devices = list_devices()
     if not devices:
-        raise RuntimeError("No Ocean Optics device was detected")
+        from src.oceanoptics_diagnostics import no_devices_error
+
+        raise RuntimeError(no_devices_error())
     result["camera_candidates"] = [
         {"model": device.model, "serial_number": str(device.serial_number), "interface": ""}
         for device in devices

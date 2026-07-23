@@ -2,6 +2,7 @@ import time
 import numpy as np
 from threading import Lock, Condition
 from PyQt6.QtCore import QThread, pyqtSignal
+from src.oceanoptics_diagnostics import no_devices_error
 
 # Ocean Optics devices report a factory wavelength calibration but have no grating/centre
 # wavelength to move and no cooler/EM gain; see work/work_OceanOptics.md for the full design
@@ -126,14 +127,19 @@ class CameraThreadOceanOptics(QThread):
             except Exception as e:
                 raise CameraInitError(f"Invalid seabreeze_backend {backend_name!r}: {e}") from e
 
-        from seabreeze.spectrometers import Spectrometer
+        from seabreeze.spectrometers import Spectrometer, list_devices
 
         serial_number = self.config.get("serial_number")
         try:
+            devices = list_devices()
+            if not devices:
+                raise CameraInitError(no_devices_error())
             if serial_number:
                 spec = Spectrometer.from_serial_number(serial_number)
             else:
-                spec = Spectrometer.from_first_available()
+                spec = Spectrometer(devices[0])
+        except CameraInitError:
+            raise
         except Exception as e:
             raise CameraInitError(f"Failed to connect to an Ocean Optics spectrometer: {e}") from e
 

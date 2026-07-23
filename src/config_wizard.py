@@ -579,7 +579,15 @@ class _PagePaths(QWidget):
         if supplier == SUPPLIER_ANDOR:
             return {"dll_path": self._andor_dll.value()}
         if supplier == SUPPLIER_OCEANOPTICS:
-            serial = self._oo_serial.currentText().strip()
+            # Probe candidates use a friendly display label ("SERIAL (MODEL)") while
+            # currentData() contains the actual serial accepted by SeaBreeze.  Saving
+            # currentText() made the initial probe succeed and the subsequent main-window
+            # connection fail because it searched for the full display label.
+            serial = (
+                str(self._oo_serial.currentData())
+                if self._oo_serial.currentData() is not None
+                else self._oo_serial.currentText().strip()
+            )
             backend = self._oo_backend.currentText().strip()
             return {
                 "serial_number": serial or None,

@@ -45,6 +45,30 @@ class OceanOpticsProbeResultReflectionTests(unittest.TestCase):
         self.assertEqual(self.page._oo_serial.currentData(), "FLMS12345")
         self.assertEqual(self.page._pi_serial.currentText(), "")
 
+    def test_values_save_device_serial_not_friendly_display_label(self):
+        result = _probe_result(
+            SUPPLIER_OCEANOPTICS,
+            config={"serial_number": "USB2+F02651"},
+            camera_candidates=[
+                {
+                    "model": "USB2000PLUS",
+                    "serial_number": "USB2+F02651",
+                    "interface": "",
+                }
+            ],
+        )
+
+        self.page.apply_probe_result(result)
+
+        self.assertEqual(
+            self.page._oo_serial.currentText(),
+            "USB2+F02651 (USB2000PLUS)",
+        )
+        self.assertEqual(
+            self.page.values(SUPPLIER_OCEANOPTICS)["serial_number"],
+            "USB2+F02651",
+        )
+
     def test_multiple_devices_populate_selectable_candidates(self):
         result = _probe_result(
             SUPPLIER_OCEANOPTICS,

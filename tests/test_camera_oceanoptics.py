@@ -286,6 +286,20 @@ class ConnectSpectrometerTests(unittest.TestCase):
         with self.assertRaisesRegex(CameraInitError, "seabreeze"):
             thread._connect_spectrometer()
 
+    def test_empty_device_list_raises_actionable_init_error(self):
+        spectrometers_module = types.ModuleType("seabreeze.spectrometers")
+        spectrometers_module.list_devices = lambda: []
+        spectrometers_module.Spectrometer = object
+        seabreeze_module = types.ModuleType("seabreeze")
+        seabreeze_module.spectrometers = spectrometers_module
+        sys.modules["seabreeze"] = seabreeze_module
+        sys.modules["seabreeze.spectrometers"] = spectrometers_module
+        self.addCleanup(_uninstall_fake_seabreeze_module)
+
+        thread = CameraThreadOceanOptics(debug=False)
+        with self.assertRaisesRegex(CameraInitError, "No Ocean Optics device.*SeaBreeze"):
+            thread._connect_spectrometer()
+
 
 class DebugModeSmokeTest(unittest.TestCase):
     def test_debug_run_reaches_init_finished_without_hardware(self):
