@@ -1,7 +1,7 @@
 ---
 sidebar_position: 2
 title: インストール
-description: FluoRaPresseeの動作環境とインストール手順
+description: FluoRaPresséeの動作環境とインストール手順
 ---
 
 # インストール

@@ -33,28 +33,10 @@ export default function Home(): ReactNode {
   return (
     <Layout
       title="オンラインマニュアル"
-      description="分光測定・解析ソフトウェア FluoRaPressee のオンラインマニュアル">
+      description="分光測定・解析ソフトウェア FluoRaPressée のオンラインマニュアル">
       <HomepageHeader />
       <main>
-        <section className={styles.overview}>
-          <div className="container">
-            <div className="row">
-              <div className="col col--4">
-                <Heading as="h2">測定</Heading>
-                <p>Andor、Princeton Instruments、Ocean Opticsの装置構成に対応します。</p>
-              </div>
-              <div className="col col--4">
-                <Heading as="h2">解析</Heading>
-                <p>較正、バックグラウンド補正、ピークフィット、圧力計算を一つのGUIで行えます。</p>
-              </div>
-              <div className="col col--4">
-                <Heading as="h2">連携</Heading>
-                <p>HTTP APIを使用して、同一LAN内の別PCから測定を自動化できます。</p>
-              </div>
-            </div>
-          </div>
-        </section>
-      </main>
+       </main>
     </Layout>
   );
 }

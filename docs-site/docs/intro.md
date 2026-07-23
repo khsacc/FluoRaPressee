@@ -2,12 +2,12 @@
 sidebar_position: 1
 slug: /
 title: はじめに
-description: FluoRaPresseeオンラインマニュアル
+description: FluoRaPresséeオンラインマニュアル
 ---
 
-# FluoRaPressee
+# FluoRaPressée
 
-FluoRaPresseeは、スペクトルのリアルタイム取得からバックグラウンド補正、
+FluoRaPresséeは、スペクトルのリアルタイム取得からバックグラウンド補正、
 波長較正、ピークフィッティング、高圧実験における圧力計算までを一貫して行う
 PythonベースのGUIアプリケーションです。
 
