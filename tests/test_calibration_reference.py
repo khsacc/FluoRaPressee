@@ -43,6 +43,28 @@ class ReferenceCatalogueTests(unittest.TestCase):
         self.assertEqual(set(standards), {"Ne-I", "Ar-I"})
         self.assertEqual(standards["Ne-I"].lines[0].standard_id, "Ne-I")
 
+    def test_calibration_flag_defaults_true_and_does_not_remove_source_line(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "Ne-I.json").write_text(
+                json.dumps({
+                    "standard_id": "Ne-I",
+                    "lines": [
+                        {"wavelength_nm": 600.0},
+                        {
+                            "wavelength_nm": 610.0,
+                            "enabled_for_calibration": False,
+                        },
+                    ],
+                }),
+                encoding="utf-8",
+            )
+
+            neon = load_reference_standards(directory)["Ne-I"]
+
+        self.assertEqual(len(neon.lines), 2)
+        self.assertTrue(neon.lines[0].enabled_for_calibration)
+        self.assertFalse(neon.lines[1].enabled_for_calibration)
+
     def test_neon_catalogue_contains_all_unfiltered_600_to_800_nm_lines(self):
         catalogue_directory = Path(__file__).parents[1] / "calibrationStandards"
         neon = load_reference_standards(catalogue_directory)["Ne-I"]
@@ -56,6 +78,14 @@ class ReferenceCatalogueTests(unittest.TestCase):
         self.assertIn(585.24879, wavelengths)
         self.assertEqual(wavelengths, sorted(wavelengths))
         self.assertTrue(all(line.relative_intensity is None for line in neon.lines))
+        self.assertEqual(
+            {
+                line.wavelength_nm
+                for line in neon.lines
+                if not line.enabled_for_calibration
+            },
+            {673.80320, 675.95821, 705.12922, 706.4762},
+        )
 
 
 class PatternMatcherTests(unittest.TestCase):

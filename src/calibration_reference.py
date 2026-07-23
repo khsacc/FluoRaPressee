@@ -22,6 +22,7 @@ class ReferenceLine:
     standard_id: str
     species: str
     wavelength_nm: float
+    enabled_for_calibration: bool = True
     relative_intensity: float | None = None
     uncertainty_nm: float | None = None
     source_url: str | None = None
@@ -87,6 +88,9 @@ def load_reference_standards(directory: str | Path) -> dict[str, ReferenceStanda
                         standard_id=standard_id,
                         species=str(item.get("species") or display_name),
                         wavelength_nm=wavelength,
+                        enabled_for_calibration=(
+                            item.get("enabled_for_calibration", True) is not False
+                        ),
                         relative_intensity=_optional_float(item.get("relative_intensity")),
                         uncertainty_nm=_optional_float(item.get("uncertainty_nm")),
                         source_url=item.get("source_url") or source_url,

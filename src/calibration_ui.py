@@ -5,7 +5,8 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QCheckBox, QComboBox, QHeaderView, QWidget,
                              QAbstractSpinBox, QDoubleSpinBox, QSplitter,
                              QScrollArea, QRadioButton, QMessageBox, QSlider,
-                             QListWidget, QListWidgetItem, QButtonGroup)
+                             QListWidget, QListWidgetItem, QButtonGroup, QMenu,
+                             QCompleter)
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 
@@ -70,6 +71,7 @@ class CalibrationWindow(QDialog):
         self.match_candidates = []
         self.match_peak_rows = []
         self.initial_wavelength_axis = None
+        self.reference_candidate_menu = QMenu(self)
         standards_dir = os.path.join(
             os.path.dirname(os.path.dirname(__file__)), "calibrationStandards"
         )
@@ -112,12 +114,12 @@ class CalibrationWindow(QDialog):
         if hasattr(self.plot_legend, "setLabelTextColor"):
             self.plot_legend.setLabelTextColor("k")
         self.plot_legend.addItem(
-            pg.PlotDataItem(pen=pg.mkPen("#1565C0", width=3)),
-            "Literature line",
-        )
-        self.plot_legend.addItem(
             pg.PlotDataItem(pen=pg.mkPen("#EF6C00", width=3)),
             "Detected peak",
+        )
+        self.plot_legend.addItem(
+            pg.PlotDataItem(pen=pg.mkPen("#1565C0", width=3)),
+            "Literature line",
         )
         self.plot_legend.addItem(
             pg.PlotDataItem(
@@ -126,12 +128,23 @@ class CalibrationWindow(QDialog):
             "Used peak",
         )
         self.plot_scatter = self.plot_widget.plot(pen=None, symbol='o', symbolSize=3, symbolBrush='b')
+        self.detected_select_scatter = pg.ScatterPlotItem(
+            # Transparent hit targets preserve the tick-only visual design.
+            symbol="s", size=13, pen=pg.mkPen(None),
+            brush=pg.mkBrush(0, 0, 0, 0), hoverable=True,
+            tip=self._detected_peak_tooltip,
+        )
+        self.detected_select_scatter.sigClicked.connect(
+            self.on_measured_peak_clicked
+        )
+        self.plot_widget.addItem(self.detected_select_scatter)
         self.reference_select_scatter = pg.ScatterPlotItem(
             # Keep a transparent hit target over each literature tick so the
             # plain vertical bar remains clickable without looking like a
             # box-and-whisker marker.
             symbol="s", size=11, pen=pg.mkPen(None),
-            brush=pg.mkBrush(0, 0, 0, 0),
+            brush=pg.mkBrush(0, 0, 0, 0), hoverable=True,
+            tip=self._reference_line_tooltip,
         )
         self.reference_select_scatter.sigClicked.connect(self.on_reference_line_clicked)
         self.plot_widget.addItem(self.reference_select_scatter)
@@ -240,13 +253,17 @@ class CalibrationWindow(QDialog):
         self.btn_apply_candidate = QPushButton("Apply candidate")
         self.btn_apply_candidate.setEnabled(False)
         self.btn_apply_candidate.clicked.connect(self.apply_selected_candidate)
+        self.btn_clear_assignment = QPushButton("Clear assignment")
+        self.btn_clear_assignment.setEnabled(False)
+        self.btn_clear_assignment.clicked.connect(self.clear_selected_assignment)
         match_layout.addWidget(self.btn_auto_match)
         match_layout.addWidget(self.combo_match_candidate, stretch=1)
         match_layout.addWidget(self.btn_apply_candidate)
+        match_layout.addWidget(self.btn_clear_assignment)
         reference_layout.addLayout(match_layout)
         self.lbl_assignment_help = QLabel(
-            "Select a measured peak in the table, then click a literature marker, "
-            "or use an automatic candidate."
+            "Select a detected tick, fit plot, or table row; then click a "
+            "literature tick, or use an automatic candidate."
         )
         self.lbl_assignment_help.setWordWrap(True)
         self.lbl_assignment_help.setStyleSheet("color: #555; font-size: 11px;")
@@ -407,7 +424,10 @@ class CalibrationWindow(QDialog):
         for standard_id in self.active_standard_ids():
             standard = self.reference_standards.get(standard_id)
             if standard is not None:
-                lines.extend(standard.lines)
+                lines.extend(
+                    line for line in standard.lines
+                    if line.enabled_for_calibration
+                )
         return sorted(lines, key=lambda line: line.wavelength_nm)
 
     def _center_wavelength_nm(self):
@@ -468,6 +488,7 @@ class CalibrationWindow(QDialog):
             child = self.bottom_layout.takeAt(0)
             if child.widget(): child.widget().deleteLater()
         detected_tick_low, detected_tick_high = self._tick_levels()["detected"]
+        detected_spots = []
         for i, p_data in enumerate(fitted_peaks):
             center = p_data["center"]
             row = self.table.rowCount()
@@ -505,14 +526,34 @@ class CalibrationWindow(QDialog):
             self.peak_lines.append(line)
             self.peak_tick_items.append(tick)
             self.peak_texts.append(text)
+            detected_spots.append({
+                "pos": (
+                    center,
+                    (detected_tick_low + detected_tick_high) / 2.0,
+                ),
+                "data": row,
+            })
             small_plot = pg.PlotWidget()
             small_plot.setFixedSize(180, 180)
             small_plot.setBackground('w')
             small_plot.setTitle(f"Peak #{i + 1}", color="k", size="11pt")
             small_plot.plot(p_data["x_fit"], p_data["y_data"], pen=None, symbol='o', symbolSize=3, symbolBrush='b')
             small_plot.plot(p_data["x_curve"], p_data["y_curve"], pen=pg.mkPen('r', width=2))
+            fitted_center_line = pg.InfiniteLine(
+                pos=center,
+                angle=90,
+                pen=pg.mkPen(
+                    "#555555", width=1.5, style=Qt.PenStyle.DashLine
+                ),
+            )
+            small_plot.addItem(fitted_center_line)
+            small_plot.scene().sigMouseClicked.connect(
+                lambda _event, r=row: self.select_measured_peak(r)
+            )
+            self.row_widgets[row]["plot"] = small_plot
             self.bottom_layout.addWidget(small_plot)
         self.bottom_layout.addStretch()
+        self.detected_select_scatter.setData(detected_spots)
 
         # Preserve confirmed assignments when only the peak threshold was changed.
         for old_pixel, assignment in previous:
@@ -544,6 +585,11 @@ class CalibrationWindow(QDialog):
         val_widget = QComboBox()
         val_widget.setEditable(True)
         val_widget.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        completer = val_widget.completer()
+        if completer is not None:
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            completer.setFilterMode(Qt.MatchFlag.MatchContains)
+            completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
         assigned = self.assignments.get(row)
         lines = self.active_reference_lines()
         if assigned and assigned.get("line_id"):
@@ -678,6 +724,24 @@ class CalibrationWindow(QDialog):
     def on_table_peak_selected(self, row, _column):
         self.select_measured_peak(row)
 
+    def _detected_peak_tooltip(self, *, x, y, data):
+        try:
+            row = int(data)
+            center = self.row_widgets[row]["px"]
+        except (IndexError, KeyError, TypeError, ValueError):
+            return "Detected peak"
+        return f"Detected peak #{row + 1}\nFitted center: {center:.3f} px"
+
+    def _reference_line_tooltip(self, *, x, y, data):
+        line = self.reference_lines_by_id.get(data)
+        if line is None:
+            return "Literature line"
+        return f"{line.species} {line.wavelength_nm:.5f} nm"
+
+    def on_measured_peak_clicked(self, _scatter, points, _event=None):
+        if points:
+            self.select_measured_peak(int(points[0].data()))
+
     def select_measured_peak(self, row):
         if not 0 <= row < len(self.row_widgets):
             return
@@ -688,6 +752,30 @@ class CalibrationWindow(QDialog):
         )
         self._refresh_peak_plot_styles()
 
+    def clear_peak_selection(self):
+        self.selected_peak_row = None
+        self.table.clearSelection()
+        self.lbl_assignment_help.setText(
+            "Select a detected tick, fit plot, or table row; then click a "
+            "literature tick."
+        )
+        self._refresh_peak_plot_styles()
+
+    def clear_selected_assignment(self):
+        row = self.selected_peak_row
+        if row is None or not 0 <= row < len(self.row_widgets):
+            return
+        checkbox = self.row_widgets[row]["check"]
+        if checkbox.isChecked():
+            checkbox.setChecked(False)
+        else:
+            self.assignments.pop(row, None)
+            self._update_assignment_row(row)
+            self._refresh_calibration_preview()
+            self.update_reference_overlay()
+            self._refresh_peak_plot_styles()
+        self.lbl_assignment_help.setText(f"Assignment cleared for peak #{row + 1}.")
+
     def _refresh_peak_plot_styles(self):
         if self.current_spectrum is None:
             return
@@ -695,8 +783,31 @@ class CalibrationWindow(QDialog):
             is_used = row_data["check"].isChecked()
             if index < len(self.peak_lines):
                 self.peak_lines[index].setVisible(is_used)
+            selected = index == self.selected_peak_row
+            if index < len(self.peak_tick_items):
+                self.peak_tick_items[index].setPen(
+                    pg.mkPen(
+                        "#FFB300" if selected else "#EF6C00",
+                        width=5 if selected else 3,
+                    )
+                )
+            if index < len(self.peak_texts):
+                self.peak_texts[index].setColor(
+                    "#FFB300" if selected else "#EF6C00"
+                )
+            small_plot = row_data.get("plot")
+            if small_plot is not None:
+                small_plot.setStyleSheet(
+                    "border: 2px solid #FFB300;"
+                    if selected else
+                    "border: 2px solid transparent;"
+                )
+        self.btn_clear_assignment.setEnabled(
+            self.selected_peak_row is not None
+            and self.selected_peak_row in self.assignments
+        )
 
-    def on_reference_line_clicked(self, _scatter, points):
+    def on_reference_line_clicked(self, _scatter, points, event=None):
         if not points:
             return
         if self.selected_peak_row is None:
@@ -704,10 +815,39 @@ class CalibrationWindow(QDialog):
                 "Select a measured peak before selecting a literature line."
             )
             return
-        line = self.reference_lines_by_id.get(points[0].data())
-        if line is None:
+        lines = []
+        seen_ids = set()
+        for point in points:
+            line = self.reference_lines_by_id.get(point.data())
+            if line is not None and line.line_id not in seen_ids:
+                lines.append(line)
+                seen_ids.add(line.line_id)
+        if not lines:
             return
-        self.assign_reference_line(self.selected_peak_row, line)
+        if len(lines) == 1:
+            self.assign_reference_line(self.selected_peak_row, lines[0])
+            return
+
+        self.reference_candidate_menu.clear()
+        title = self.reference_candidate_menu.addAction(
+            f"Select line for peak #{self.selected_peak_row + 1}"
+        )
+        title.setEnabled(False)
+        self.reference_candidate_menu.addSeparator()
+        selected_row = self.selected_peak_row
+        for line in sorted(lines, key=lambda item: item.wavelength_nm):
+            action = self.reference_candidate_menu.addAction(
+                f"{line.species}  {line.wavelength_nm:.5f} nm"
+            )
+            action.triggered.connect(
+                lambda _checked=False, row=selected_row, selected=line:
+                self.assign_reference_line(row, selected)
+            )
+        if event is not None and hasattr(event, "screenPos"):
+            menu_position = event.screenPos().toPoint()
+        else:
+            menu_position = self.mapToGlobal(self.rect().center())
+        self.reference_candidate_menu.popup(menu_position)
 
     def _line_assigned_to_other_row(self, line_id, row):
         for other_row, assignment in self.assignments.items():
@@ -742,6 +882,9 @@ class CalibrationWindow(QDialog):
             f"Peak #{row + 1} → {line.species} {value:.5f}"
         )
         self.update_reference_overlay()
+        self.selected_peak_row = None
+        self.table.clearSelection()
+        self._refresh_peak_plot_styles()
 
     def on_active_standards_changed(self, _item):
         # Rebuild the choices, but assignments (including lines from a now-hidden
@@ -1021,6 +1164,13 @@ class CalibrationWindow(QDialog):
             self.camera_thread.data_ready.disconnect(self.on_data_ready)
         except TypeError:
             pass  # already disconnected
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape and self.selected_peak_row is not None:
+            self.clear_peak_selection()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def done(self, result):
         self._disconnect_camera_thread()
