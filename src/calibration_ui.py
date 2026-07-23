@@ -1123,7 +1123,12 @@ class CalibrationWindow(QDialog):
             for row, assignment in self.assignments.items()
             if row in local_index and assignment.get("line_id")
         }
-        expected_slope_sign = -1 if self._flip_x_enabled() else 1
+        # Flip X already reverses the acquired data (on_data_ready) and the seed
+        # wavelength axis (_refresh_initial_wavelength_axis) together, so the
+        # working pixel axis is back to its normal increasing-wavelength
+        # orientation regardless of the checkbox; the expected direction here
+        # must not be flipped again.
+        expected_slope_sign = 1
         self.match_candidates = find_match_candidates(
             pixels,
             lines,

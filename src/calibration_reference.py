@@ -236,9 +236,11 @@ def find_match_candidates(
     constraint; candidates never replace those user-confirmed relationships.
 
     ``expected_slope_sign`` constrains the wavelength direction on the
-    displayed pixel axis.  Use ``1`` for the normal orientation, ``-1`` when
-    the spectrum has been flipped horizontally, or ``None`` when either
-    direction is acceptable.
+    working pixel axis.  Use ``1`` when increasing pixel index should mean
+    increasing wavelength (the normal case - this still holds after a
+    horizontal flip has already been applied to the data/seed axis upstream,
+    since that flip restores the normal orientation), ``-1`` for the opposite,
+    or ``None`` when either direction is acceptable.
     """
 
     pixels = np.asarray(measured_pixels, dtype=float)
