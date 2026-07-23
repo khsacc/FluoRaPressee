@@ -17,7 +17,7 @@ class FitRangeContextMenu:
         view_box = plot_widget.getViewBox()
         menu = view_box.getMenu(None)
         menu.addSeparator()
-        self.set_min_action = menu.addAction("Set as fitting range MIM")
+        self.set_min_action = menu.addAction("Set as fitting range MIN")
         self.set_max_action = menu.addAction("Set as fitting range MAX")
         self.set_min_action.triggered.connect(self._set_minimum)
         self.set_max_action.triggered.connect(self._set_maximum)
