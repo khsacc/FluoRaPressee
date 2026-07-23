@@ -5,7 +5,7 @@ This program is designed to
 - instantly fit the data
 - calculate pressure by using an established fluorescence/Raman pressure sensors
 
-The name FluoRaPressée combines **Flu**orescence, **Ra**man, and the French adjective **« pressée »** ('pressed', and also 'in hurry'), a playful nod to rapid spectroscopic measurements and analyses under pressure.
+The name FluoRaPressée combines **Flu**orescence, **Ra**man, and the French adjective **« pressée »** ('in a hurry'; literary 'pressed'), a playful nod to rapid spectroscopic measurements and analyses under pressure.
 
 Author: Hiroki Kobayashi (Geochemical Research Center, The University of Tokyo). https://orcid.org/0000-0002-3682-7558 E-mail as of 2026: hiroki (at) eqchem.s.u-tokyo.ac.jp
 
