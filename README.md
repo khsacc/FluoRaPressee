@@ -90,7 +90,7 @@ plain pixel index; this is not the same as "uncalibrated".
 
 ### Launching the Application
 Double-click `FluoraPressee_run.bat` (or run it from Command Prompt / PowerShell) to launch the app using the
-virtual environment created by `setup.bat`.
+virtual environment created by the applicable setup script.
 
 *Note: If you want to test the UI without connecting to the hardware, use `FluoRaPressee_run_debug.bat` instead,
 which launches the app in debug mode.*
