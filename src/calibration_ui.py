@@ -180,11 +180,19 @@ class CalibrationWindow(QDialog):
         self.btn_find_peaks.setStyleSheet("padding: 5px;")
         
         slider_layout = QVBoxLayout()
-        slider_label = QLabel("Threshold:")
+        self.slider_threshold_label = QLabel("Threshold: 7.5× noise")
         self.slider_threshold = QSlider(Qt.Orientation.Horizontal)
-        self.slider_threshold.setRange(10, 100) 
+        # Stored as multiplier * 10 so the integer slider can represent one
+        # decimal place.  A high ceiling is useful for spectra with strong
+        # broadband/read noise while preserving the previous 7.5x default.
+        self.slider_threshold.setRange(10, 500)
         self.slider_threshold.setValue(75)
-        slider_layout.addWidget(slider_label)
+        self.slider_threshold.valueChanged.connect(
+            lambda value: self.slider_threshold_label.setText(
+                f"Threshold: {value / 10.0:.1f}× noise"
+            )
+        )
+        slider_layout.addWidget(self.slider_threshold_label)
         slider_layout.addWidget(self.slider_threshold)
         
         find_peaks_layout.addWidget(self.btn_find_peaks)
