@@ -57,7 +57,9 @@ This software was developed in the Geochemical Research Center (GcRC), Graduate 
 
 ## 📥 Installation
 
-1. Clone the repository, then double-click `setup.bat` (or run it from Command Prompt / PowerShell).
+1. Clone the repository. Andor and Princeton Instruments users should double-click `setup.bat`
+   (or run it from Command Prompt / PowerShell). Ocean Optics users should instead run
+   `setup_oceanoptics.bat` as Administrator; see below.
    This creates a `.venv` virtual environment in the project folder and installs all required
    packages (`PyQt6`, `pyqtgraph`, `numpy`, `scipy`, `pylablib`, `pyserial`) into it.
 2. Ensure the Andor SDK is properly installed on the system.
@@ -68,11 +70,11 @@ FluoraPressée can also drive Ocean Optics USB2000/USB4000 spectrometers via
 [python-seabreeze](https://github.com/ap--/python-seabreeze). This is optional and not installed
 by the base `setup.bat`/`setup.sh`.
 
-1. Run `setup.bat`/`./setup.sh` first (see above) to create `.venv`.
-2. Run `setup_oceanoptics.bat` (or `./setup_oceanoptics.sh` on macOS/Linux). This installs
-   `seabreeze` into the same `.venv` and runs `seabreeze_os_setup`, which performs any OS-level
-   configuration `pip install` alone doesn't cover (e.g. udev rules on Linux; may require `sudo`).
-3. Set `"model": "OceanOptics"` in `spectrometerConfig.json` (the setup wizard on first launch
+1. On Windows, right-click `setup_oceanoptics.bat` and choose **Run as administrator**. Do not run
+   `setup.bat` first. On macOS/Linux, run `./setup_oceanoptics.sh` instead of `./setup.sh`.
+   The Ocean Optics setup script creates `.venv`, installs all standard dependencies and
+   `seabreeze`, and runs `seabreeze_os_setup` for the required OS-level configuration.
+2. Set `"model": "OceanOptics"` in `spectrometerConfig.json` (the setup wizard on first launch
    also offers this as a supplier choice).
 
 Ocean Optics is a fixed spectrometer, not a movable grating + detector like Andor/Princeton

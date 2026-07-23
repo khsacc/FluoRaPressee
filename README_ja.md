@@ -22,7 +22,9 @@
 
 ## インストール方法 
 
-1. リポジトリをクローンしたのち、``setup.bat``をダブルクリック（またはコマンドプロンプト/PowerShellから実行）します。
+1. リポジトリをクローンします。AndorまたはPrinceton Instrumentsを使用する場合は、``setup.bat``をダブルクリック
+   （またはコマンドプロンプト/PowerShellから実行）します。Ocean Opticsを使用する場合は、代わりに
+   ``setup_oceanoptics.bat``を右クリックして「管理者として実行」します。
    プロジェクトフォルダ内に仮想環境``.venv``が作成され、``requirements.txt``に記載された必要なPythonパッケージ
    （``PyQt6``, ``pyqtgraph``, ``numpy``, ``scipy``, ``pylablib``, ``pyserial``、および後述のAPI機能用の
    ``fastapi``, ``uvicorn``, ``pydantic``）がすべて自動的にインストールされます。
@@ -30,9 +32,9 @@
 2. 使用する装置メーカーに応じて、SDK/ドライバを正しくインストールします。
    * Andorの場合: Andor SDK
    * Princeton Instrumentsの場合: PICam Runtime（カメラ用）。分光器（Acton SP シリーズ）はシリアル接続のため、PC側のCOMポート番号を確認しておきます。
-   * Ocean Opticsの場合: ``requirements.txt``には含まれない任意の追加パッケージ ``seabreeze`` が必要です。
-     ``setup.bat``/``setup.sh``実行後に``setup_oceanoptics.bat``（macOS/Linuxでは``./setup_oceanoptics.sh``）を実行してください。
-     `pip install`だけでなく`seabreeze_os_setup`（Linuxのudevルール設定等、OS依存の追加設定）も自動的に実行されます。
+   * Ocean Opticsの場合: ``setup.bat``を先に実行する必要はありません。``setup_oceanoptics.bat``の1回の実行で、
+     仮想環境の作成、共通パッケージと``seabreeze``のインストール、``seabreeze_os_setup``による
+     OS依存の設定まで自動的に行われます。macOS/Linuxでは``./setup_oceanoptics.sh``を``./setup.sh``の代わりに実行します。
 3. ``spectrometerConfig.json``が存在しない状態でアプリを初めて起動すると、セットアップウィザードが自動的に開きます。
    1. メーカー選択（Andor / Princeton Instruments / Ocean Optics）
    2. 接続設定（Andor: ``ShamrockCIF.dll`` のパス。Princeton Instruments: COMポート、PICam Runtimeのパス、カメラのシリアル番号。Ocean Optics: シリアル番号（省略可）、seabreeze backend（通常は空欄のままでよい））。

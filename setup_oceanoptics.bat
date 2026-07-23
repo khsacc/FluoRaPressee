@@ -1,31 +1,39 @@
 @echo off
-REM Install optional Ocean Optics (seabreeze) support into the existing .venv.
-REM Run setup.bat first to create the virtual environment; this script only adds the
-REM Ocean Optics dependency on top of it. See work\work_OceanOptics.md for background.
+REM Complete setup for Ocean Optics users: create .venv, install all application
+REM dependencies plus seabreeze, and install the Windows SeaBreeze drivers.
+REM This script replaces setup.bat for Ocean Optics users.
 
 setlocal
 
 cd /d "%~dp0"
 
-if not exist .venv (
-    echo No .venv found. Run setup.bat first.
-    exit /b 1
-)
-
-echo Installing Ocean Optics (seabreeze) dependencies...
-call .venv\Scripts\pip.exe install -r requirements-oceanoptics.txt
-if errorlevel 1 exit /b 1
-
-REM Driver installation is a persistent machine-wide change.  seabreeze_os_setup tries
-REM to start a second elevated process when this shell is not elevated, then returns
-REM before that process finishes; the old script consequently printed a false success.
+REM Driver installation is a persistent machine-wide change. Check elevation before
+REM doing any package installation so a non-elevated run does not perform half a setup.
 fltmc >nul 2>&1
 if errorlevel 1 (
-    echo.
-    echo ERROR: Windows driver installation requires Administrator privileges.
+    echo ERROR: Ocean Optics setup requires Administrator privileges.
     echo Right-click setup_oceanoptics.bat and choose "Run as administrator".
     exit /b 1
 )
+
+if not exist .venv (
+    echo Creating virtual environment in .venv ...
+    python -m venv .venv
+    if errorlevel 1 (
+        echo Failed to create virtual environment. Is Python installed and on PATH?
+        exit /b 1
+    )
+) else (
+    echo .venv already exists, skipping creation.
+)
+
+echo Installing application and Ocean Optics dependencies...
+call .venv\Scripts\python.exe -m pip install --upgrade pip
+if errorlevel 1 exit /b 1
+call .venv\Scripts\python.exe -m pip install -r requirements-oceanoptics.txt
+if errorlevel 1 exit /b 1
+call .venv\Scripts\python.exe -m pip check
+if errorlevel 1 exit /b 1
 
 echo Running seabreeze_os_setup to install the Windows SeaBreeze drivers...
 call .venv\Scripts\seabreeze_os_setup.exe
