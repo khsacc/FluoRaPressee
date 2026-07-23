@@ -35,8 +35,9 @@ DEFAULT_TEMPERATURE = -65
 DEFAULT_FAN_MODE = "full"
 
 # ── Supplier model strings ────────────────────────────────────────────────────
-SUPPLIER_ANDOR = "Andor"
-SUPPLIER_PI    = "PrincetonInstruments"
+SUPPLIER_ANDOR       = "Andor"
+SUPPLIER_PI          = "PrincetonInstruments"
+SUPPLIER_OCEANOPTICS = "OceanOptics"
 # Future: SUPPLIER_PI_USB  = "PrincetonInstruments_USB"
 #         SUPPLIER_PI_GIGE = "PrincetonInstruments_GigE"
 
@@ -306,15 +307,20 @@ class _PageSupplier(QWidget):
         self._grp = QButtonGroup(self)
         self._rb_andor = QRadioButton("Andor  (Kymera / Shamrock)")
         self._rb_pi    = QRadioButton("Princeton Instruments  (Acton SP series)")
+        self._rb_oceanoptics = QRadioButton("Ocean Optics  (USB2000 / USB4000)")
         self._rb_andor.setChecked(True)
-        for rb in (self._rb_andor, self._rb_pi):
+        for rb in (self._rb_andor, self._rb_pi, self._rb_oceanoptics):
             self._grp.addButton(rb)
             layout.addWidget(rb)
 
         layout.addStretch()
 
     def supplier(self) -> str:
-        return SUPPLIER_ANDOR if self._rb_andor.isChecked() else SUPPLIER_PI
+        if self._rb_pi.isChecked():
+            return SUPPLIER_PI
+        if self._rb_oceanoptics.isChecked():
+            return SUPPLIER_OCEANOPTICS
+        return SUPPLIER_ANDOR
 
 
 # ── Page 1: Paths / connection ────────────────────────────────────────────────
@@ -337,8 +343,10 @@ class _PagePaths(QWidget):
         self._stack = QStackedWidget()
         self._andor_panel = self._build_andor()
         self._pi_panel    = self._build_pi()
-        self._stack.addWidget(self._andor_panel)   # index 0
-        self._stack.addWidget(self._pi_panel)      # index 1
+        self._oceanoptics_panel = self._build_oceanoptics()
+        self._stack.addWidget(self._andor_panel)        # index 0
+        self._stack.addWidget(self._pi_panel)            # index 1
+        self._stack.addWidget(self._oceanoptics_panel)   # index 2
         root.addWidget(self._stack)
 
         self._probe_button = QPushButton("Read parameters from connected hardware")
@@ -416,6 +424,36 @@ class _PagePaths(QWidget):
         vbox.addWidget(sdk_grp)
         return w
 
+    def _build_oceanoptics(self) -> QWidget:
+        w = QWidget()
+        vbox = QVBoxLayout(w)
+
+        grp = QGroupBox("Ocean Optics (seabreeze)")
+        gv = QVBoxLayout(grp)
+
+        gv.addWidget(QLabel(
+            "Serial number  (leave blank to auto-select the first available device):"
+        ))
+        self._oo_serial = QComboBox()
+        self._oo_serial.setEditable(True)
+        self._oo_serial.lineEdit().setPlaceholderText("e.g. FLMS12345")
+        gv.addWidget(self._oo_serial)
+        gv.addSpacing(6)
+
+        gv.addWidget(QLabel("seabreeze backend  (leave as Auto unless a specific backend is required):"))
+        self._oo_backend = QComboBox()
+        self._oo_backend.addItems(["", "cseabreeze", "pyseabreeze"])
+        gv.addWidget(self._oo_backend)
+
+        vbox.addWidget(grp)
+        vbox.addWidget(QLabel(
+            '<span style="color: gray; font-size: small;">'
+            "Ocean Optics has no grating or movable centre wavelength to configure; "
+            "the next step only sets display options."
+            "</span>"
+        ))
+        return w
+
     def _populate_com_ports(self):
         self._pi_com.clear()
         try:
@@ -455,7 +493,13 @@ class _PagePaths(QWidget):
     # ── supplier switch ───────────────────────────────────────────────────────
 
     def show_supplier(self, supplier: str):
-        self._stack.setCurrentIndex(0 if supplier == SUPPLIER_ANDOR else 1)
+        if supplier == SUPPLIER_PI:
+            index = 1
+        elif supplier == SUPPLIER_OCEANOPTICS:
+            index = 2
+        else:
+            index = 0
+        self._stack.setCurrentIndex(index)
         self._probe_status.clear()
 
     def set_probe_busy(self, busy: bool):
@@ -489,20 +533,31 @@ class _PagePaths(QWidget):
         self._probe_status.setStyleSheet(f"color: {color}; font-size: small;")
 
     def apply_probe_result(self, result: dict):
+        # PI's probe reports the selected serial under "camera_serial_number" and targets
+        # _pi_serial; Ocean Optics' probe (_probe_oceanoptics in hardware_probe.py) reports
+        # it under "serial_number" and has its own combo (_oo_serial) - without branching on
+        # supplier here, probe results for Ocean Optics silently never reach any visible
+        # field (see work/work_OceanOptics.md review round 5).
+        config = result.get("config", {})
+        if result.get("supplier") == SUPPLIER_OCEANOPTICS:
+            target = self._oo_serial
+            selected_serial = config.get("serial_number")
+        else:
+            target = self._pi_serial
+            selected_serial = config.get("camera_serial_number")
         candidates = result.get("camera_candidates", [])
-        selected_serial = result.get("config", {}).get("camera_serial_number")
-        current = selected_serial or self._pi_serial.currentText().strip()
+        current = selected_serial or target.currentText().strip()
         for candidate in candidates:
             serial = str(candidate.get("serial_number") or "")
             label = f"{serial} ({candidate.get('model')})" if serial else ""
-            if serial and self._pi_serial.findData(serial) < 0:
-                self._pi_serial.addItem(label, serial)
+            if serial and target.findData(serial) < 0:
+                target.addItem(label, serial)
         if current:
-            index = self._pi_serial.findData(current)
+            index = target.findData(current)
             if index >= 0:
-                self._pi_serial.setCurrentIndex(index)
+                target.setCurrentIndex(index)
             else:
-                self._pi_serial.setEditText(current)
+                target.setEditText(current)
 
     # ── validation ───────────────────────────────────────────────────────────
 
@@ -510,6 +565,8 @@ class _PagePaths(QWidget):
         """Return list of human-readable error strings for the active supplier's fields."""
         if supplier == SUPPLIER_ANDOR:
             fields = [self._andor_dll]
+        elif supplier == SUPPLIER_OCEANOPTICS:
+            fields = []  # nothing to validate: serial number is optional, backend defaults to auto
         else:
             # When GigE is added, branch here on supplier == SUPPLIER_PI_GIGE
             # and check additional GigE-specific fields.
@@ -521,6 +578,13 @@ class _PagePaths(QWidget):
     def values(self, supplier: str) -> dict:
         if supplier == SUPPLIER_ANDOR:
             return {"dll_path": self._andor_dll.value()}
+        if supplier == SUPPLIER_OCEANOPTICS:
+            serial = self._oo_serial.currentText().strip()
+            backend = self._oo_backend.currentText().strip()
+            return {
+                "serial_number": serial or None,
+                "seabreeze_backend": backend or None,
+            }
         return {
             "com_port":            self._pi_com.currentText().strip(),
             "PIcam_dll_path":      self._pi_picam.value(),
@@ -541,13 +605,23 @@ class _PageGrating(QWidget):
         layout.addWidget(QLabel("<b>Step 3 / 3 — Grating &amp; detector configuration</b>"))
         layout.addSpacing(8)
 
-        layout.addWidget(QLabel(
+        self._grating_label = QLabel(
             "Enter grating grooves/mm in slot order, separated by commas\n"
             "  e.g.  600, 1200, 1800"
-        ))
+        )
+        layout.addWidget(self._grating_label)
         self._edit = QLineEdit()
         self._edit.setPlaceholderText("600, 1200, 1800")
         layout.addWidget(self._edit)
+
+        # Shown instead of the grating input for Ocean Optics, which has no grating to
+        # configure (see show_supplier() below and work/work_OceanOptics.md 方針3).
+        self._grating_not_applicable_label = QLabel(
+            "Ocean Optics has no grating; a fixed placeholder slot will be used internally."
+        )
+        self._grating_not_applicable_label.setStyleSheet("color: gray; font-size: small;")
+        self._grating_not_applicable_label.setVisible(False)
+        layout.addWidget(self._grating_not_applicable_label)
 
         self._detect_status = QLabel("")
         self._detect_status.setStyleSheet("color: gray; font-size: small;")
@@ -562,7 +636,8 @@ class _PageGrating(QWidget):
         layout.addWidget(self._flip_x)
         layout.addSpacing(12)
 
-        layout.addWidget(QLabel("Default cooler target temperature (°C):"))
+        self._temp_label = QLabel("Default cooler target temperature (°C):")
+        layout.addWidget(self._temp_label)
         self._default_temp = CustomSpinBox()
         self._default_temp.setRange(-100, 20)
         self._default_temp.setValue(DEFAULT_TEMPERATURE)
@@ -570,7 +645,7 @@ class _PageGrating(QWidget):
         layout.addSpacing(12)
 
         # Fan mode is an Andor SDK2 concept (set_fan_mode/get_fan_mode); hidden for
-        # Princeton Instruments via show_supplier().
+        # Princeton Instruments/Ocean Optics via show_supplier().
         self._fan_mode_label = QLabel("Default cooling fan mode:")
         self._fan_mode = QComboBox()
         self._fan_mode.addItems(["full", "low", "off"])
@@ -581,8 +656,16 @@ class _PageGrating(QWidget):
 
     def show_supplier(self, supplier: str):
         is_andor = supplier == SUPPLIER_ANDOR
+        is_oceanoptics = supplier == SUPPLIER_OCEANOPTICS
         self._fan_mode_label.setVisible(is_andor)
         self._fan_mode.setVisible(is_andor)
+        # Ocean Optics has neither a grating nor a cooler (work/work_OceanOptics.md 方針3):
+        # replace the grating input with an explanatory note and hide the temperature control.
+        self._grating_label.setVisible(not is_oceanoptics)
+        self._edit.setVisible(not is_oceanoptics)
+        self._grating_not_applicable_label.setVisible(is_oceanoptics)
+        self._temp_label.setVisible(not is_oceanoptics)
+        self._default_temp.setVisible(not is_oceanoptics)
 
     def start_detection(self, com_port: str):
         """Try ?GRATINGS against com_port once and pre-fill the field on success.
@@ -814,11 +897,16 @@ class ConfigWizard(QDialog):
 
     def _finish(self):
         supplier = self._p_supplier.supplier()
-        gratings = self._p_grating.grating_list()
-        if not gratings:
-            QMessageBox.warning(self, "Input required",
-                                "Please enter at least one grating (grooves/mm).")
-            return
+        if supplier == SUPPLIER_OCEANOPTICS:
+            # No grating to enter; ConfigurationCatalog still needs a single synthetic slot
+            # to key calibration records on - see work/work_OceanOptics.md 方針3.
+            gratings = [{"index": 1, "grooves": 0, "defaultROI": {"from": 0, "to": 1}}]
+        else:
+            gratings = self._p_grating.grating_list()
+            if not gratings:
+                QMessageBox.warning(self, "Input required",
+                                    "Please enter at least one grating (grooves/mm).")
+                return
         self._result = {
             "model": supplier,
             **self._p_paths.values(supplier),

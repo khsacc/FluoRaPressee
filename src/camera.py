@@ -5,6 +5,9 @@ def CameraThread(config=None, debug=False):
     if model == "PrincetonInstruments":
         from src.camera_princeton import CameraThreadPI
         return CameraThreadPI(config=config, debug=debug)
+    elif model == "OceanOptics":
+        from src.camera_oceanoptics import CameraThreadOceanOptics
+        return CameraThreadOceanOptics(config=config, debug=debug)
     else:
         from src.camera_andor import CameraThreadAndor
         return CameraThreadAndor(config=config, debug=debug)

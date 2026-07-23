@@ -9,6 +9,7 @@ from src.pylablib_loader import import_pylablib_module
 
 SUPPLIER_ANDOR = "Andor"
 SUPPLIER_PI = "PrincetonInstruments"
+SUPPLIER_OCEANOPTICS = "OceanOptics"
 
 
 def probe_initial_hardware(supplier: str, config: dict) -> dict:
@@ -36,6 +37,8 @@ def probe_initial_hardware(supplier: str, config: dict) -> dict:
     elif supplier == SUPPLIER_PI:
         _run_probe(result, "PICam camera", _probe_pi_camera, config)
         _run_probe(result, "Acton spectrograph", _probe_pi_spectrometer, config)
+    elif supplier == SUPPLIER_OCEANOPTICS:
+        _run_probe(result, "Ocean Optics device", _probe_oceanoptics, config)
     else:
         result["errors"].append(f"Unsupported supplier: {supplier}")
     return result
@@ -222,6 +225,51 @@ def _probe_pi_spectrometer(result, config):
             controller.close()
         except Exception:
             pass
+
+
+def _probe_oceanoptics(result, config):
+    """Best-effort device listing only (optional per work/work_OceanOptics.md Step 9) - Ocean
+    Optics has no separate grating/cooler to detect, unlike Andor/Princeton Instruments.
+
+    TODO(実機確認待ち): list_devices()の返り値がmodel/serial_number属性を実際に持つか、
+    デバイスを開かずに読めるかは実機/実際のseabreezeで未確認。失敗しても
+    _run_probe()がexceptionを捕捉してerrorsへ積むだけなので、ウィザードがクラッシュする
+    ことはない。
+    """
+    import seabreeze
+
+    backend_name = config.get("seabreeze_backend")
+    if backend_name:
+        seabreeze.use(backend_name)
+    from seabreeze.spectrometers import list_devices
+
+    devices = list_devices()
+    if not devices:
+        raise RuntimeError("No Ocean Optics device was detected")
+    result["camera_candidates"] = [
+        {"model": device.model, "serial_number": str(device.serial_number), "interface": ""}
+        for device in devices
+    ]
+    wanted_serial = str(config.get("serial_number") or "").strip()
+    if wanted_serial:
+        selected = next(
+            (device for device in devices if str(device.serial_number) == wanted_serial), None
+        )
+        if selected is None:
+            raise RuntimeError(f"Device serial {wanted_serial!r} was not detected")
+    elif len(devices) == 1:
+        selected = devices[0]
+    else:
+        raise RuntimeError("Multiple devices detected; select a serial number and read again")
+
+    # Ocean Optics is a single physical device serving both roles (work/work_OceanOptics.md
+    # 方針2), so the same identity is recorded under both categories.
+    identity = {"model": selected.model, "serial_number": str(selected.serial_number)}
+    _merge_identity(result, "camera", identity)
+    _merge_identity(result, "spectrometer", identity)
+    result["config"]["serial_number"] = identity["serial_number"]
+    result["detected_hardware"]["camera"] = dict(identity)
+    result["detected_hardware"]["spectrometer"] = dict(identity)
 
 
 def _config_gratings(gratings, result=None):

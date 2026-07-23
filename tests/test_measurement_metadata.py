@@ -6,7 +6,12 @@ import unittest
 import numpy as np
 
 from src.file_io import DataFileIO
-from src.measurement_metadata import build_hardware_metadata, capture_hardware_state
+from src.measurement_metadata import (
+    build_hardware_metadata,
+    capture_hardware_state,
+    public_axis_kind,
+    public_axis_unit,
+)
 
 
 class Value:
@@ -65,6 +70,7 @@ class Window:
         self.radio_2d = Checked(False)
         self.radio_1d_full = Checked(False)
         self.radio_bg_on = Checked(False)
+        self.radio_spec_mode_raman = Checked(False)
         self.physical_center_wl = 694.0
         self.calib_coeffs = (690.0, 0.1, 1e-6)
         self.calib_unit = "Wavelength"
@@ -161,6 +167,156 @@ class MeasurementMetadataTests(unittest.TestCase):
             _, loaded = io.load_background(path)
         self.assertEqual(loaded["hardware_metadata"]["spectrometer"]["serial_number"], "SPEC-1")
         self.assertEqual(loaded["source_file"], "background.json")
+
+
+class PublicAxisKindTests(unittest.TestCase):
+    """Covers work/work_OceanOptics.md Step 6: the shared classification that display/save
+    logic and the API layer both use to decide whether flip_x must flip the x-axis together
+    with y (native_wavelength/calibrated) or only y (pixel)."""
+
+    def test_calibrated_when_calib_coeffs_present(self):
+        window = Window()
+        self.assertEqual(public_axis_kind(window), "calibrated")
+
+    def test_native_wavelength_when_uncalibrated_but_camera_reports_one(self):
+        window = Window()
+        window.calib_coeffs = None
+        window.thread.native_wavelengths = np.linspace(350.0, 1050.0, 128)
+        self.assertEqual(public_axis_kind(window), "native_wavelength")
+
+    def test_pixel_when_neither_calibrated_nor_native_wavelength_available(self):
+        window = Window()
+        window.calib_coeffs = None
+        self.assertFalse(hasattr(window.thread, "native_wavelengths"))
+        self.assertEqual(public_axis_kind(window), "pixel")
+
+    def test_empty_native_wavelengths_falls_back_to_pixel(self):
+        window = Window()
+        window.calib_coeffs = None
+        window.thread.native_wavelengths = np.array([])
+        self.assertEqual(public_axis_kind(window), "pixel")
+
+    def test_unit_is_none_for_pixel_regardless_of_raman_toggle(self):
+        window = Window()
+        window.calib_coeffs = None
+        window.radio_spec_mode_raman = Checked(True)  # must not override the pixel priority
+        self.assertIsNone(public_axis_unit(window, "pixel"))
+
+    def test_unit_is_nm_for_native_wavelength_in_wavelength_mode(self):
+        window = Window()
+        window.calib_coeffs = None
+        window.thread.native_wavelengths = np.linspace(350.0, 1050.0, 128)
+        window.radio_spec_mode_raman = Checked(False)
+        self.assertEqual(public_axis_unit(window), "nm")
+
+    def test_unit_is_cm1_for_native_wavelength_in_raman_mode(self):
+        window = Window()
+        window.calib_coeffs = None
+        window.thread.native_wavelengths = np.linspace(350.0, 1050.0, 128)
+        window.radio_spec_mode_raman = Checked(True)
+        self.assertEqual(public_axis_unit(window), "cm-1")
+
+    def test_unit_follows_raman_toggle_when_calibrated_too(self):
+        window = Window()  # calib_coeffs already set by the fixture
+        window.radio_spec_mode_raman = Checked(True)
+        self.assertEqual(public_axis_unit(window), "cm-1")
+
+    def test_axis_state_source_is_oceanoptics_native_when_uncalibrated_with_native_wavelengths(self):
+        from src.measurement_metadata import _axis_state  # exercise the richer provenance field too
+
+        window = Window()
+        window.calib_coeffs = None
+        window.axis_source = "pixel"
+        window.thread.native_wavelengths = np.linspace(350.0, 1050.0, 128)
+
+        state = _axis_state(window)
+
+        self.assertEqual(state["source"], "oceanoptics_native")
+        self.assertIsNone(state["calibration_coefficients"])
+
+    def test_axis_state_hardware_shamrock_is_still_preserved(self):
+        from src.measurement_metadata import _axis_state
+
+        window = Window()
+        window.calib_coeffs = None
+        window.axis_source = "hardware_shamrock"
+
+        self.assertEqual(_axis_state(window)["source"], "hardware_shamrock")
+
+
+class OceanOpticsCamera(Camera):
+    """Mimics CameraThreadOceanOptics.get_cached_hardware_metadata() (Step 1/7): reports
+    *effective* dark/nonlinearity correction flags rather than raw config request values."""
+
+    def __init__(self, hardware_dark_corrected, nonlinearity_corrected):
+        self._hardware_dark_corrected = hardware_dark_corrected
+        self._nonlinearity_corrected = nonlinearity_corrected
+
+    def get_cached_hardware_metadata(self):
+        metadata = super().get_cached_hardware_metadata()
+        metadata["hardware_dark_corrected"] = self._hardware_dark_corrected
+        metadata["nonlinearity_corrected"] = self._nonlinearity_corrected
+        return metadata
+
+
+class BackgroundCorrectionMismatchTests(unittest.TestCase):
+    """Covers work/work_OceanOptics.md Step 7: a background taken under different
+    dark/nonlinearity correction settings must be flagged as mismatched rather than silently
+    subtracted, mirroring every other hardware-state comparison in background_mismatch_fields()."""
+
+    def _window_with_background(self, current_dark, current_nonlinearity, saved_dark, saved_nonlinearity):
+        from src.measurement_metadata import background_mismatch_fields
+
+        window = Window()
+        window.thread = OceanOpticsCamera(current_dark, current_nonlinearity)
+        capture = capture_hardware_state(window, 3)
+        saved_hardware = build_hardware_metadata(window, capture, include_background=False)
+        # Overwrite with the *saved* background's own correction state (as it would have been
+        # captured at the time that background was acquired).
+        saved_hardware["camera"]["hardware_dark_corrected"] = saved_dark
+        saved_hardware["camera"]["nonlinearity_corrected"] = saved_nonlinearity
+        window.loaded_bg_metadata = {
+            "acquisition_time": 0.1,
+            "accumulations": 3,
+            "mode": "1D Spectrum (Custom ROI)",
+            "roi_start": 45,
+            "roi_end": 65,
+            "source_file": "background.json",
+            "hardware_metadata": saved_hardware,
+        }
+        return background_mismatch_fields(window, build_hardware_metadata(window, capture, include_background=False))
+
+    def test_matching_correction_flags_report_no_mismatch(self):
+        fields = self._window_with_background(True, False, True, False)
+        self.assertNotIn("camera.hardware_dark_corrected", fields)
+        self.assertNotIn("camera.nonlinearity_corrected", fields)
+
+    def test_changed_dark_correction_is_flagged(self):
+        fields = self._window_with_background(False, False, True, False)
+        self.assertIn("camera.hardware_dark_corrected", fields)
+
+    def test_changed_nonlinearity_correction_is_flagged(self):
+        fields = self._window_with_background(True, True, True, False)
+        self.assertIn("camera.nonlinearity_corrected", fields)
+
+    def test_andor_backgrounds_without_the_field_are_unaffected(self):
+        from src.measurement_metadata import background_mismatch_fields
+
+        window = Window()  # plain Camera fixture - no hardware_dark_corrected key at all
+        capture = capture_hardware_state(window, 3)
+        saved_hardware = build_hardware_metadata(window, capture, include_background=False)
+        window.loaded_bg_metadata = {
+            "acquisition_time": 0.1,
+            "accumulations": 3,
+            "mode": "1D Spectrum (Custom ROI)",
+            "roi_start": 45,
+            "roi_end": 65,
+            "source_file": "background.json",
+            "hardware_metadata": saved_hardware,
+        }
+        fields = background_mismatch_fields(window, build_hardware_metadata(window, capture, include_background=False))
+        self.assertNotIn("camera.hardware_dark_corrected", fields)
+        self.assertNotIn("camera.nonlinearity_corrected", fields)
 
 
 if __name__ == "__main__":

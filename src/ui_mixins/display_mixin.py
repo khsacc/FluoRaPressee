@@ -3,6 +3,8 @@ from datetime import datetime
 import numpy as np
 import pyqtgraph as pg
 
+from src.measurement_metadata import public_axis_kind
+
 
 class DisplayMixin:
     def toggle_fitting_panel(self):
@@ -92,7 +94,10 @@ class DisplayMixin:
             self.stacked_widget.setCurrentIndex(0)
 
             x_data = self.get_x_axis(len(disp_data))
-            if self.chk_flip_x.isChecked() and self.calib_coeffs is not None:
+            if self.chk_flip_x.isChecked() and public_axis_kind(self) != "pixel":
+                # A meaningful physical x-axis (native wavelength or FluoraPressée-calibrated)
+                # must flip together with y, unlike a bare pixel index (see public_axis_kind()
+                # docstring) - otherwise flip_x desyncs wavelength/Raman-shift from intensity.
                 x_data = x_data[::-1]
 
             min_x = np.min(x_data)
@@ -307,7 +312,8 @@ class DisplayMixin:
                     x_val = mouse_point.x()
 
                     x_pixel = int(np.round(x_val))
-                    if self.calib_coeffs is not None and self.latest_1d_data is not None:
+                    axis_kind = public_axis_kind(self)
+                    if axis_kind != "pixel" and self.latest_1d_data is not None:
                         x_arr = self.get_x_axis(len(self.latest_1d_data))
                         if self.chk_flip_x.isChecked():
                             x_arr = x_arr[::-1]
@@ -323,7 +329,7 @@ class DisplayMixin:
                     unit = "Wavelength" if not self.radio_spec_mode_raman.isChecked() else "Raman shift"
                     unit_sym = "nm" if not self.radio_spec_mode_raman.isChecked() else "cm⁻¹"
 
-                    if self.calib_coeffs is not None:
+                    if axis_kind != "pixel":
                         self.coord_label.setText(f"1D Spectrum - {unit}: {x_val:.3f} {unit_sym} (Pixel: {disp_idx}){data_val_str}")
                     else:
                         self.coord_label.setText(f"1D Spectrum - Pixel: {x_val:.1f}{data_val_str}")

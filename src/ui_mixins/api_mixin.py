@@ -17,7 +17,7 @@ from src.api.info_helpers import (
 )
 from src.configuration_catalog import format_configuration_label
 from src.instrument_status import legacy_camera_snapshot, unavailable_device
-from src.measurement_metadata import capture_hardware_state
+from src.measurement_metadata import capture_hardware_state, public_axis_kind, public_axis_unit
 from src.pressureCalc import PressureCalculator
 
 
@@ -25,6 +25,16 @@ class BackgroundMismatchError(Exception):
     """Raised by api_acquire() when dark_mode="reuse_loaded" doesn't match the
     loaded background's acquisition settings and the caller didn't opt in via
     ignore_mismatch=True.
+    """
+    pass
+
+
+class ExposureApplyError(Exception):
+    """Raised by _api_start_acquire() when the camera thread reports (via its optional
+    get_exposure_error(seq)) that a requested exposure_time_s failed to reach hardware -
+    e.g. outside an Ocean Optics device's supported integration time range. Without this
+    check, acquisition would silently proceed with the previous exposure time while the
+    response reported the requested (never-applied) one - see work/work_OceanOptics.md.
     """
     pass
 
@@ -45,11 +55,19 @@ class ApiMixin:
 
     def _api_camera_backend(self):
         module = type(self.thread).__module__
-        return "princeton_picam" if module.endswith("camera_princeton") else "andor_sdk2"
+        if module.endswith("camera_princeton"):
+            return "princeton_picam"
+        if module.endswith("camera_oceanoptics"):
+            return "oceanoptics_seabreeze"
+        return "andor_sdk2"
 
     def _api_spectrometer_backend(self):
         module = type(self.spec_ctrl).__module__
-        return "princeton_acton" if module.endswith("spectrometer_princeton") else "andor_shamrock"
+        if module.endswith("spectrometer_princeton"):
+            return "princeton_acton"
+        if module.endswith("spectrometer_oceanoptics"):
+            return "oceanoptics_seabreeze"
+        return "andor_shamrock"
 
     def _api_build_camera_info(self, status=None):
         """Build a camera response on the GUI thread from cached state."""
@@ -57,8 +75,16 @@ class ApiMixin:
         metadata = normalize_camera_metadata(capture["camera"])
         running = bool(self.thread.isRunning())
         debug = bool(getattr(self.thread, "debug", self.debug))
+        # CameraThreadOceanOptics holds its connection as `self.spec`, not `self.cam`
+        # (Andor/Princeton) - checking both covers every backend without needing to
+        # branch on _api_camera_backend() here too.
         hardware_connected = bool(
-            not debug and running and getattr(self.thread, "cam", None) is not None
+            not debug
+            and running
+            and (
+                getattr(self.thread, "cam", None) is not None
+                or getattr(self.thread, "spec", None) is not None
+            )
         )
         return build_device_response(
             backend=self._api_camera_backend(),
@@ -78,7 +104,20 @@ class ApiMixin:
             capture["spectrometer"], configured_identity
         )
         debug = bool(getattr(self.spec_ctrl, "debug", self.debug))
-        hardware_connected = bool(getattr(self.spec_ctrl, "is_initialized", False))
+        if self._api_spectrometer_backend() == "oceanoptics_seabreeze":
+            # Ocean Optics has no separate spectrometer hardware to query -
+            # SpectrometerControllerOceanOptics is a no-op that always reports
+            # is_initialized=True regardless of whether the single physical device (owned
+            # by the camera thread) is actually connected. Report the real connection
+            # state from there instead, so a disconnected/failed camera is never shown as
+            # a connected spectrometer.
+            hardware_connected = bool(
+                not debug
+                and self.thread.isRunning()
+                and getattr(self.thread, "spec", None) is not None
+            )
+        else:
+            hardware_connected = bool(getattr(self.spec_ctrl, "is_initialized", False))
         return build_device_response(
             backend=self._api_spectrometer_backend(),
             debug=debug,
@@ -222,7 +261,6 @@ class ApiMixin:
         if gate_already_held and not self._acquisition_gate.locked():
             raise RuntimeError("configuration operation lost the acquisition gate")
 
-        actual_exposure = exposure_s if exposure_s is not None else self.spin_acq_time.value()
         actual_accum = accumulations if accumulations is not None else self.spin_accumulate.value()
 
         if exposure_s is not None:
@@ -235,6 +273,21 @@ class ApiMixin:
             seq = self.thread.update_exposure(exposure_s)
             if not self.thread.wait_for_exposure_applied(seq, timeout=wait_timeout):
                 print("Warning: timed out waiting for the new exposure to reach hardware before API acquisition")
+            # Not every camera thread implements this (only CameraThreadOceanOptics does,
+            # since its integration_time_micros() can reject an out-of-range value outright
+            # rather than clamping it) - absence means "assume applied", matching the
+            # pre-existing behaviour for Andor/Princeton.
+            get_exposure_error = getattr(self.thread, "get_exposure_error", None)
+            exposure_error = get_exposure_error(seq) if get_exposure_error is not None else None
+            if exposure_error is not None:
+                self._release_acquisition_gate()
+                raise ExposureApplyError(f"Failed to set exposure: {exposure_error}")
+            # Reflects what the hardware actually accepted (or, on failure, was left
+            # unchanged at) rather than blindly trusting the requested value - see
+            # work/work_OceanOptics.md review round 5.
+            actual_exposure = self.thread.current_exposure
+        else:
+            actual_exposure = self.spin_acq_time.value()
 
         if accumulations is not None:
             self._active_target_accum = accumulations
@@ -362,6 +415,25 @@ class ApiMixin:
             grating = {"index": None, "grooves_per_mm": None}
         roi = self._current_roi_definition()
         calibrated = self.calib_coeffs is not None
+        # public_axis_kind()/public_axis_unit() are the single source of truth for both
+        # "configuration.axis_mode" here and AcquireResponse.x_axis (added below) - see
+        # work/work_OceanOptics.md Step 8. Without this, Ocean Optics' native-wavelength
+        # acquisitions would report x_axis.source="native_wavelength" while axis_mode stayed
+        # "pixel" in the very same response.
+        axis_kind = public_axis_kind(self)
+        axis_unit = public_axis_unit(self, axis_kind)
+        # "configuration.unit" intentionally keeps the "Wavelength"/"Raman shift"/"pixel"
+        # vocabulary (matching self.calib_unit and POST /calibration's request/response,
+        # see manuals/API.md) rather than axis_unit's "nm"/"cm-1"/None - the two fields serve
+        # different callers. It must still track axis_kind rather than only
+        # `calibrated`, though: a native-wavelength axis (Ocean Optics, no FluoraPressée
+        # calibration loaded) is a real Wavelength/Raman-shift axis, not a pixel index.
+        if calibrated:
+            display_unit = self.calib_unit
+        elif axis_kind == "native_wavelength":
+            display_unit = "Raman shift" if self.radio_spec_mode_raman.isChecked() else "Wavelength"
+        else:
+            display_unit = "pixel"
         positioned_id = getattr(self, "positioned_configuration_id", None)
         positioned_slot_id = getattr(
             self, "positioned_configuration_slot_id", None
@@ -381,9 +453,9 @@ class ApiMixin:
             "configuration": {
                 "configuration_id": positioned_id,
                 "slot_id": positioned_slot_id,
-                "axis_mode": "calibrated" if calibrated else "pixel",
+                "axis_mode": axis_kind,
                 "calibration_applied": calibrated,
-                "unit": self.calib_unit if calibrated else "pixel",
+                "unit": display_unit,
             },
             "hardware_state": {
                 "grating_index": grating["index"],
@@ -396,6 +468,14 @@ class ApiMixin:
                 "roi_mode": roi["roi_mode"],
                 "roi_start": roi["roi_start"],
                 "roi_end": roi["roi_end"],
+            },
+            # Only declared on AcquireResponse (src/api/schemas.py); pydantic's default
+            # extra="ignore" silently drops this key for StatusResponse/
+            # ApplyConfigurationResponse, which also consume this same dict via **state.
+            "x_axis": {
+                "source": axis_kind,
+                "unit": axis_unit,
+                "calibrated": axis_kind == "calibrated",
             },
         }
 

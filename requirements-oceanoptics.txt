@@ -1,0 +1,6 @@
+-r requirements.txt
+# Ocean Optics USB2000/USB4000 support (src/camera_oceanoptics.py, src/spectrometer_oceanoptics.py).
+# Optional: only needed when spectrometerConfig.json's "model" is "OceanOptics". seabreeze is
+# imported lazily (never at module load time), so Andor/Princeton Instruments users never need
+# this installed - see work/work_OceanOptics.md.
+seabreeze

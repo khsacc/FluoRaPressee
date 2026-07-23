@@ -194,6 +194,17 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.lbl_accum_status.setVisible(False)
         plot_layout.addWidget(self.lbl_accum_status)
 
+        # Shown only while displaying Ocean Optics' native (factory-calibrated) wavelength
+        # axis with no FluoraPressée calibration loaded - see
+        # SpectrometerControlMixin.update_plot_labels() (work/work_OceanOptics.md Step 6).
+        self.lbl_axis_warning = QLabel(
+            "X-axis: Ocean Optics factory-calibrated wavelength "
+            "(no FluoraPressée calibration applied)"
+        )
+        self.lbl_axis_warning.setStyleSheet("color: #9a6700; font-weight: bold; font-size: 12px;")
+        self.lbl_axis_warning.setVisible(False)
+        plot_layout.addWidget(self.lbl_axis_warning)
+
         self.plot_content_layout = QHBoxLayout()
 
         self.fitting_panel = QGroupBox("Fitting Results")
@@ -493,7 +504,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         spec_layout.addWidget(self.lbl_notes_calib_loading, 1, 0, 1, 2)
         spec_layout.addWidget(self.lbl_loaded_configuration, 2, 0, 1, 2)
         
-        spec_layout.addWidget(QLabel("Grating (grooves/mm):"), 3, 0)
+        self.lbl_grating = QLabel("Grating (grooves/mm):")
+        spec_layout.addWidget(self.lbl_grating, 3, 0)
         spec_layout.addWidget(self.combo_grating, 3, 1)
         spec_layout.addLayout(spec_radio_layout, 4, 0, 1, 2)
         spec_layout.addWidget(self.lbl_centre, 5, 0)
@@ -521,12 +533,14 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         roi_layout.addWidget(self.chk_flip_x)
         
         roi_spin_layout = QHBoxLayout()
-        roi_spin_layout.addWidget(QLabel("Start Row:"))
+        self.lbl_roi_start = QLabel("Start Row:")
+        roi_spin_layout.addWidget(self.lbl_roi_start)
         self.spin_vstart = CustomSpinBox()
-        self.spin_vstart.setMaximum(4000) 
+        self.spin_vstart.setMaximum(4000)
         roi_spin_layout.addWidget(self.spin_vstart)
-        
-        roi_spin_layout.addWidget(QLabel("End Row:"))
+
+        self.lbl_roi_end = QLabel("End Row:")
+        roi_spin_layout.addWidget(self.lbl_roi_end)
         self.spin_vend = CustomSpinBox()
         self.spin_vend.setMaximum(4000) 
         roi_spin_layout.addWidget(self.spin_vend)

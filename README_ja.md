@@ -133,11 +133,14 @@ Andor製またはPrinceton Instruments製のカメラ（検出器）および分
 2. 使用する装置メーカーに応じて、SDK/ドライバを正しくインストールします。
    * Andorの場合: Andor SDK
    * Princeton Instrumentsの場合: PICam Runtime（カメラ用）。分光器（Acton SP シリーズ）はシリアル接続のため、PC側のCOMポート番号を確認しておきます。
+   * Ocean Opticsの場合: ``requirements.txt``には含まれない任意の追加パッケージ ``seabreeze`` が必要です。
+     ``setup.bat``/``setup.sh``実行後に``setup_oceanoptics.bat``（macOS/Linuxでは``./setup_oceanoptics.sh``）を実行してください。
+     `pip install`だけでなく`seabreeze_os_setup`（Linuxのudevルール設定等、OS依存の追加設定）も自動的に実行されます。
 3. ``spectrometerConfig.json``が存在しない状態でアプリを初めて起動すると、セットアップウィザードが自動的に開きます。
-   1. メーカー選択（Andor / Princeton Instruments）
-   2. 接続設定（Andor: ``ShamrockCIF.dll`` のパス。Princeton Instruments: COMポート、PICam Runtimeのパス、カメラのシリアル番号）。
+   1. メーカー選択（Andor / Princeton Instruments / Ocean Optics）
+   2. 接続設定（Andor: ``ShamrockCIF.dll`` のパス。Princeton Instruments: COMポート、PICam Runtimeのパス、カメラのシリアル番号。Ocean Optics: シリアル番号（省略可）、seabreeze backend（通常は空欄のままでよい））。
       「Read parameters from connected hardware」ボタンで、接続済みの実機からこれらの値や回折格子構成を自動取得することもできます。
-   3. 回折格子（grooves/mm）、``flip_x``（スペクトルの左右反転）、冷却温度などの初期値
+   3. 回折格子（grooves/mm）、``flip_x``（スペクトルの左右反転）、冷却温度などの初期値（Ocean Optics選択時はグレーティング・冷却温度の項目は表示されません — 固定分光器かつ無冷却のため）
 
    ウィザード完了後、``spectrometerConfig.json``がプロジェクトルートに生成されます（ウィザードをキャンセルした場合は、Andor用のデフォルト設定が生成されます）。内容は以下のようなJSONファイルで、直接編集して再起動すれば変更が反映されます。
 
@@ -196,6 +199,33 @@ Andor製またはPrinceton Instruments製のカメラ（検出器）および分
 ```
 
 ``default_fan_mode``はAndor SDK2の冷却ファン制御に固有の項目のため、Princeton Instrumentsの設定には含まれません。カメラのシリアル番号（``camera_serial_number``）は、接続されているカメラが1台のみであれば省略できます。
+
+### Ocean Optics の場合
+
+```json
+{
+    "model": "OceanOptics",
+    "serial_number": null,
+    "seabreeze_backend": null,
+    "correct_dark_counts": true,
+    "correct_nonlinearity": true,
+    "grating": [
+        {"index": 1, "grooves": 0, "defaultROI": {"from": 0, "to": 1}}
+    ],
+    "flip_x": false
+}
+```
+
+Ocean Opticsは分光器とカメラが一体になった固定分光器です。可動グレーティング・可動中心波長・
+冷却器を持たないため、GUI上でもこれらの項目（2D Image View、垂直方向カスタムROI、グレーティング
+選択、中心波長のApply）は表示されません。``grating``キー内の値（``grooves: 0``）は
+ConfigurationCatalog（較正保存機構）との互換性を保つための内部的なプレースホルダーであり、
+ユーザーが編集する必要はありません。``serial_number``を指定すると特定の個体を、``null``のままなら
+最初に見つかったデバイスを使用します。
+
+FluoraPressée自身のネオン較正（「Calibrate x-axis」）を適用するまでは、X軸には装置内蔵の
+工場較正済み波長軸がそのまま表示され、プロット上部に注意書きが表示されます。これは
+「未較正」とは異なり、Ocean Optics自身の較正データに基づく正しい波長軸です。
 
 ##  使い方 
 

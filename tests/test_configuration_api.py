@@ -138,6 +138,11 @@ class FakeGui:
                 "roi_start": 45,
                 "roi_end": 65,
             },
+            "x_axis": {
+                "source": axis_mode,
+                "unit": "nm" if axis_mode == "calibrated" else None,
+                "calibrated": axis_mode == "calibrated",
+            },
         }
 
 
@@ -203,6 +208,19 @@ class ConfigurationApiTests(unittest.TestCase):
         self.assertEqual(self.gui.last_acquire["configuration_id"], "cfg-1")
         self.assertEqual(self.gui.last_acquire["axis_mode"], "pixel")
         self.assertEqual(response["configuration"]["unit"], "pixel")
+
+    def test_acquire_response_includes_x_axis(self):
+        # Regression test: _acquire_response_payload() in src/api/server.py used to omit the
+        # "x_axis" key entirely (only "configuration"/"hardware_state" were copied from
+        # api_acquire()'s return value), so AcquireResponse.x_axis was always null over HTTP
+        # even though ApiMixin._api_configuration_state() always computes it -
+        # see work/work_OceanOptics.md review round 5.
+        response = self.endpoint("/acquire", "POST")(AcquireRequest())
+
+        self.assertEqual(
+            response["x_axis"],
+            {"source": "calibrated", "unit": "nm", "calibrated": True},
+        )
 
     def test_catalog_discovery_resolve_get_and_apply(self):
         listing = self.endpoint("/configurations", "GET")()

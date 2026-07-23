@@ -27,7 +27,7 @@ from src.configuration_catalog import (
     ConfigurationCompatibilityError,
     ConfigurationError,
 )
-from src.ui_mixins.api_mixin import BackgroundMismatchError
+from src.ui_mixins.api_mixin import BackgroundMismatchError, ExposureApplyError
 
 
 def _to_list(arr):
@@ -106,6 +106,8 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
         except BackgroundMismatchError as e:
             raise HTTPException(status_code=422, detail=str(e))
+        except ExposureApplyError as e:
+            raise HTTPException(status_code=422, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except FutureTimeoutError:
@@ -139,6 +141,7 @@ def create_app(gui_window, gui_bridge) -> FastAPI:
             "timestamp": result["timestamp"],
             "configuration": result["configuration"],
             "hardware_state": result["hardware_state"],
+            "x_axis": result["x_axis"],
         }
         if "background_mismatch_warning" in result:
             payload["background_mismatch_warning"] = result["background_mismatch_warning"]

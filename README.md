@@ -62,6 +62,28 @@ This software was developed in the Geochemical Research Center (GcRC), Graduate 
    packages (`PyQt6`, `pyqtgraph`, `numpy`, `scipy`, `pylablib`, `pyserial`) into it.
 2. Ensure the Andor SDK is properly installed on the system.
 
+### Ocean Optics support (optional)
+
+FluoraPressée can also drive Ocean Optics USB2000/USB4000 spectrometers via
+[python-seabreeze](https://github.com/ap--/python-seabreeze). This is optional and not installed
+by the base `setup.bat`/`setup.sh`.
+
+1. Run `setup.bat`/`./setup.sh` first (see above) to create `.venv`.
+2. Run `setup_oceanoptics.bat` (or `./setup_oceanoptics.sh` on macOS/Linux). This installs
+   `seabreeze` into the same `.venv` and runs `seabreeze_os_setup`, which performs any OS-level
+   configuration `pip install` alone doesn't cover (e.g. udev rules on Linux; may require `sudo`).
+3. Set `"model": "OceanOptics"` in `spectrometerConfig.json` (the setup wizard on first launch
+   also offers this as a supplier choice).
+
+Ocean Optics is a fixed spectrometer, not a movable grating + detector like Andor/Princeton
+Instruments, so the following do not apply and are hidden in the GUI when connected:
+* 2D image mode and custom vertical ROI (the detector is a single row).
+* Grating selection and centre-wavelength "Apply" (the device has neither).
+
+Before a FluoraPressée neon calibration is applied, the X-axis shows the device's own
+factory-calibrated wavelength (a warning banner above the plot makes this explicit) rather than a
+plain pixel index; this is not the same as "uncalibrated".
+
 ## 🚀 Usage
 
 ### Launching the Application

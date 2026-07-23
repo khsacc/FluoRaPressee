@@ -229,6 +229,12 @@ class SpectrometerControllerAndor:
                 "wavelength_limits_nm": limits,
             }
 
+    def get_capabilities(self):
+        """Duck-typing counterpart to SpectrometerControllerOceanOptics.get_capabilities()
+        (src/spectrometer_oceanoptics.py) - this spectrometer has a movable grating/centre
+        wavelength, unlike Ocean Optics' fixed spectrometer."""
+        return {"supports_grating": True, "supports_movable_center": True}
+
     def close(self):
         if self.is_initialized and self.shamrock:
             try:

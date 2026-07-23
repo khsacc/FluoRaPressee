@@ -3,6 +3,7 @@ from PyQt6.QtCore import Qt
 
 from src.spectrometer import SpectrometerMoveThread
 from src.calibration_ui import CalibrationWindow
+from src.measurement_metadata import public_axis_kind
 
 
 class SpectrometerControlMixin:
@@ -48,16 +49,23 @@ class SpectrometerControlMixin:
             self.check_spectrometer_changes()
 
     def update_plot_labels(self):
-        if self.calib_coeffs is not None:
+        axis_kind = public_axis_kind(self)
+        if axis_kind == "calibrated":
             if self.radio_spec_mode_raman.isChecked():
                 x_label = 'Raman shift (cm⁻¹)'
             else:
                 x_label = 'Wavelength (nm)'
+        elif axis_kind == "native_wavelength":
+            if self.radio_spec_mode_raman.isChecked():
+                x_label = 'Raman shift (cm⁻¹) [Ocean Optics factory calibration]'
+            else:
+                x_label = 'Wavelength (nm) [Ocean Optics factory calibration]'
         else:
             x_label = 'Pixel'
 
         self.plot_widget.setLabel('bottom', x_label)
         self.image_view.getView().setLabel('bottom', x_label)
+        self.lbl_axis_warning.setVisible(axis_kind == "native_wavelength")
 
     def check_spectrometer_changes(self, *args):
         curr_g = self.combo_grating.currentText()

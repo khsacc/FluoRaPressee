@@ -8,7 +8,7 @@ from src.configuration_catalog import (
     ConfigurationError,
     format_configuration_label,
 )
-from src.measurement_metadata import background_mismatch_fields, build_hardware_metadata
+from src.measurement_metadata import background_mismatch_fields, build_hardware_metadata, public_axis_kind
 
 class FileIOMixin:
     def check_bg_mismatch(self):
@@ -551,7 +551,9 @@ class FileIOMixin:
 
             if is_1d:
                 x_data = self.get_x_axis(len(self.latest_1d_data))
-                if self.chk_flip_x.isChecked() and self.calib_coeffs is not None:
+                if self.chk_flip_x.isChecked() and public_axis_kind(self) != "pixel":
+                    # Must match DisplayMixin.update_display()'s flip condition, or the
+                    # saved x column would desync from native wavelength/calibrated y data.
                     x_data = x_data[::-1]
                 raw_data = None
                 bg_data = None
