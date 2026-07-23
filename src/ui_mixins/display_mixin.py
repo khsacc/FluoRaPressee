@@ -7,6 +7,15 @@ from src.measurement_metadata import public_axis_kind
 
 
 class DisplayMixin:
+    def _configure_spectrum_plot_range(self, min_x, max_x):
+        view_box = self.plot_widget.getViewBox()
+        view_box.setLimits(xMin=min_x, xMax=max_x)
+        view_box.setDefaultPadding(0)
+        # Keep complete curve bounds available to pyqtgraph's standard
+        # "View All", as the calibration plot does. With clip-to-view enabled,
+        # autoRange can only see the currently zoomed x-range.
+        self.plot_widget.setClipToView(False)
+
     def toggle_fitting_panel(self):
         is_on = self.radio_fit_on.isChecked()
         self.fitting_panel.setVisible(is_on)
@@ -104,9 +113,7 @@ class DisplayMixin:
             max_x = np.max(x_data)
 
             # Plot design
-            self.plot_widget.getViewBox().setLimits(xMin=min_x, xMax=max_x)
-            self.plot_widget.getViewBox().setDefaultPadding(0)
-            self.plot_widget.setClipToView(True)
+            self._configure_spectrum_plot_range(min_x, max_x)
 
             if self.radio_plot_scatter.isChecked():
                 self.plot_scatter.setData(x_data, disp_data)
