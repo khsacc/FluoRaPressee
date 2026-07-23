@@ -361,11 +361,12 @@ class CalibrationWindow(QDialog):
 
     def _flip_x_enabled(self):
         main_window = self.parent()
-        return bool(
-            main_window is not None
-            and hasattr(main_window, "chk_flip_x")
-            and main_window.chk_flip_x.isChecked()
-        )
+        if main_window is None:
+            return False
+        checkbox = getattr(main_window, "chk_flip_x", None)
+        if checkbox is not None:
+            return bool(checkbox.isChecked())
+        return bool(getattr(main_window, "config", {}).get("flip_x", False))
 
     def on_data_ready(self, mode, data):
         if self.is_acquiring and mode == "1d":
@@ -1122,6 +1123,7 @@ class CalibrationWindow(QDialog):
             for row, assignment in self.assignments.items()
             if row in local_index and assignment.get("line_id")
         }
+        expected_slope_sign = -1 if self._flip_x_enabled() else 1
         self.match_candidates = find_match_candidates(
             pixels,
             lines,
@@ -1130,11 +1132,14 @@ class CalibrationWindow(QDialog):
             locked_assignments=locked,
             max_candidates=5,
             allow_reversed=True,
-            expected_slope_sign=-1 if self._flip_x_enabled() else 1,
+            expected_slope_sign=expected_slope_sign,
         )
         if self.initial_wavelength_axis is not None:
             seeded = match_from_seed_axis(
-                pixels, lines, self.initial_wavelength_axis
+                pixels,
+                lines,
+                self.initial_wavelength_axis,
+                expected_slope_sign=expected_slope_sign,
             )
             if seeded is not None:
                 duplicate = any(
@@ -1233,12 +1238,12 @@ class CalibrationWindow(QDialog):
         if coefficients is not None:
             c0, c1, c2 = coefficients
             return c0 + c1 * pixels + c2 * pixels**2
-        if self.initial_wavelength_axis is not None:
-            return self.initial_wavelength_axis
         index = self.combo_match_candidate.currentIndex()
         if 0 <= index < len(self.match_candidates):
             c0, c1, c2 = self.match_candidates[index].coefficients
             return c0 + c1 * pixels + c2 * pixels**2
+        if self.initial_wavelength_axis is not None:
+            return self.initial_wavelength_axis
         return None
 
     def update_reference_overlay(self):

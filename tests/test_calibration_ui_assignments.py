@@ -13,6 +13,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from src.calibration_ui import CalibrationWindow
+from src.calibration_reference import MatchCandidate
 
 
 _APP = QApplication.instance() or QApplication([])
@@ -61,6 +62,25 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
             self.window.find_assignment_candidates()
 
         self.assertEqual(matcher.call_args.kwargs["expected_slope_sign"], -1)
+
+    def test_selected_candidate_preview_takes_priority_over_seed_axis(self):
+        self.window.initial_wavelength_axis = np.linspace(600.0, 800.0, 1024)
+        self.window.match_candidates = [
+            MatchCandidate(
+                coefficients=(800.0, -0.2, 0.0),
+                assignments=(),
+                matched_count=3,
+                rms_nm=0.0,
+                center_error_nm=None,
+                score=300.0,
+            )
+        ]
+        self.window.combo_match_candidate.addItem("Flipped candidate")
+        self.window.combo_match_candidate.setCurrentIndex(0)
+
+        axis = self.window._projection_axis_nm()
+
+        self.assertGreater(axis[0], axis[-1])
 
     def test_default_window_width_is_one_and_a_half_times_previous_width(self):
         self.assertEqual(self.window.width(), 1650)

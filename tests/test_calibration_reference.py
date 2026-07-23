@@ -169,6 +169,33 @@ class PatternMatcherTests(unittest.TestCase):
         self.assertIsNotNone(candidate)
         self.assertEqual(candidate.matched_count, 3)
 
+    def test_seed_candidate_must_follow_expected_flip_direction(self):
+        pixels = [10.0, 35.0, 80.0]
+        normal_axis = np.linspace(690.0, 710.0, 101)
+        flipped_axis = normal_axis[::-1]
+        normal_lines = _lines(
+            "Ne-I", normal_axis[np.asarray(pixels, dtype=int)]
+        )
+        flipped_lines = _lines(
+            "Ne-I", flipped_axis[np.asarray(pixels, dtype=int)]
+        )
+
+        self.assertIsNone(match_from_seed_axis(
+            pixels,
+            normal_lines,
+            normal_axis,
+            expected_slope_sign=-1,
+        ))
+        candidate = match_from_seed_axis(
+            pixels,
+            flipped_lines,
+            flipped_axis,
+            expected_slope_sign=-1,
+        )
+
+        self.assertIsNotNone(candidate)
+        self.assertLess(candidate.coefficients[1], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

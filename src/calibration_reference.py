@@ -160,12 +160,16 @@ def match_from_seed_axis(
     measured_pixels: Sequence[float],
     reference_lines: Sequence[ReferenceLine],
     wavelength_axis_nm: Sequence[float],
+    *,
+    expected_slope_sign: int | None = None,
 ) -> MatchCandidate | None:
     """Build a candidate from a vendor-provided approximate/factory axis."""
 
     pixels = np.asarray(measured_pixels, dtype=float)
     axis = np.asarray(wavelength_axis_nm, dtype=float)
     lines = sorted(reference_lines, key=lambda line: line.wavelength_nm)
+    if expected_slope_sign not in (None, -1, 1):
+        raise ValueError("expected_slope_sign must be None, -1, or 1")
     if (
         len(pixels) < 2
         or len(axis) < 2
@@ -186,6 +190,16 @@ def match_from_seed_axis(
     coefficients = _fit_coefficients(
         fit_pixels, fit_wavelengths, allow_quadratic=len(matches) >= 4
     )
+    derivative = coefficients[1] + 2.0 * coefficients[2] * np.asarray(
+        [np.min(pixels), np.max(pixels)]
+    )
+    if derivative[0] * derivative[1] <= 0:
+        return None
+    if (
+        expected_slope_sign is not None
+        and np.any(derivative * expected_slope_sign <= 0)
+    ):
+        return None
     fitted = _poly_values(coefficients, fit_pixels)
     rms = float(np.sqrt(np.mean((fitted - fit_wavelengths) ** 2)))
     assignments = tuple(
