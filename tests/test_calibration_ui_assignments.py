@@ -53,15 +53,54 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
         ]
         self.assertEqual(standard_ids, ["Ne-I", "Ar-I", "Hg-I"])
 
-    def test_automatic_matching_uses_flipped_wavelength_direction(self):
-        self.window._flip_x_enabled = lambda: True
+    def test_automatic_matching_always_expects_increasing_wavelength(self):
+        # self.current_spectrum's pixel index already has Flip X applied (see
+        # on_data_ready/use_displayed_data), so increasing-pixel-index ->
+        # increasing-wavelength must hold regardless of the checkbox state -
+        # otherwise the matcher double-flips relative to the already-flipped data.
+        for flip_state in (True, False):
+            self.window._flip_x_enabled = lambda flip_state=flip_state: flip_state
 
-        with patch(
-            "src.calibration_ui.find_match_candidates", return_value=[]
-        ) as matcher:
-            self.window.find_assignment_candidates()
+            with patch(
+                "src.calibration_ui.find_match_candidates", return_value=[]
+            ) as matcher:
+                self.window.find_assignment_candidates()
 
-        self.assertEqual(matcher.call_args.kwargs["expected_slope_sign"], -1)
+            self.assertEqual(matcher.call_args.kwargs["expected_slope_sign"], 1)
+
+    def test_raw_pixel_domain_unchanged_when_not_flipped(self):
+        self.window._spectrum_is_flipped = False
+        coeffs = (673.3, 2.1097e-2, -3.347e-7)
+
+        self.assertEqual(self.window._to_raw_pixel_domain(coeffs), coeffs)
+
+    def test_raw_pixel_domain_undoes_flip_so_each_raw_pixel_keeps_its_wavelength(self):
+        # A calibration performed while Flip X was checked is fit against
+        # self.current_spectrum's (already-flipped) pixel index. Once handed to
+        # the main window, that index must be converted back to the raw sensor
+        # pixel domain (see _to_raw_pixel_domain / save_and_apply), or the main
+        # window's own flip handling double-flips it. The physical invariant
+        # this must preserve: whichever raw sensor pixel a peak sits at, it
+        # keeps the same wavelength whether Flip X is later toggled or not.
+        self.window._spectrum_is_flipped = True
+        n = len(self.window.current_spectrum)
+        flipped_domain_coeffs = (673.3, 2.1097e-2, -3.347e-7)
+
+        raw_domain_coeffs = self.window._to_raw_pixel_domain(flipped_domain_coeffs)
+
+        c0, c1, c2 = flipped_domain_coeffs
+        r0, r1, r2 = raw_domain_coeffs
+        flipped_pixel = 150.0
+        raw_pixel = (n - 1) - flipped_pixel
+        wavelength_via_flipped_domain = c0 + c1 * flipped_pixel + c2 * flipped_pixel ** 2
+        wavelength_via_raw_domain = r0 + r1 * raw_pixel + r2 * raw_pixel ** 2
+        self.assertAlmostEqual(
+            wavelength_via_flipped_domain, wavelength_via_raw_domain, places=6
+        )
+        # The conversion must be its own inverse (flipping twice is a no-op).
+        roundtripped = self.window._to_raw_pixel_domain(raw_domain_coeffs)
+        for actual, expected in zip(roundtripped, flipped_domain_coeffs):
+            self.assertAlmostEqual(actual, expected, places=6)
 
     def test_selected_candidate_preview_takes_priority_over_seed_axis(self):
         self.window.initial_wavelength_axis = np.linspace(600.0, 800.0, 1024)

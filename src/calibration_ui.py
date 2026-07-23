@@ -66,8 +66,13 @@ class CalibrationWindow(QDialog):
         self.reference_tick_positions = []
         self.hovered_reference_line_id = None
         self.is_acquiring = False
-        
-        self.calib_coeffs = None 
+        # Whether self.current_spectrum's pixel index already had Flip X applied
+        # when it was populated (on_data_ready / use_displayed_data). Needed to
+        # convert self.calib_coeffs back to the raw (unflipped) sensor pixel
+        # domain before handing it to the main window - see _to_raw_pixel_domain.
+        self._spectrum_is_flipped = False
+
+        self.calib_coeffs = None
         self.row_widgets = []
         # Assignments are independent of the reference-standard visibility.
         # Switching Ne/Ar must never silently discard a confirmed relationship.
@@ -368,11 +373,32 @@ class CalibrationWindow(QDialog):
             return bool(checkbox.isChecked())
         return bool(getattr(main_window, "config", {}).get("flip_x", False))
 
+    def _to_raw_pixel_domain(self, coeffs):
+        """Undo the Flip X this window applied to self.current_spectrum, so the
+        returned (c0, c1, c2) are expressed in the raw (unflipped) sensor pixel
+        index - the domain SpectrometerGUI.get_x_axis()/DisplayMixin/FileIOMixin
+        assume calib_coeffs is in, since they re-apply Flip X themselves (see
+        public_axis_kind()'s docstring). Without this conversion, calibrating
+        while Flip X is checked would be silently double-flipped once applied to
+        the main window.
+        """
+        if not self._spectrum_is_flipped or self.current_spectrum is None:
+            return coeffs
+        c0, c1, c2 = coeffs
+        last_index = len(self.current_spectrum) - 1
+        return (
+            c0 + c1 * last_index + c2 * last_index ** 2,
+            -(c1 + 2.0 * c2 * last_index),
+            c2,
+        )
+
     def on_data_ready(self, mode, data):
         if self.is_acquiring and mode == "1d":
-            if self._flip_x_enabled():
+            flipped = self._flip_x_enabled()
+            if flipped:
                 data = data[::-1]
             self.current_spectrum = data
+            self._spectrum_is_flipped = flipped
             self.plot_scatter.setData(data)
             self._apply_plot_data_limits(len(data))
             self._refresh_initial_wavelength_axis(len(data))
@@ -398,6 +424,7 @@ class CalibrationWindow(QDialog):
             QMessageBox.warning(self, "Warning", "No 1D spectrum is currently displayed in the main window.")
             return
         self.current_spectrum = main_window.latest_1d_data.copy()
+        self._spectrum_is_flipped = self._flip_x_enabled()
         self.plot_scatter.setData(self.current_spectrum)
         self._apply_plot_data_limits(len(self.current_spectrum))
         self._refresh_initial_wavelength_axis(len(self.current_spectrum))
@@ -1419,18 +1446,19 @@ class CalibrationWindow(QDialog):
         if main_window is None: return
         is_raman_unit = self.radio_unit_raman.isChecked()
         calibration_unit = "Wavelength" if not is_raman_unit else "Raman shift"
+        raw_domain_coeffs = self._to_raw_pixel_domain(self.calib_coeffs)
         try:
             calib_laser_wl = (
                 main_window.spin_exc_wl.value() if is_raman_unit else None
             )
             record = main_window.register_current_configuration(
-                self.calib_coeffs,
+                raw_domain_coeffs,
                 calibration_unit=calibration_unit,
                 excitation_wavelength_nm=calib_laser_wl,
             )
             label = format_configuration_label(record)
             main_window.apply_calibration(
-                self.calib_coeffs,
+                raw_domain_coeffs,
                 label,
                 calib_unit=calibration_unit,
                 calib_laser_wl=calib_laser_wl,
