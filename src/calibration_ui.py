@@ -249,7 +249,15 @@ class CalibrationWindow(QDialog):
         reference_layout.addWidget(QLabel("Emission standards (multiple selection):"))
         self.list_standards = QListWidget()
         self.list_standards.setMaximumHeight(76)
-        for standard_id, standard in self.reference_standards.items():
+        standard_order = {"Ne-I": 0, "Ar-I": 1, "Hg-I": 2}
+        sorted_standards = sorted(
+            self.reference_standards.items(),
+            key=lambda item: (
+                standard_order.get(item[0], len(standard_order)),
+                item[1].display_name,
+            ),
+        )
+        for standard_id, standard in sorted_standards:
             item = QListWidgetItem(standard.display_name)
             item.setData(Qt.ItemDataRole.UserRole, standard_id)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)

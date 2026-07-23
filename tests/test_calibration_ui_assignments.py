@@ -44,6 +44,13 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
                 return
         self.fail(f"Missing standard {standard_id}")
 
+    def test_emission_standards_are_ordered_ne_ar_hg(self):
+        standard_ids = [
+            self.window.list_standards.item(index).data(Qt.ItemDataRole.UserRole)
+            for index in range(self.window.list_standards.count())
+        ]
+        self.assertEqual(standard_ids, ["Ne-I", "Ar-I", "Hg-I"])
+
     def test_default_window_width_is_one_and_a_half_times_previous_width(self):
         self.assertEqual(self.window.width(), 1650)
         self.assertEqual(self.window.height(), 750)
