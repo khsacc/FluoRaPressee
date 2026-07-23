@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
@@ -177,6 +177,58 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
         self.assertIn("[Calibration GUI] Detected peak selection", output)
         self.assertIn("Traceback", output)
         self.assertIn("printed to the terminal", self.window.lbl_assignment_help.text())
+
+    def test_literature_band_uses_screen_distance_and_hover_highlight(self):
+        self.window.initial_wavelength_axis = np.linspace(600.0, 800.0, 1024)
+        self.window.update_reference_overlay()
+        pixel, line_id = self.window.reference_tick_positions[0]
+        literature_mid = sum(self.window._tick_levels()["literature"]) / 2.0
+        scene_pos = self.window.plot_widget.getViewBox().mapViewToScene(
+            QPointF(pixel, literature_mid)
+        )
+
+        candidates = self.window._reference_candidates_at_scene_x(scene_pos.x())
+        self.window.on_main_plot_mouse_moved(scene_pos)
+
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0][1].line_id, line_id)
+        self.assertEqual(self.window.hovered_reference_line_id, line_id)
+        self.assertEqual(
+            self.window.reference_marker_items[line_id].opts["pen"].widthF(),
+            6.0,
+        )
+
+    def test_detected_band_click_remains_selectable_after_y_zoom(self):
+        self.window.plot_scatter.setData(self.window.current_spectrum)
+        self.window.show()
+        _APP.processEvents()
+        view_box = self.window.plot_widget.getViewBox()
+        detected_low, detected_high = self.window._tick_levels()["detected"]
+        center = self.window.row_widgets[0]["px"]
+        margin = 0.02 * (detected_high - detected_low)
+        view_box.setRange(
+            xRange=(center - 20.0, center + 20.0),
+            yRange=(detected_low - margin, detected_high + margin),
+            padding=0,
+        )
+        _APP.processEvents()
+        click_view_pos = QPointF(
+            center,
+            detected_low + 0.02 * (detected_high - detected_low),
+        )
+        click_scene_pos = view_box.mapViewToScene(click_view_pos)
+        click_viewport_pos = self.window.plot_widget.mapFromScene(click_scene_pos)
+
+        self.window.clear_peak_selection()
+        QTest.mouseClick(
+            self.window.plot_widget.viewport(),
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            click_viewport_pos,
+        )
+        _APP.processEvents()
+
+        self.assertEqual(self.window.selected_peak_row, 0)
 
     def test_fit_plot_click_selects_peak_and_escape_cancels(self):
         second_plot = self.window.row_widgets[1]["plot"]

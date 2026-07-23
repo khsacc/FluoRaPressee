@@ -62,6 +62,9 @@ class CalibrationWindow(QDialog):
         self.peak_texts = []
         self.peak_tick_items = []
         self.reference_overlay_items = []
+        self.reference_marker_items = {}
+        self.reference_tick_positions = []
+        self.hovered_reference_line_id = None
         self.is_acquiring = False
         
         self.calib_coeffs = None 
@@ -74,6 +77,9 @@ class CalibrationWindow(QDialog):
         self.match_peak_rows = []
         self.initial_wavelength_axis = None
         self.reference_candidate_menu = QMenu(self)
+        self.reference_candidate_menu.aboutToHide.connect(
+            lambda: self._set_hovered_reference_line(None)
+        )
         standards_dir = os.path.join(
             os.path.dirname(os.path.dirname(__file__)), "calibrationStandards"
         )
@@ -137,9 +143,6 @@ class CalibrationWindow(QDialog):
             tip=self._detected_peak_tooltip,
         )
         self.detected_select_scatter.setZValue(1000)
-        self.detected_select_scatter.sigClicked.connect(
-            self.on_measured_peak_clicked
-        )
         self.plot_widget.addItem(self.detected_select_scatter)
         self.reference_select_scatter = pg.ScatterPlotItem(
             # Keep a transparent hit target over each literature tick so the
@@ -150,8 +153,14 @@ class CalibrationWindow(QDialog):
             tip=self._reference_line_tooltip,
         )
         self.reference_select_scatter.setZValue(1000)
-        self.reference_select_scatter.sigClicked.connect(self.on_reference_line_clicked)
         self.plot_widget.addItem(self.reference_select_scatter)
+        self.plot_widget.scene().setMoveDistance(8)
+        self.plot_widget.scene().sigMouseClicked.connect(
+            self.on_main_plot_clicked
+        )
+        self.plot_widget.scene().sigMouseMoved.connect(
+            self.on_main_plot_mouse_moved
+        )
         plot_splitter.addWidget(self.plot_widget)
         
         self.bottom_scroll = QScrollArea()
@@ -755,6 +764,94 @@ class CalibrationWindow(QDialog):
             f"{context} failed; details were printed to the terminal."
         )
 
+    def _tick_band_contains_scene_y(self, band_name, scene_y, padding_px=6.0):
+        if self.current_spectrum is None:
+            return False
+        low, high = self._tick_levels()[band_name]
+        view_box = self.plot_widget.getViewBox()
+        scene_low = view_box.mapViewToScene(pg.Point(0.0, low)).y()
+        scene_high = view_box.mapViewToScene(pg.Point(0.0, high)).y()
+        top, bottom = sorted((scene_low, scene_high))
+        return top - padding_px <= scene_y <= bottom + padding_px
+
+    def _nearest_detected_row_at_scene_x(self, scene_x, radius_px=12.0):
+        if not self.row_widgets:
+            return None
+        view_box = self.plot_widget.getViewBox()
+        detected_mid = sum(self._tick_levels()["detected"]) / 2.0
+        candidates = []
+        for row, row_data in enumerate(self.row_widgets):
+            tick_scene_x = view_box.mapViewToScene(
+                pg.Point(row_data["px"], detected_mid)
+            ).x()
+            candidates.append((abs(tick_scene_x - scene_x), row))
+        distance, row = min(candidates)
+        return row if distance <= radius_px else None
+
+    def _reference_candidates_at_scene_x(self, scene_x, radius_px=12.0):
+        if not self.reference_tick_positions:
+            return []
+        view_box = self.plot_widget.getViewBox()
+        literature_mid = sum(self._tick_levels()["literature"]) / 2.0
+        candidates = []
+        for pixel, line_id in self.reference_tick_positions:
+            line = self.reference_lines_by_id.get(line_id)
+            if line is None:
+                continue
+            tick_scene_x = view_box.mapViewToScene(
+                pg.Point(pixel, literature_mid)
+            ).x()
+            distance = abs(tick_scene_x - scene_x)
+            if distance <= radius_px:
+                candidates.append((distance, line))
+        return sorted(candidates, key=lambda item: item[0])
+
+    def on_main_plot_clicked(self, event):
+        try:
+            if event.button() != Qt.MouseButton.LeftButton:
+                return
+            scene_pos = event.scenePos()
+            if self._tick_band_contains_scene_y("detected", scene_pos.y()):
+                row = self._nearest_detected_row_at_scene_x(scene_pos.x())
+                if row is not None:
+                    self.select_measured_peak(row)
+                    event.accept()
+                return
+            if not self._tick_band_contains_scene_y(
+                "literature", scene_pos.y()
+            ):
+                return
+            candidates = self._reference_candidates_at_scene_x(scene_pos.x())
+            if not candidates:
+                return
+            self._present_reference_candidates(
+                candidates,
+                menu_position=event.screenPos().toPoint(),
+            )
+            event.accept()
+        except Exception as error:
+            self._report_interaction_error("Plot tick selection", error)
+
+    def on_main_plot_mouse_moved(self, scene_pos):
+        try:
+            if not self._tick_band_contains_scene_y(
+                "literature", scene_pos.y()
+            ):
+                self._set_hovered_reference_line(None)
+                return
+            candidates = self._reference_candidates_at_scene_x(scene_pos.x())
+            nearest_line = candidates[0][1] if candidates else None
+            self._set_hovered_reference_line(
+                nearest_line.line_id if nearest_line is not None else None
+            )
+            if nearest_line is not None:
+                self.plot_widget.getViewBox().setToolTip(
+                    f"{nearest_line.species} "
+                    f"{nearest_line.wavelength_nm:.5f} nm"
+                )
+        except Exception as error:
+            self._report_interaction_error("Literature line hover", error)
+
     def on_measured_peak_clicked(self, _scatter, points, _event=None):
         try:
             if len(points) == 0:
@@ -837,22 +934,38 @@ class CalibrationWindow(QDialog):
     def _handle_reference_line_clicked(self, points, event=None):
         if len(points) == 0:
             return
+        candidates = []
+        seen_ids = set()
+        for point in points:
+            line = self.reference_lines_by_id.get(point.data())
+            if line is not None and line.line_id not in seen_ids:
+                candidates.append((None, line))
+                seen_ids.add(line.line_id)
+        if event is not None and hasattr(event, "screenPos"):
+            menu_position = event.screenPos().toPoint()
+        else:
+            menu_position = self.mapToGlobal(self.rect().center())
+        self._present_reference_candidates(candidates, menu_position)
+
+    def _present_reference_candidates(self, candidates, menu_position):
+        if not candidates:
+            return
         if self.selected_peak_row is None:
             self.lbl_assignment_help.setText(
                 "Select a measured peak before selecting a literature line."
             )
             return
-        lines = []
+
+        unique_candidates = []
         seen_ids = set()
-        for point in points:
-            line = self.reference_lines_by_id.get(point.data())
-            if line is not None and line.line_id not in seen_ids:
-                lines.append(line)
+        for distance, line in candidates:
+            if line.line_id not in seen_ids:
+                unique_candidates.append((distance, line))
                 seen_ids.add(line.line_id)
-        if not lines:
-            return
-        if len(lines) == 1:
-            self.assign_reference_line(self.selected_peak_row, lines[0])
+        if len(unique_candidates) == 1:
+            self.assign_reference_line(
+                self.selected_peak_row, unique_candidates[0][1]
+            )
             return
 
         self.reference_candidate_menu.clear()
@@ -862,19 +975,41 @@ class CalibrationWindow(QDialog):
         title.setEnabled(False)
         self.reference_candidate_menu.addSeparator()
         selected_row = self.selected_peak_row
-        for line in sorted(lines, key=lambda item: item.wavelength_nm):
+        for distance, line in unique_candidates:
+            distance_text = (
+                f"  —  {distance:.1f} px" if distance is not None else ""
+            )
             action = self.reference_candidate_menu.addAction(
-                f"{line.species}  {line.wavelength_nm:.5f} nm"
+                f"{line.species}  {line.wavelength_nm:.5f} nm{distance_text}"
             )
             action.triggered.connect(
                 lambda _checked=False, row=selected_row, selected=line:
                 self._assign_reference_line_safely(row, selected)
             )
-        if event is not None and hasattr(event, "screenPos"):
-            menu_position = event.screenPos().toPoint()
-        else:
-            menu_position = self.mapToGlobal(self.rect().center())
+            action.hovered.connect(
+                lambda selected_id=line.line_id:
+                self._set_hovered_reference_line(selected_id)
+            )
         self.reference_candidate_menu.popup(menu_position)
+
+    def _set_hovered_reference_line(self, line_id):
+        if line_id == self.hovered_reference_line_id:
+            return
+        self.hovered_reference_line_id = line_id
+        assigned_ids = {
+            assignment.get("line_id")
+            for assignment in self.assignments.values()
+            if assignment.get("line_id")
+        }
+        for marker_line_id, marker in self.reference_marker_items.items():
+            if marker_line_id == line_id:
+                marker.setPen(pg.mkPen("#42A5F5", width=6))
+            elif marker_line_id in assigned_ids:
+                marker.setPen(pg.mkPen("#0D47A1", width=4))
+            else:
+                marker.setPen(pg.mkPen("#1565C0", width=3))
+        if line_id is None:
+            self.plot_widget.getViewBox().setToolTip("")
 
     def _assign_reference_line_safely(self, row, line):
         try:
@@ -1092,6 +1227,9 @@ class CalibrationWindow(QDialog):
         for item in self.reference_overlay_items:
             self.plot_widget.removeItem(item)
         self.reference_overlay_items.clear()
+        self.reference_marker_items.clear()
+        self.reference_tick_positions.clear()
+        self.hovered_reference_line_id = None
         self.reference_select_scatter.setData([])
         if self.current_spectrum is None or len(self.current_spectrum) == 0:
             return
@@ -1142,6 +1280,8 @@ class CalibrationWindow(QDialog):
             )
             self.plot_widget.addItem(marker)
             self.reference_overlay_items.append(marker)
+            self.reference_marker_items[line.line_id] = marker
+            self.reference_tick_positions.append((pixel, line.line_id))
             for fraction in (0.25, 0.75):
                 spots.append({
                     "pos": (
