@@ -10,6 +10,24 @@ from src.configuration_catalog import (
 )
 from src.measurement_metadata import background_mismatch_fields, build_hardware_metadata, public_axis_kind
 
+
+def _background_default_filename(
+    acquisition_time, accumulations, roi_start, roi_end, custom_roi, timestamp
+):
+    date_str = timestamp.strftime("%Y%m%d_%H%M%S")
+    roi_str = (
+        f"ROI_from_{int(roi_start)}_to_{int(roi_end)}"
+        if custom_roi
+        else "ROI_full"
+    )
+    return (
+        f"background_{date_str}"
+        f"_acq_{float(acquisition_time):.3f}s"
+        f"_accum_{int(accumulations)}"
+        f"_{roi_str}.txt"
+    )
+
+
 class FileIOMixin:
     def check_bg_mismatch(self):
         if not self.radio_bg_on.isChecked() or getattr(self, 'loaded_bg_metadata', None) is None:
@@ -479,10 +497,15 @@ class FileIOMixin:
 
         acq_time = self.spin_acq_time.value()
         accum = self.spin_accumulate.value()
-        date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         mode_str = "1D Spectrum (Custom ROI)" if self.radio_1d_roi.isChecked() else "1D Spectrum (Full Range Binning)"
-        roi_str = f"_ROI_from_{self.spin_vstart.value()}_to_{self.spin_vend.value()}" if self.radio_1d_roi.isChecked() else "_full"
-        default_filename = f"background_{date_str}{roi_str}.txt"
+        default_filename = _background_default_filename(
+            acq_time,
+            accum,
+            self.spin_vstart.value(),
+            self.spin_vend.value(),
+            self.radio_1d_roi.isChecked(),
+            datetime.now(),
+        )
         initial_path = os.path.join(self._last_save_dir, default_filename) if self._last_save_dir else default_filename
 
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Background Data", initial_path, "Text/JSON Files (*.txt *.json)")
