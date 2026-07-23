@@ -232,6 +232,7 @@ class FileIOMixin:
         dialog = ConfigurationBrowserDialog(
             self.configuration_catalog,
             self.configuration_hardware_context(),
+            active_configuration_id=self.active_configuration_id,
             parent=self,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:

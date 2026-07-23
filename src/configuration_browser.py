@@ -5,8 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
@@ -14,8 +16,10 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QPushButton,
+    QRadioButton,
     QTableWidget,
     QTableWidgetItem,
+    QWidget,
     QVBoxLayout,
 )
 
@@ -23,12 +27,18 @@ from PyQt6.QtWidgets import (
 class ConfigurationBrowserDialog(QDialog):
     """Display the same selectable summaries intended for the future API."""
 
-    def __init__(self, catalog, hardware_context, parent=None):
+    APPLIED_ROW_COLOR = QColor("#FCE8E8")
+
+    def __init__(
+        self, catalog, hardware_context, active_configuration_id=None, parent=None
+    ):
         super().__init__(parent)
         self.catalog = catalog
         self.hardware_context = hardware_context
+        self.active_configuration_id = active_configuration_id
         self.selected_configuration_id = None
         self.selected_slot_id = None
+        self._radio_records = {}
 
         self.setWindowTitle("Load Configuration")
         self.resize(780, 430)
@@ -51,22 +61,20 @@ class ConfigurationBrowserDialog(QDialog):
         controls.addWidget(self.btn_refresh)
         layout.addLayout(controls)
 
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["Grating", "Centre (nm)", "ROI", "Calibration", "Created"]
+            ["Select", "Grating", "Centre (nm)", "ROI", "Calibration", "Created"]
         )
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.itemSelectionChanged.connect(self._update_load_button)
-        self.table.itemDoubleClicked.connect(lambda _item: self._accept_selection())
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.table)
 
         self.status_label = QLabel("")
@@ -107,9 +115,39 @@ class ConfigurationBrowserDialog(QDialog):
             limit=200,
         )
         self.table.setRowCount(0)
+        self._radio_records.clear()
+        self._radio_group = QButtonGroup(self.table)
+        self._radio_group.setExclusive(True)
+        self._radio_group.buttonToggled.connect(self._update_load_button)
         for summary in result["items"]:
             row = self.table.rowCount()
             self.table.insertRow(row)
+            applied = (
+                summary["configuration_id"] == self.active_configuration_id
+            )
+            radio = QRadioButton()
+            radio.setToolTip("Select this configuration")
+            radio_container = QWidget()
+            radio_layout = QHBoxLayout(radio_container)
+            radio_layout.setContentsMargins(0, 0, 0, 0)
+            radio_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            radio_layout.addWidget(radio)
+            if applied:
+                radio_container.setStyleSheet(
+                    f"background-color: {self.APPLIED_ROW_COLOR.name()};"
+                )
+                radio.setToolTip(
+                    "Select this configuration (currently applied)"
+                )
+            self._radio_group.addButton(radio)
+            self._radio_records[radio] = (
+                summary["configuration_id"], summary["slot_id"]
+            )
+            select_item = QTableWidgetItem()
+            if applied:
+                select_item.setBackground(self.APPLIED_ROW_COLOR)
+            self.table.setItem(row, 0, select_item)
+            self.table.setCellWidget(row, 0, radio_container)
             grating = summary["grating"]
             values = [
                 f"{grating['grooves_per_mm']} g/mm (slot {grating['index']})",
@@ -118,13 +156,15 @@ class ConfigurationBrowserDialog(QDialog):
                 summary["calibration"]["unit"],
                 self._created_text(summary["created_at"]),
             ]
-            for column, value in enumerate(values):
+            for column, value in enumerate(values, start=1):
                 item = QTableWidgetItem(value)
-                if column == 0:
+                if column == 1:
                     item.setData(Qt.ItemDataRole.UserRole, summary["configuration_id"])
                     item.setData(Qt.ItemDataRole.UserRole + 1, summary["slot_id"])
                     if not summary["active"]:
                         item.setToolTip("Archived version")
+                if applied:
+                    item.setBackground(self.APPLIED_ROW_COLOR)
                 self.table.setItem(row, column, item)
 
         if result["items"]:
@@ -133,7 +173,6 @@ class ConfigurationBrowserDialog(QDialog):
                 f"{result['total']} compatible {kind} "
                 f"(catalog revision {result['catalog_revision']})"
             )
-            self.table.selectRow(0)
         else:
             self.status_label.setText(
                 "No compatible configuration is available. Calibrate this grating, "
@@ -142,13 +181,13 @@ class ConfigurationBrowserDialog(QDialog):
         self._update_load_button()
 
     def _update_load_button(self):
-        self.btn_load.setEnabled(bool(self.table.selectionModel().selectedRows()))
+        self.btn_load.setEnabled(self._radio_group.checkedButton() is not None)
 
     def _accept_selection(self):
-        rows = self.table.selectionModel().selectedRows()
-        if not rows:
+        radio = self._radio_group.checkedButton()
+        if radio is None:
             return
-        first_item = self.table.item(rows[0].row(), 0)
-        self.selected_configuration_id = first_item.data(Qt.ItemDataRole.UserRole)
-        self.selected_slot_id = first_item.data(Qt.ItemDataRole.UserRole + 1)
+        self.selected_configuration_id, self.selected_slot_id = (
+            self._radio_records[radio]
+        )
         self.accept()
