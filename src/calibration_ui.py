@@ -126,15 +126,12 @@ class CalibrationWindow(QDialog):
             "Used peak",
         )
         self.plot_scatter = self.plot_widget.plot(pen=None, symbol='o', symbolSize=3, symbolBrush='b')
-        self.peak_select_scatter = pg.ScatterPlotItem(
-            symbol="o", size=11, pen=pg.mkPen("#C62828", width=2),
-            brush=pg.mkBrush(255, 255, 255, 180),
-        )
-        self.peak_select_scatter.sigClicked.connect(self.on_measured_peak_clicked)
-        self.plot_widget.addItem(self.peak_select_scatter)
         self.reference_select_scatter = pg.ScatterPlotItem(
-            symbol="s", size=9, pen=pg.mkPen("#1565C0"),
-            brush=pg.mkBrush(21, 101, 192, 180),
+            # Keep a transparent hit target over each literature tick so the
+            # plain vertical bar remains clickable without looking like a
+            # box-and-whisker marker.
+            symbol="s", size=11, pen=pg.mkPen(None),
+            brush=pg.mkBrush(0, 0, 0, 0),
         )
         self.reference_select_scatter.sigClicked.connect(self.on_reference_line_clicked)
         self.plot_widget.addItem(self.reference_select_scatter)
@@ -248,7 +245,8 @@ class CalibrationWindow(QDialog):
         match_layout.addWidget(self.btn_apply_candidate)
         reference_layout.addLayout(match_layout)
         self.lbl_assignment_help = QLabel(
-            "Click a measured peak and then a literature marker, or use an automatic candidate."
+            "Select a measured peak in the table, then click a literature marker, "
+            "or use an automatic candidate."
         )
         self.lbl_assignment_help.setWordWrap(True)
         self.lbl_assignment_help.setStyleSheet("color: #555; font-size: 11px;")
@@ -322,6 +320,7 @@ class CalibrationWindow(QDialog):
                 data = data[::-1]
             self.current_spectrum = data
             self.plot_scatter.setData(data)
+            self._apply_plot_data_limits(len(data))
             self._refresh_initial_wavelength_axis(len(data))
             self.assignments.clear()
             self.camera_thread.stop_measuring()
@@ -346,6 +345,7 @@ class CalibrationWindow(QDialog):
             return
         self.current_spectrum = main_window.latest_1d_data.copy()
         self.plot_scatter.setData(self.current_spectrum)
+        self._apply_plot_data_limits(len(self.current_spectrum))
         self._refresh_initial_wavelength_axis(len(self.current_spectrum))
         self.assignments.clear()
         self.find_peaks()
@@ -383,6 +383,18 @@ class CalibrationWindow(QDialog):
         else:
             self.initial_wavelength_axis = None
 
+    def _apply_plot_data_limits(self, number_pixels):
+        """Keep calibration pan/zoom inside the acquired pixel domain."""
+        if number_pixels <= 0:
+            return
+        x_min = 0.0
+        x_max = float(max(0, number_pixels - 1))
+        view_box = self.plot_widget.getViewBox()
+        view_box.setLimits(xMin=x_min, xMax=x_max)
+        view_box.setDefaultPadding(0)
+        if number_pixels > 1:
+            view_box.setXRange(x_min, x_max, padding=0)
+
     def active_standard_ids(self):
         return {
             self.list_standards.item(index).data(Qt.ItemDataRole.UserRole)
@@ -411,19 +423,19 @@ class CalibrationWindow(QDialog):
         """Return separated y ranges below the measured spectrum for peak ticks."""
         if self.current_spectrum is None or len(self.current_spectrum) == 0:
             return {
-                "literature": (-0.08, -0.02),
-                "detected": (-0.17, -0.11),
+                "detected": (-0.08, -0.02),
+                "literature": (-0.17, -0.11),
             }
         y_min = float(np.min(self.current_spectrum))
         y_max = float(np.max(self.current_spectrum))
         span = max(y_max - y_min, abs(y_max) * 0.1, 1.0)
         baseline = min(0.0, y_min)
         return {
-            "literature": (
+            "detected": (
                 baseline - 0.08 * span,
                 baseline - 0.02 * span,
             ),
-            "detected": (
+            "literature": (
                 baseline - 0.17 * span,
                 baseline - 0.11 * span,
             ),
@@ -432,6 +444,7 @@ class CalibrationWindow(QDialog):
     def find_peaks(self):
         if self.current_spectrum is None:
             return
+        self._apply_plot_data_limits(len(self.current_spectrum))
         previous = []
         for row, assignment in self.assignments.items():
             if row < len(self.row_widgets):
@@ -455,7 +468,6 @@ class CalibrationWindow(QDialog):
             child = self.bottom_layout.takeAt(0)
             if child.widget(): child.widget().deleteLater()
         detected_tick_low, detected_tick_high = self._tick_levels()["detected"]
-        peak_spots = []
         for i, p_data in enumerate(fitted_peaks):
             center = p_data["center"]
             row = self.table.rowCount()
@@ -493,11 +505,6 @@ class CalibrationWindow(QDialog):
             self.peak_lines.append(line)
             self.peak_tick_items.append(tick)
             self.peak_texts.append(text)
-            nearest_index = int(np.clip(round(center), 0, len(self.current_spectrum) - 1))
-            peak_spots.append({
-                "pos": (center, float(self.current_spectrum[nearest_index])),
-                "data": row,
-            })
             small_plot = pg.PlotWidget()
             small_plot.setFixedSize(180, 180)
             small_plot.setBackground('w')
@@ -506,7 +513,6 @@ class CalibrationWindow(QDialog):
             small_plot.plot(p_data["x_curve"], p_data["y_curve"], pen=pg.mkPen('r', width=2))
             self.bottom_layout.addWidget(small_plot)
         self.bottom_layout.addStretch()
-        self.peak_select_scatter.setData(peak_spots)
 
         # Preserve confirmed assignments when only the peak threshold was changed.
         for old_pixel, assignment in previous:
@@ -672,10 +678,6 @@ class CalibrationWindow(QDialog):
     def on_table_peak_selected(self, row, _column):
         self.select_measured_peak(row)
 
-    def on_measured_peak_clicked(self, _scatter, points):
-        if points:
-            self.select_measured_peak(int(points[0].data()))
-
     def select_measured_peak(self, row):
         if not 0 <= row < len(self.row_widgets):
             return
@@ -689,25 +691,10 @@ class CalibrationWindow(QDialog):
     def _refresh_peak_plot_styles(self):
         if self.current_spectrum is None:
             return
-        spots = []
         for index, row_data in enumerate(self.row_widgets):
             is_used = row_data["check"].isChecked()
             if index < len(self.peak_lines):
                 self.peak_lines[index].setVisible(is_used)
-            pixel = row_data["px"]
-            data_index = int(np.clip(round(pixel), 0, len(self.current_spectrum) - 1))
-            if index == self.selected_peak_row:
-                brush = pg.mkBrush("#FFB300")
-            elif is_used:
-                brush = pg.mkBrush("#D32F2F")
-            else:
-                brush = pg.mkBrush(255, 255, 255, 180)
-            spots.append({
-                "pos": (pixel, float(self.current_spectrum[data_index])),
-                "data": index,
-                "brush": brush,
-            })
-        self.peak_select_scatter.setData(spots)
 
     def on_reference_line_clicked(self, _scatter, points):
         if not points:
@@ -982,7 +969,6 @@ class CalibrationWindow(QDialog):
             spots.append({
                 "pos": (pixel, (literature_tick_low + literature_tick_high) / 2.0),
                 "data": line.line_id,
-                "brush": pg.mkBrush(color),
             })
         self.reference_select_scatter.setData(spots)
 

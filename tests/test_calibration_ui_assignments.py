@@ -23,6 +23,7 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
             + 700.0 * np.exp(-0.5 * ((x - 420.0) / 3.0) ** 2)
             + 600.0 * np.exp(-0.5 * ((x - 750.0) / 3.0) ** 2)
         )
+        self.window._apply_plot_data_limits(len(self.window.current_spectrum))
         self.window.find_peaks()
         self.assertEqual(len(self.window.row_widgets), 3)
 
@@ -75,6 +76,7 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
         self.assertNotIn(1, self.window.assignments)
 
     def test_only_used_peak_has_full_height_dashed_marker(self):
+        self.assertFalse(hasattr(self.window, "peak_select_scatter"))
         self.assertFalse(self.window.peak_lines[0].isVisible())
 
         neon = self.window.reference_standards["Ne-I"].lines[17]
@@ -92,16 +94,35 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
         self.assertEqual(first_plot.plotItem.titleLabel.text, "Peak #1")
         self.assertEqual(second_plot.plotItem.titleLabel.text, "Peak #2")
 
-    def test_literature_markers_are_short_bars_below_zero(self):
+    def test_detected_ticks_are_above_plain_literature_ticks(self):
         neon = self.window.reference_standards["Ne-I"].lines[17]
         argon = self.window.reference_standards["Ar-I"].lines[8]
         self.window.assign_reference_line(0, neon)
         self.window.assign_reference_line(1, argon)
 
+        levels = self.window._tick_levels()
+        self.assertGreater(levels["detected"][0], levels["literature"][1])
         self.assertTrue(self.window.reference_overlay_items)
         for marker in self.window.reference_overlay_items:
-            _x, y = marker.getData()
+            x, y = marker.getData()
+            self.assertEqual(float(x[0]), float(x[1]))
             self.assertLess(float(np.max(y)), 0.0)
+        self.assertEqual(
+            self.window.reference_select_scatter.opts["brush"].color().alpha(), 0
+        )
+        self.assertEqual(
+            self.window.reference_select_scatter.opts["pen"].style(),
+            Qt.PenStyle.NoPen,
+        )
+
+    def test_plot_zoom_is_limited_to_acquired_pixel_domain(self):
+        view_box = self.window.plot_widget.getViewBox()
+
+        self.assertEqual(view_box.state["limits"]["xLimits"], [0.0, 1023.0])
+        view_box.setXRange(-500.0, 2000.0, padding=0)
+        x_range, _y_range = view_box.viewRange()
+        self.assertGreaterEqual(x_range[0], 0.0)
+        self.assertLessEqual(x_range[1], 1023.0)
 
 
 if __name__ == "__main__":

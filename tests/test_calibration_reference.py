@@ -43,6 +43,20 @@ class ReferenceCatalogueTests(unittest.TestCase):
         self.assertEqual(set(standards), {"Ne-I", "Ar-I"})
         self.assertEqual(standards["Ne-I"].lines[0].standard_id, "Ne-I")
 
+    def test_neon_catalogue_contains_all_unfiltered_600_to_800_nm_lines(self):
+        catalogue_directory = Path(__file__).parents[1] / "calibrationStandards"
+        neon = load_reference_standards(catalogue_directory)["Ne-I"]
+        wavelengths = [line.wavelength_nm for line in neon.lines]
+        visible_lines = [
+            wavelength for wavelength in wavelengths if 600.0 <= wavelength <= 800.0
+        ]
+
+        self.assertEqual(len(visible_lines), 85)
+        self.assertIn(540.05618, wavelengths)
+        self.assertIn(585.24879, wavelengths)
+        self.assertEqual(wavelengths, sorted(wavelengths))
+        self.assertTrue(all(line.relative_intensity is None for line in neon.lines))
+
 
 class PatternMatcherTests(unittest.TestCase):
     def test_recovers_mixed_neon_argon_assignments_without_dispersion_prior(self):
