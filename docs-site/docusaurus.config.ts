@@ -6,7 +6,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'FluoRaPressée Manual',
-  tagline: '分光測定・解析ソフトウェア FluoRaPressée のオンラインマニュアル',
+  tagline: '分光測定・解析ソフトウェア FluoRaPressée のオンラインマニュアル（工事中・未完成）',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {

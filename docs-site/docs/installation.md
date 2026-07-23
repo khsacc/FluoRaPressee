@@ -6,6 +6,8 @@ description: FluoRaPresséeの動作環境とインストール手順
 
 # インストール
 
+本アプリケーションは開発中のため、現段階ではスタンドアロンで起動できるビルド版は配布しておりません。折を見てビルド版をGitHubでリリースする予定です。
+
 ## 必須環境
 
 - Windows 10またはWindows 11
@@ -26,8 +28,8 @@ cd FluoRaPressee
 
 使用する装置に応じて、次のランタイムもインストールしてください。
 
-- Andor：Andor SDK
-- Princeton Instruments：PICam Runtime
+- Andor：Andor SDK（装置に付属のCD-ROMにインストーラーが入っている）
+- Princeton Instruments：PICam Runtime（オンラインでダウンロード可能）
 
 ## Ocean Optics
 
