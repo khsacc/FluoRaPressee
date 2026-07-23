@@ -600,7 +600,7 @@ class CalibrationWindow(QDialog):
         for line in lines:
             value = self._display_reference_value(line.wavelength_nm)
             val_widget.addItem(
-                f"{value:.5f}  —  {line.species}",
+                f"{value:.5f}",
                 line.line_id,
             )
         val_widget.setCurrentIndex(-1)

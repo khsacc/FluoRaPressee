@@ -136,6 +136,15 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
         self.assertNotIn(0, self.window.assignments)
         self.assertFalse(self.window.row_widgets[0]["check"].isChecked())
 
+    def test_reference_combo_displays_only_the_numeric_value(self):
+        neon = self.window.reference_standards["Ne-I"].lines[17]
+
+        self.window.assign_reference_line(0, neon)
+        combo_text = self.window.row_widgets[0]["input"].currentText()
+
+        self.assertEqual(combo_text, f"{neon.wavelength_nm:.5f}")
+        self.assertNotIn(neon.species, combo_text)
+
     def test_overlapping_literature_ticks_offer_a_choice(self):
         lines = self.window.reference_standards["Ne-I"].lines[17:19]
         points = [
