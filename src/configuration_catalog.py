@@ -508,6 +508,12 @@ class ConfigurationCatalog:
                 "camera_serial_number": row["camera_serial"],
             },
         }
+        available_columns = row.keys()
+        if "last_used_at" in available_columns:
+            summary["last_used_at"] = row["last_used_at"]
+            summary["use_count"] = row["use_count"]
+        if "status" in available_columns:
+            summary["status"] = row["status"]
         summary["display_label"] = format_configuration_label(summary)
         return summary
 
@@ -578,6 +584,64 @@ class ConfigurationCatalog:
         reasons = self.compatibility_reasons(configuration, hardware_context)
         if reasons:
             raise ConfigurationCompatibilityError(reasons)
+
+    def list_all(
+        self,
+        *,
+        active_only: bool = True,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Return every slot/version in the catalog, unfiltered by hardware
+        compatibility. For a management/inspection UI only -- callers that
+        need to know whether a record can actually be applied to the
+        connected hardware must use list_selectable() instead.
+        """
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+
+        where = (
+            "WHERE c.configuration_id = s.active_configuration_id"
+            if active_only else ""
+        )
+        select_from = f"""
+            SELECT
+                c.configuration_id, c.slot_id, c.created_at, c.calibration_unit,
+                c.last_used_at, c.use_count, c.status,
+                s.active_configuration_id, s.updated_at,
+                s.spectrometer_model, s.spectrometer_serial,
+                s.camera_model, s.camera_serial,
+                s.grating_index, s.grating_grooves_per_mm,
+                s.center_position_pm, s.roi_mode, s.roi_start, s.roi_end
+            FROM configurations c
+            JOIN slots s ON s.slot_id = c.slot_id
+            {where}
+        """
+        with self._connection() as conn:
+            conn.execute("BEGIN")
+            revision = int(
+                conn.execute(
+                    "SELECT value FROM catalog_meta WHERE key = 'revision'"
+                ).fetchone()["value"]
+            )
+            total = conn.execute(
+                f"SELECT COUNT(*) AS count FROM ({select_from})"
+            ).fetchone()["count"]
+            rows = conn.execute(
+                select_from + " ORDER BY s.updated_at DESC, c.created_at DESC, "
+                "s.slot_id LIMIT ? OFFSET ?",
+                [limit, offset],
+            ).fetchall()
+
+        return {
+            "catalog_revision": revision,
+            "items": [self._summary_from_row(row) for row in rows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
 
     def list_selectable(
         self,
@@ -727,3 +791,100 @@ class ConfigurationCatalog:
             )
             if cursor.rowcount == 0:
                 raise ConfigurationError(f"Unknown configuration: {configuration_id}")
+
+    def _unlink_best_effort(
+        self, relative_paths: list[str]
+    ) -> tuple[list[str], list[dict[str, str]]]:
+        """Delete JSON record files best-effort. Returns (deleted, errors).
+
+        A missing file counts as already deleted -- restores the pre-catalog
+        workflow of removing a record by deleting its file directly. Any other
+        OSError (permissions, file in use) is recorded in errors rather than
+        raised: by the time this runs the DB rows are already committed, so
+        the catalog's own state is correct either way.
+        """
+        deleted: list[str] = []
+        errors: list[dict[str, str]] = []
+        for relative_path in relative_paths:
+            try:
+                (self.root / relative_path).unlink()
+                deleted.append(relative_path)
+            except FileNotFoundError:
+                deleted.append(relative_path)
+            except OSError as exc:
+                errors.append({"relative_path": relative_path, "error": str(exc)})
+        return deleted, errors
+
+    def delete_configuration_version(self, configuration_id: str) -> dict[str, Any]:
+        """Delete one archived (non-active) version: its catalog row and its
+        immutable JSON file.
+
+        Refuses to delete a slot's current active version -- use delete_slot()
+        for that -- so a slot can never be left with active_configuration_id
+        pointing at a row that no longer exists.
+        """
+        with self._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT c.slot_id, c.relative_path, s.active_configuration_id "
+                "FROM configurations c JOIN slots s ON s.slot_id = c.slot_id "
+                "WHERE c.configuration_id = ?",
+                (configuration_id,),
+            ).fetchone()
+            if row is None:
+                raise ConfigurationError(f"Unknown configuration: {configuration_id}")
+            if configuration_id == row["active_configuration_id"]:
+                raise ConfigurationError(
+                    "Cannot delete a slot's active configuration version; "
+                    "use delete_slot() to remove the whole measurement condition."
+                )
+            slot_id, relative_path = row["slot_id"], row["relative_path"]
+            conn.execute(
+                "DELETE FROM configurations WHERE configuration_id = ?",
+                (configuration_id,),
+            )
+            revision = self._increment_revision(conn)
+
+        deleted, errors = self._unlink_best_effort([relative_path])
+        return {
+            "configuration_id": configuration_id,
+            "slot_id": slot_id,
+            "deleted_files": deleted,
+            "file_errors": errors,
+            "catalog_revision": revision,
+        }
+
+    def delete_slot(self, slot_id: str) -> dict[str, Any]:
+        """Delete an entire measurement-condition slot: every version (active
+        and archived) and every one of their JSON files. This is the "I don't
+        need this condition any more" operation.
+        """
+        with self._connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute(
+                "SELECT 1 FROM slots WHERE slot_id = ?", (slot_id,)
+            ).fetchone() is None:
+                raise ConfigurationError(f"Unknown slot: {slot_id}")
+            config_rows = conn.execute(
+                "SELECT configuration_id, relative_path FROM configurations "
+                "WHERE slot_id = ?",
+                (slot_id,),
+            ).fetchall()
+            # configurations.slot_id -> slots.slot_id FK (PRAGMA foreign_keys=ON
+            # in _connect()): children must be deleted before the parent row.
+            conn.execute("DELETE FROM configurations WHERE slot_id = ?", (slot_id,))
+            conn.execute("DELETE FROM slots WHERE slot_id = ?", (slot_id,))
+            revision = self._increment_revision(conn)
+
+        deleted, errors = self._unlink_best_effort(
+            [row["relative_path"] for row in config_rows]
+        )
+        return {
+            "slot_id": slot_id,
+            "deleted_configuration_ids": [
+                row["configuration_id"] for row in config_rows
+            ],
+            "deleted_files": deleted,
+            "file_errors": errors,
+            "catalog_revision": revision,
+        }

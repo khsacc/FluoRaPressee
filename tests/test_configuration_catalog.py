@@ -7,6 +7,7 @@ from pathlib import Path
 from src.configuration_catalog import (
     ConfigurationCatalog,
     ConfigurationCompatibilityError,
+    ConfigurationError,
     ConfigurationValidationError,
     format_configuration_label,
 )
@@ -316,6 +317,123 @@ class ConfigurationCatalogTests(unittest.TestCase):
             format_configuration_label(record),
             "600 g/mm | 690.000 nm | Full ROI",
         )
+
+    def test_list_all_shows_slots_regardless_of_hardware_compatibility(self):
+        self.catalog.register_configuration(draft())
+        self.catalog.register_configuration(
+            draft(center=700.0, camera_serial="OTHER-CAMERA")
+        )
+
+        incompatible_context = hardware_context(camera_serial="OTHER-CAMERA")
+        self.assertEqual(
+            self.catalog.list_selectable(incompatible_context)["total"], 1
+        )
+        self.assertEqual(self.catalog.list_all()["total"], 2)
+
+    def test_list_all_active_only_default_hides_archived_versions(self):
+        self.catalog.register_configuration(draft(c0=1.0))
+        self.catalog.register_configuration(draft(c0=2.0))
+
+        self.assertEqual(self.catalog.list_all()["total"], 1)
+        self.assertEqual(self.catalog.list_all(active_only=False)["total"], 2)
+
+    def test_list_all_includes_use_count_and_last_used_at(self):
+        record = self.catalog.register_configuration(draft())
+        self.catalog.mark_used(record["configuration_id"])
+        self.catalog.mark_used(record["configuration_id"])
+
+        item = self.catalog.list_all()["items"][0]
+        self.assertEqual(item["use_count"], 2)
+        self.assertIsNotNone(item["last_used_at"])
+        self.assertEqual(item["status"], "active")
+
+    def test_delete_configuration_version_removes_archived_row_and_file(self):
+        first = self.catalog.register_configuration(draft(c0=1.0))
+        self.catalog.register_configuration(draft(c0=2.0))
+
+        result = self.catalog.delete_configuration_version(
+            first["configuration_id"]
+        )
+
+        self.assertEqual(result["deleted_files"], [
+            f"records/{first['created_at'][0:4]}/{first['created_at'][5:7]}/"
+            f"{first['configuration_id']}.json"
+        ])
+        self.assertEqual(result["file_errors"], [])
+        with self.assertRaises(ConfigurationError):
+            self.catalog.get_configuration(first["configuration_id"])
+        self.assertEqual(self.catalog.list_all(active_only=False)["total"], 1)
+        remaining_files = list(Path(self.tempdir.name).glob("records/*/*/*.json"))
+        self.assertEqual(len(remaining_files), 1)
+
+    def test_delete_configuration_version_refuses_to_delete_the_active_version(self):
+        record = self.catalog.register_configuration(draft())
+
+        with self.assertRaises(ConfigurationError):
+            self.catalog.delete_configuration_version(record["configuration_id"])
+
+        # Nothing was mutated: the record is still readable.
+        self.catalog.get_configuration(record["configuration_id"])
+        remaining_files = list(Path(self.tempdir.name).glob("records/*/*/*.json"))
+        self.assertEqual(len(remaining_files), 1)
+
+    def test_delete_configuration_version_unknown_id_raises(self):
+        with self.assertRaises(ConfigurationError):
+            self.catalog.delete_configuration_version("cfg_does_not_exist")
+
+    def test_delete_slot_removes_all_versions_and_files(self):
+        first = self.catalog.register_configuration(draft(c0=1.0))
+        self.catalog.register_configuration(draft(c0=2.0))
+        other_slot = self.catalog.register_configuration(draft(center=700.0))
+
+        result = self.catalog.delete_slot(first["slot_id"])
+
+        self.assertEqual(len(result["deleted_configuration_ids"]), 2)
+        self.assertEqual(len(result["deleted_files"]), 2)
+        self.assertEqual(result["file_errors"], [])
+        self.assertEqual(self.catalog.list_all(active_only=False)["total"], 1)
+        self.assertEqual(
+            self.catalog.list_all(active_only=False)["items"][0]["slot_id"],
+            other_slot["slot_id"],
+        )
+        remaining_files = list(Path(self.tempdir.name).glob("records/*/*/*.json"))
+        self.assertEqual(len(remaining_files), 1)
+
+    def test_delete_slot_unknown_id_raises(self):
+        with self.assertRaises(ConfigurationError):
+            self.catalog.delete_slot("slot_does_not_exist")
+
+    def test_delete_slot_treats_already_missing_file_as_deleted(self):
+        record = self.catalog.register_configuration(draft())
+        record_path = Path(self.tempdir.name) / (
+            f"records/{record['created_at'][0:4]}/{record['created_at'][5:7]}/"
+            f"{record['configuration_id']}.json"
+        )
+        record_path.unlink()
+
+        result = self.catalog.delete_slot(record["slot_id"])
+
+        self.assertEqual(result["file_errors"], [])
+        self.assertEqual(len(result["deleted_files"]), 1)
+        self.assertEqual(self.catalog.list_all(active_only=False)["total"], 0)
+
+    def test_delete_slot_reports_unremovable_file_without_raising_and_still_deletes_the_row(
+        self,
+    ):
+        record = self.catalog.register_configuration(draft())
+        record_path = Path(self.tempdir.name) / (
+            f"records/{record['created_at'][0:4]}/{record['created_at'][5:7]}/"
+            f"{record['configuration_id']}.json"
+        )
+        record_path.unlink()
+        record_path.mkdir()  # unlink() on a directory raises, forcing a file_error
+
+        result = self.catalog.delete_slot(record["slot_id"])
+
+        self.assertEqual(len(result["file_errors"]), 1)
+        self.assertEqual(result["deleted_files"], [])
+        # The DB row is gone even though the file removal failed.
+        self.assertEqual(self.catalog.list_all(active_only=False)["total"], 0)
 
 
 if __name__ == "__main__":

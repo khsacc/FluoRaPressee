@@ -702,6 +702,13 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.action_camera_status = hardware_menu.addAction("Instrument Status...")
         self.action_camera_status.triggered.connect(self.on_open_camera_status_clicked)
 
+        self.action_manage_configurations = hardware_menu.addAction(
+            "Manage Configuration Files..."
+        )
+        self.action_manage_configurations.triggered.connect(
+            self.on_open_configuration_manager_clicked
+        )
+
         api_menu = self.menuBar().addMenu("API")
         self.action_regenerate_api_key = api_menu.addAction("Regenerate Key")
         self.action_regenerate_api_key.triggered.connect(self.on_regenerate_api_key_clicked)

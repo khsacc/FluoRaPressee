@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from src.menu.hardware_config_dialog import HardwareConfigDialog
 from src.menu.instrument_status_dialog import InstrumentStatusDialog
+from src.menu.configuration_manager_dialog import ConfigurationManagerDialog
 from src.local_cache import load_local_cache, save_local_cache
 
 class ConfigMixin:
@@ -32,6 +33,18 @@ class ConfigMixin:
         self.instrument_status_window.show()
         self.instrument_status_window.raise_()
         self.instrument_status_window.activateWindow()
+
+    def on_open_configuration_manager_clicked(self):
+        dialog = ConfigurationManagerDialog(
+            self.configuration_catalog,
+            active_configuration_id=self.active_configuration_id,
+            positioned_configuration_id=self.positioned_configuration_id,
+            ui_lock_check=lambda: bool(getattr(self, "_ui_lock_reasons", set())),
+            parent=self,
+        )
+        dialog.exec()
+        if dialog.active_configuration_was_deleted:
+            self.clear_active_configuration()
 
     def on_open_analysis_mode_clicked(self):
         # Lazy import: Analysis Mode's widgets aren't needed until this menu action is
