@@ -132,6 +132,15 @@ class FileIOMixin:
             "actual_center_wavelength_nm": spec_metadata.get("center_wavelength_nm"),
         }
 
+    def _is_oceanoptics_backend(self):
+        """Return True only for the integrated fixed Ocean Optics backend.
+
+        This deliberately uses the configured backend identity instead of inferring from
+        generic capabilities.  Other fixed or partially movable instruments must continue
+        through their existing grating/centre movement and validation paths unchanged.
+        """
+        return self.config.get("model") == "OceanOptics"
+
     def _current_grating_definition(self, hardware_context=None):
         cached_grating = (hardware_context or {}).get("current_grating") or {}
         if (
@@ -234,7 +243,14 @@ class FileIOMixin:
             self.configuration_catalog.assert_compatible(
                 record, self.configuration_hardware_context()
             )
-            self._prepare_configuration_for_loading(record)
+            self._prepare_configuration_for_loading(
+                record,
+                # Ocean Optics' model+serial compatibility was already checked above.
+                # It has no movable centre, so a saved display/slot centre must not be
+                # sent through SpectrometerMoveThread.  Every other backend retains the
+                # previous unconditional GUI move/apply behaviour.
+                skip_move=self._is_oceanoptics_backend(),
+            )
         except Exception as e:
             self._loading_config = False
             self._pending_calib_coeffs = None
@@ -347,8 +363,13 @@ class FileIOMixin:
             raise ConfigurationError("The configuration's grating slot is not available.")
         self.combo_grating.setCurrentIndex(cb_idx)
 
-        # cfg["center"] is always in nm; convert to Raman shift if needed for the spin box
-        center_nm = float(spectrometer["target_center_wavelength_nm"])
+        # Ocean Optics has no movable centre.  Use its connected native centre for the
+        # hidden display widget; the saved centre is metadata, not a position to apply.
+        # Movable backends retain the original saved-target path.
+        if self._is_oceanoptics_backend():
+            center_nm = float(self.physical_center_wl)
+        else:
+            center_nm = float(spectrometer["target_center_wavelength_nm"])
         if display_mode == "Raman shift":
             ex_wl = self.spin_exc_wl.value()
             if ex_wl > 0 and center_nm > 0:

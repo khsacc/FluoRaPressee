@@ -68,11 +68,12 @@ class Spectrometer:
 
 
 class Window(FileIOMixin):
-    def __init__(self, catalog):
+    def __init__(self, catalog, model="PrincetonInstruments"):
         self.configuration_catalog = catalog
         self.spec_ctrl = Spectrometer()
         self.thread = Camera()
         self.config = {
+            "model": model,
             "hardware_identity": {
                 "spectrometer": {"model": "SP-2750", "serial_number": "SPEC-1"},
                 "camera": {"model": "DU-401", "serial_number": "CAM-1"},
@@ -193,6 +194,40 @@ class ConfigurationUiFlowTests(unittest.TestCase):
             self.window.positioned_configuration_id, record["configuration_id"]
         )
         self.assertEqual(self.window.axis_source, "pixel")
+
+    def test_oceanoptics_load_ignores_saved_center_and_skips_move(self):
+        ocean = Window(self.window.configuration_catalog, model="OceanOptics")
+        record = ocean.register_current_configuration((1.0, 2.0, 3.0))
+        record["spectrometer"]["target_center_wavelength_nm"] = 650.0
+        original_center = ocean.physical_center_wl
+        original_spin_center = ocean.spin_centre_wl.value()
+
+        ocean._prepare_configuration_for_loading(record, skip_move=True)
+
+        self.assertFalse(ocean.move_started)
+        self.assertEqual(ocean.physical_center_wl, original_center)
+        self.assertEqual(ocean.spin_centre_wl.value(), original_spin_center)
+        self.assertEqual(ocean.active_configuration_id, record["configuration_id"])
+
+    def test_oceanoptics_branch_is_exact_backend_identity(self):
+        ocean = Window(self.window.configuration_catalog, model="OceanOptics")
+        similarly_fixed = Window(
+            self.window.configuration_catalog, model="SomeOtherFixedSpectrometer"
+        )
+
+        self.assertTrue(ocean._is_oceanoptics_backend())
+        self.assertFalse(similarly_fixed._is_oceanoptics_backend())
+        self.assertFalse(self.window._is_oceanoptics_backend())
+
+    def test_movable_backend_still_applies_saved_center_and_starts_move(self):
+        record = self.window.register_current_configuration((1.0, 2.0, 3.0))
+        record["spectrometer"]["target_center_wavelength_nm"] = 650.0
+
+        self.window._prepare_configuration_for_loading(record)
+
+        self.assertTrue(self.window.move_started)
+        self.assertEqual(self.window.spin_centre_wl.value(), 650.0)
+        self.assertTrue(self.window._loading_config)
 
 
 if __name__ == "__main__":

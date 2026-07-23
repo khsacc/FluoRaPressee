@@ -362,7 +362,13 @@ class ApiMixin:
                 record,
                 axis_mode=axis_mode,
                 completion_future=completion_future,
-                skip_move=self._configuration_matches_current_state(record),
+                # Only Ocean Optics bypasses centre comparison/movement by device
+                # identity.  For every other backend preserve the existing exact
+                # grating+centre+ROI no-op test.
+                skip_move=(
+                    self._is_oceanoptics_backend()
+                    or self._configuration_matches_current_state(record)
+                ),
             )
         except Exception:
             self._clear_pending_configuration()

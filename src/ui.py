@@ -23,6 +23,7 @@ from src.pressureCalc_ui import PressureCalculatorWindow
 from src.file_io import DataFileIO
 from src.ui_widgets import CustomSpinBox, CustomDoubleSpinBox, CustomComboBox
 from src.ui_theme import colored_button_style
+from src.window_title import live_window_title
 from src.fitting_config_widget import FittingConfigWidget
 from src.ui_mixins.config_mixin import ConfigMixin
 from src.ui_mixins.file_io_mixin import FileIOMixin
@@ -106,6 +107,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self._latest_hardware_capture = None
         self._hardware_capture_by_mode = {}
         self._camera_identity = {"model": None, "serial_number": None}
+        self._spectrometer_identity = {"model": None, "serial_number": None}
         self._last_temperature_c = None
         self._last_temperature_status = None
         self.current_w_peak1 = None
@@ -746,9 +748,14 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         if hasattr(self.spec_ctrl, "get_device_identity"):
             spec_identity = self.spec_ctrl.get_device_identity()
+            self._spectrometer_identity = {
+                "model": spec_identity.get("model") or None,
+                "serial_number": spec_identity.get("serial_number") or None,
+            }
             self.check_and_record_hardware_identity(
                 "spectrometer", spec_identity.get("model"), spec_identity.get("serial_number")
             )
+            self._update_window_title()
 
         current_wl = self.spec_ctrl.get_wavelength()
         print(f"[Init] Spectrometer centre wavelength readback: {current_wl} nm")
@@ -812,6 +819,19 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.temp_poll_timer.timeout.connect(self._poll_temperature)
 
         self.thread.start()
+
+    def _update_window_title(self):
+        """Show the connected instrument models once both have been identified."""
+        if self.debug:
+            return
+
+        title = live_window_title(
+            self.debug,
+            self._spectrometer_identity.get("model"),
+            self._camera_identity.get("model"),
+        )
+        if title:
+            self.setWindowTitle(title)
 
     def _set_button_style(self, button, enabled_style):
         button.setStyleSheet(colored_button_style(enabled_style, BUTTON_STYLE_DISABLED))

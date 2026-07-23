@@ -406,6 +406,12 @@ class AcquisitionMixin:
             # keeping ConfigurationCatalog's independent camera/spectrometer serial checks
             # meaningful instead of always-empty.
             self.check_and_record_hardware_identity("spectrometer", model, serial_number)
+            self._spectrometer_identity = {
+                "model": model or None,
+                "serial_number": serial_number or None,
+            }
+
+        self._update_window_title()
 
     def on_hardware_error(self, message):
         self.status_label.setText(f"Camera error: {message}")
