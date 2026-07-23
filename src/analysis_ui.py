@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 from src.analysis import DataAnalyzer
 from src.file_io import DataFileIO
 from src.fitting_config_widget import FittingConfigWidget
+from src.fit_range_context_menu import FitRangeContextMenu
 from src.pressureCalc_ui import PressureCalculatorWindow
 from src.local_cache import load_local_cache, save_local_cache
 
@@ -262,6 +263,12 @@ class AnalysisWindow(QMainWindow):
         self.combo_baseline_model.currentIndexChanged.connect(self.update_plot_and_fit)
         self.spin_fit_start.valueChanged.connect(self.update_plot_and_fit)
         self.spin_fit_end.valueChanged.connect(self.update_plot_and_fit)
+        self.fit_range_context_menu = FitRangeContextMenu(
+            self.plot_widget,
+            self.spin_fit_start,
+            self.spin_fit_end,
+            lambda: self.current_x is not None,
+        )
 
         self.fitting_results_group = QGroupBox("Fitting Results")
         fitting_results_layout = QVBoxLayout(self.fitting_results_group)

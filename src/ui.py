@@ -25,6 +25,7 @@ from src.ui_widgets import CustomSpinBox, CustomDoubleSpinBox, CustomComboBox
 from src.ui_theme import colored_button_style
 from src.window_title import live_window_title
 from src.fitting_config_widget import FittingConfigWidget
+from src.fit_range_context_menu import FitRangeContextMenu
 from src.ui_mixins.config_mixin import ConfigMixin
 from src.ui_mixins.file_io_mixin import FileIOMixin
 from src.ui_mixins.spectrometer_control_mixin import SpectrometerControlMixin
@@ -200,10 +201,9 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # axis with no FluoraPressée calibration loaded - see
         # SpectrometerControlMixin.update_plot_labels() (work/work_OceanOptics.md Step 6).
         self.lbl_axis_warning = QLabel(
-            "X-axis: Ocean Optics factory-calibrated wavelength "
-            "(no FluoraPressée calibration applied)"
+            "X-axis: uncalibrated (Ocean Optics factory-calibrated values)"
         )
-        self.lbl_axis_warning.setStyleSheet("color: #9a6700; font-weight: bold; font-size: 12px;")
+        self.lbl_axis_warning.setStyleSheet("color: #F03511; font-weight: bold; font-size: 14px;")
         self.lbl_axis_warning.setVisible(False)
         plot_layout.addWidget(self.lbl_axis_warning)
 
@@ -668,6 +668,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.combo_baseline_model.currentIndexChanged.connect(self.on_fit_settings_changed)
         self.spin_fit_start.valueChanged.connect(self.on_fit_settings_changed)
         self.spin_fit_end.valueChanged.connect(self.on_fit_settings_changed)
+        self.fit_range_context_menu = FitRangeContextMenu(
+            self.plot_widget,
+            self.spin_fit_start,
+            self.spin_fit_end,
+            lambda: getattr(self, "raw_1d_data", None) is not None,
+        )
         
         
         
