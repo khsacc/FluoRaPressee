@@ -5,8 +5,8 @@ import type * as Preset from '@docusaurus/preset-classic';
 // This runs in Node.js - Don't use client-side code here (browser APIs, JSX...)
 
 const config: Config = {
-  title: 'FluoRaPressee Manual',
-  tagline: '分光測定・解析ソフトウェア FluoRaPressee のオンラインマニュアル',
+  title: 'FluoRaPressée Manual',
+  tagline: '分光測定・解析ソフトウェア FluoRaPressée のオンラインマニュアル（工事中・未完成）',
 
   // Future flags, see https://docusaurus.io/docs/api/docusaurus-config#future
   future: {
@@ -56,7 +56,7 @@ const config: Config = {
       respectPrefersColorScheme: true,
     },
     navbar: {
-      title: 'FluoRaPressee Manual',
+      title: 'FluoRaPressée Manual',
       items: [
         {
           type: 'docSidebar',
@@ -97,7 +97,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} FluoRaPressee contributors. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} Hiroki Kobayashi. Website built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,

@@ -1,8 +1,8 @@
-# FluoRaPressee Manual
+# FluoRaPressée Manual
 
 This website is built using [Docusaurus](https://docusaurus.io/), a modern static website generator.
 
-FluoRaPresseeのオンラインマニュアルを生成するDocusaurusプロジェクトです。
+FluoRaPresséeのオンラインマニュアルを生成するDocusaurusプロジェクトです。
 
 ## セットアップ
 
