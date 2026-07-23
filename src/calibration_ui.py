@@ -358,10 +358,18 @@ class CalibrationWindow(QDialog):
             self.btn_acquire.setEnabled(False)
             self.btn_acquire.setText("Acquiring...")
             self.camera_thread.start_measuring()
-            
+
+    def _flip_x_enabled(self):
+        main_window = self.parent()
+        return bool(
+            main_window is not None
+            and hasattr(main_window, "chk_flip_x")
+            and main_window.chk_flip_x.isChecked()
+        )
+
     def on_data_ready(self, mode, data):
         if self.is_acquiring and mode == "1d":
-            if self.parent() and hasattr(self.parent(), 'chk_flip_x') and self.parent().chk_flip_x.isChecked():
+            if self._flip_x_enabled():
                 data = data[::-1]
             self.current_spectrum = data
             self.plot_scatter.setData(data)
@@ -411,13 +419,7 @@ class CalibrationWindow(QDialog):
             if getter is not None:
                 axis = getter(number_pixels, pixel_width)
 
-        main_window = self.parent()
-        if (
-            axis is not None
-            and main_window is not None
-            and hasattr(main_window, "chk_flip_x")
-            and main_window.chk_flip_x.isChecked()
-        ):
+        if axis is not None and self._flip_x_enabled():
             axis = axis[::-1]
         if (
             axis is not None
@@ -1128,6 +1130,7 @@ class CalibrationWindow(QDialog):
             locked_assignments=locked,
             max_candidates=5,
             allow_reversed=True,
+            expected_slope_sign=-1 if self._flip_x_enabled() else 1,
         )
         if self.initial_wavelength_axis is not None:
             seeded = match_from_seed_axis(

@@ -2,6 +2,7 @@ from contextlib import redirect_stderr
 from io import StringIO
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -50,6 +51,16 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
             for index in range(self.window.list_standards.count())
         ]
         self.assertEqual(standard_ids, ["Ne-I", "Ar-I", "Hg-I"])
+
+    def test_automatic_matching_uses_flipped_wavelength_direction(self):
+        self.window._flip_x_enabled = lambda: True
+
+        with patch(
+            "src.calibration_ui.find_match_candidates", return_value=[]
+        ) as matcher:
+            self.window.find_assignment_candidates()
+
+        self.assertEqual(matcher.call_args.kwargs["expected_slope_sign"], -1)
 
     def test_default_window_width_is_one_and_a_half_times_previous_width(self):
         self.assertEqual(self.window.width(), 1650)

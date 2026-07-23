@@ -210,6 +210,7 @@ def find_match_candidates(
     locked_assignments: Mapping[int, str] | None = None,
     max_candidates: int = 5,
     allow_reversed: bool = True,
+    expected_slope_sign: int | None = None,
 ) -> list[MatchCandidate]:
     """Find plausible line assignments without a hard-coded instrument dispersion.
 
@@ -219,12 +220,19 @@ def find_match_candidates(
 
     ``locked_assignments`` maps measured-peak indices to line IDs and acts as a
     constraint; candidates never replace those user-confirmed relationships.
+
+    ``expected_slope_sign`` constrains the wavelength direction on the
+    displayed pixel axis.  Use ``1`` for the normal orientation, ``-1`` when
+    the spectrum has been flipped horizontally, or ``None`` when either
+    direction is acceptable.
     """
 
     pixels = np.asarray(measured_pixels, dtype=float)
     lines = sorted(reference_lines, key=lambda line: line.wavelength_nm)
     if len(pixels) < 2 or len(lines) < 2 or not np.all(np.isfinite(pixels)):
         return []
+    if expected_slope_sign not in (None, -1, 1):
+        raise ValueError("expected_slope_sign must be None, -1, or 1")
 
     line_index_by_id = {line.line_id: index for index, line in enumerate(lines)}
     locked = {
@@ -293,6 +301,11 @@ def find_match_candidates(
                 lines[line_b].wavelength_nm - lines[line_a].wavelength_nm
             ) / delta_pixel
             if not allow_reversed and slope <= 0:
+                continue
+            if (
+                expected_slope_sign is not None
+                and slope * expected_slope_sign <= 0
+            ):
                 continue
             intercept = lines[line_a].wavelength_nm - slope * pixels[peak_a]
             hypotheses.append((float(intercept), float(slope)))
@@ -383,6 +396,11 @@ def find_match_candidates(
             [np.min(pixels), np.max(pixels)]
         )
         if derivative[0] * derivative[1] <= 0:
+            continue
+        if (
+            expected_slope_sign is not None
+            and np.any(derivative * expected_slope_sign <= 0)
+        ):
             continue
         fitted_nm = _poly_values(coefficients, fit_pixels)
         rms = float(np.sqrt(np.mean((fitted_nm - fit_wavelengths) ** 2)))

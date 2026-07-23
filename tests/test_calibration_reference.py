@@ -142,6 +142,22 @@ class PatternMatcherTests(unittest.TestCase):
         c0, c1, c2 = candidates[0].coefficients
         self.assertAlmostEqual(c0 + c1 * 10.0 + c2 * 100.0, 510.0, places=6)
 
+    def test_expected_slope_sign_follows_flip_x_direction(self):
+        pixels = [0.0, 10.0, 20.0]
+        lines = _lines("Ne-I", [500.0, 510.0, 520.0])
+
+        normal = find_match_candidates(
+            pixels, lines, expected_slope_sign=1
+        )
+        flipped = find_match_candidates(
+            pixels, lines, expected_slope_sign=-1
+        )
+
+        self.assertTrue(normal)
+        self.assertTrue(flipped)
+        self.assertGreater(normal[0].coefficients[1], 0)
+        self.assertLess(flipped[0].coefficients[1], 0)
+
     def test_seed_axis_matches_factory_or_model_wavelengths(self):
         axis = np.linspace(690.0, 710.0, 101)
         pixels = [10.0, 35.0, 80.0]
