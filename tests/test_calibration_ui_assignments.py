@@ -1,3 +1,5 @@
+from contextlib import redirect_stderr
+from io import StringIO
 import os
 import unittest
 
@@ -107,7 +109,8 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
     def test_detected_ticks_have_invisible_click_targets(self):
         points = self.window.detected_select_scatter.points()
 
-        self.assertEqual(len(points), len(self.window.fitted_peaks))
+        self.assertEqual(len(points), 2 * len(self.window.fitted_peaks))
+        self.assertEqual(self.window.detected_select_scatter.zValue(), 1000.0)
         self.assertEqual(
             self.window.detected_select_scatter.opts["brush"].color().alpha(), 0
         )
@@ -147,10 +150,10 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
 
     def test_overlapping_literature_ticks_offer_a_choice(self):
         lines = self.window.reference_standards["Ne-I"].lines[17:19]
-        points = [
+        points = np.asarray([
             type("Point", (), {"data": lambda _self, line=line: line.line_id})()
             for line in lines
-        ]
+        ], dtype=object)
 
         self.window.select_measured_peak(0)
         self.window.on_reference_line_clicked(None, points)
@@ -163,6 +166,17 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
         choices[1].trigger()
         self.assertEqual(self.window.assignments[0]["line_id"], lines[1].line_id)
         self.window.reference_candidate_menu.hide()
+
+    def test_click_handler_errors_are_printed_to_terminal(self):
+        terminal_output = StringIO()
+
+        with redirect_stderr(terminal_output):
+            self.window.on_measured_peak_clicked(None, [object()])
+
+        output = terminal_output.getvalue()
+        self.assertIn("[Calibration GUI] Detected peak selection", output)
+        self.assertIn("Traceback", output)
+        self.assertIn("printed to the terminal", self.window.lbl_assignment_help.text())
 
     def test_fit_plot_click_selects_peak_and_escape_cancels(self):
         second_plot = self.window.row_widgets[1]["plot"]

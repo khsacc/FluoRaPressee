@@ -1,4 +1,6 @@
 import os
+import sys
+import traceback
 import numpy as np
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QTableWidget, QTableWidgetItem,
@@ -129,11 +131,12 @@ class CalibrationWindow(QDialog):
         )
         self.plot_scatter = self.plot_widget.plot(pen=None, symbol='o', symbolSize=3, symbolBrush='b')
         self.detected_select_scatter = pg.ScatterPlotItem(
-            # Transparent hit targets preserve the tick-only visual design.
+            # Two transparent hit targets are placed along each visible tick.
             symbol="s", size=13, pen=pg.mkPen(None),
             brush=pg.mkBrush(0, 0, 0, 0), hoverable=True,
             tip=self._detected_peak_tooltip,
         )
+        self.detected_select_scatter.setZValue(1000)
         self.detected_select_scatter.sigClicked.connect(
             self.on_measured_peak_clicked
         )
@@ -142,10 +145,11 @@ class CalibrationWindow(QDialog):
             # Keep a transparent hit target over each literature tick so the
             # plain vertical bar remains clickable without looking like a
             # box-and-whisker marker.
-            symbol="s", size=11, pen=pg.mkPen(None),
+            symbol="s", size=13, pen=pg.mkPen(None),
             brush=pg.mkBrush(0, 0, 0, 0), hoverable=True,
             tip=self._reference_line_tooltip,
         )
+        self.reference_select_scatter.setZValue(1000)
         self.reference_select_scatter.sigClicked.connect(self.on_reference_line_clicked)
         self.plot_widget.addItem(self.reference_select_scatter)
         plot_splitter.addWidget(self.plot_widget)
@@ -526,13 +530,15 @@ class CalibrationWindow(QDialog):
             self.peak_lines.append(line)
             self.peak_tick_items.append(tick)
             self.peak_texts.append(text)
-            detected_spots.append({
-                "pos": (
-                    center,
-                    (detected_tick_low + detected_tick_high) / 2.0,
-                ),
-                "data": row,
-            })
+            for fraction in (0.25, 0.75):
+                detected_spots.append({
+                    "pos": (
+                        center,
+                        detected_tick_low
+                        + fraction * (detected_tick_high - detected_tick_low),
+                    ),
+                    "data": row,
+                })
             small_plot = pg.PlotWidget()
             small_plot.setFixedSize(180, 180)
             small_plot.setBackground('w')
@@ -738,9 +744,24 @@ class CalibrationWindow(QDialog):
             return "Literature line"
         return f"{line.species} {line.wavelength_nm:.5f} nm"
 
+    def _report_interaction_error(self, context, error):
+        print(
+            f"[Calibration GUI] {context}: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        traceback.print_exc(file=sys.stderr)
+        self.lbl_assignment_help.setText(
+            f"{context} failed; details were printed to the terminal."
+        )
+
     def on_measured_peak_clicked(self, _scatter, points, _event=None):
-        if points:
+        try:
+            if len(points) == 0:
+                return
             self.select_measured_peak(int(points[0].data()))
+        except Exception as error:
+            self._report_interaction_error("Detected peak selection", error)
 
     def select_measured_peak(self, row):
         if not 0 <= row < len(self.row_widgets):
@@ -808,7 +829,13 @@ class CalibrationWindow(QDialog):
         )
 
     def on_reference_line_clicked(self, _scatter, points, event=None):
-        if not points:
+        try:
+            self._handle_reference_line_clicked(points, event)
+        except Exception as error:
+            self._report_interaction_error("Literature line selection", error)
+
+    def _handle_reference_line_clicked(self, points, event=None):
+        if len(points) == 0:
             return
         if self.selected_peak_row is None:
             self.lbl_assignment_help.setText(
@@ -841,13 +868,19 @@ class CalibrationWindow(QDialog):
             )
             action.triggered.connect(
                 lambda _checked=False, row=selected_row, selected=line:
-                self.assign_reference_line(row, selected)
+                self._assign_reference_line_safely(row, selected)
             )
         if event is not None and hasattr(event, "screenPos"):
             menu_position = event.screenPos().toPoint()
         else:
             menu_position = self.mapToGlobal(self.rect().center())
         self.reference_candidate_menu.popup(menu_position)
+
+    def _assign_reference_line_safely(self, row, line):
+        try:
+            self.assign_reference_line(row, line)
+        except Exception as error:
+            self._report_interaction_error("Literature line assignment", error)
 
     def _line_assigned_to_other_row(self, line_id, row):
         for other_row, assignment in self.assignments.items():
@@ -1109,10 +1142,16 @@ class CalibrationWindow(QDialog):
             )
             self.plot_widget.addItem(marker)
             self.reference_overlay_items.append(marker)
-            spots.append({
-                "pos": (pixel, (literature_tick_low + literature_tick_high) / 2.0),
-                "data": line.line_id,
-            })
+            for fraction in (0.25, 0.75):
+                spots.append({
+                    "pos": (
+                        pixel,
+                        literature_tick_low
+                        + fraction
+                        * (literature_tick_high - literature_tick_low),
+                    ),
+                    "data": line.line_id,
+                })
         self.reference_select_scatter.setData(spots)
 
     def calibrate(self):
