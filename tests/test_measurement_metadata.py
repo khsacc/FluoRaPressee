@@ -101,6 +101,16 @@ class MeasurementMetadataTests(unittest.TestCase):
         self.assertEqual(metadata["axis"]["configuration_id"], "cfg-test")
         self.assertEqual(metadata["axis"]["configuration_slot_id"], "slot-test")
 
+    def test_emission_standard_axis_source_is_preserved(self):
+        window = Window()
+        window.axis_source = "emission_standard_polynomial"
+
+        metadata = build_hardware_metadata(window, capture_hardware_state(window, 3))
+
+        self.assertEqual(
+            metadata["axis"]["source"], "emission_standard_polynomial"
+        )
+
     def test_background_match_and_mismatch_are_recorded(self):
         window = Window()
         capture = capture_hardware_state(window, 3)

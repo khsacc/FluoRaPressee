@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "standard_id": "Hg-I",
+  "display_name": "Hg I",
+  "source_url": "https://physics.nist.gov/PhysRefData/ASD/lines_form.html",
+  "lines": [
+    {"wavelength_nm": 404.6563, "species": "Hg I"},
+    {"wavelength_nm": 435.8328, "species": "Hg I"},
+    {"wavelength_nm": 546.0735, "species": "Hg I"},
+    {"wavelength_nm": 576.9598, "species": "Hg I"},
+    {"wavelength_nm": 579.0663, "species": "Hg I"}
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "standard_id": "Ne-I",
+  "display_name": "Ne I",
+  "source_url": "https://physics.nist.gov/PhysRefData/ASD/lines_form.html",
+  "lines": [
+    {"wavelength_nm": 585.24879, "species": "Ne I"},
+    {"wavelength_nm": 588.18952, "species": "Ne I"},
+    {"wavelength_nm": 594.48342, "species": "Ne I"},
+    {"wavelength_nm": 602.99969, "species": "Ne I"},
+    {"wavelength_nm": 607.43377, "species": "Ne I"},
+    {"wavelength_nm": 609.61631, "species": "Ne I"},
+    {"wavelength_nm": 612.84499, "species": "Ne I"},
+    {"wavelength_nm": 614.30626, "species": "Ne I"},
+    {"wavelength_nm": 616.35939, "species": "Ne I"},
+    {"wavelength_nm": 621.72812, "species": "Ne I"},
+    {"wavelength_nm": 626.64950, "species": "Ne I"},
+    {"wavelength_nm": 630.47889, "species": "Ne I"},
+    {"wavelength_nm": 633.44278, "species": "Ne I"},
+    {"wavelength_nm": 638.29917, "species": "Ne I"},
+    {"wavelength_nm": 640.22480, "species": "Ne I"},
+    {"wavelength_nm": 650.65281, "species": "Ne I"},
+    {"wavelength_nm": 671.70430, "species": "Ne I"},
+    {"wavelength_nm": 692.94673, "species": "Ne I"},
+    {"wavelength_nm": 702.40504, "species": "Ne I"},
+    {"wavelength_nm": 703.24131, "species": "Ne I"},
+    {"wavelength_nm": 743.88981, "species": "Ne I"},
+    {"wavelength_nm": 748.88712, "species": "Ne I"},
+    {"wavelength_nm": 753.57741, "species": "Ne I"},
+    {"wavelength_nm": 754.40443, "species": "Ne I"}
+  ]
+}

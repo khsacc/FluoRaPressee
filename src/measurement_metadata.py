@@ -142,7 +142,7 @@ def public_axis_kind(window):
     flip y - see AcquisitionMixin.get_x_axis(), DisplayMixin.update_display()/on_mouse_moved(),
     FileIOMixin._save_data_to_path()). This is intentionally a different, smaller vocabulary
     than _axis_state()'s "source" (which also distinguishes *how* a calibration was obtained,
-    e.g. "neon_polynomial" vs "loaded_configuration", for saved-file provenance)."""
+    e.g. "emission_standard_polynomial" vs "loaded_configuration", for saved-file provenance)."""
     if getattr(window, "calib_coeffs", None) is not None:
         return "calibrated"
     if _native_wavelengths(window) is not None:
@@ -174,7 +174,8 @@ def _axis_state(window):
         coefficients = None
     else:
         source = source if source in (
-            "neon_polynomial", "loaded_configuration", "api_inline_calibration"
+            "neon_polynomial", "emission_standard_polynomial",
+            "loaded_configuration", "api_inline_calibration"
         ) else "loaded_configuration"
         coefficients = {"c0": coeffs[0], "c1": coeffs[1], "c2": coeffs[2]}
     return {

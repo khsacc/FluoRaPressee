@@ -86,9 +86,12 @@ usable standalone or from scripts:
   with Constant/Linear/Quadratic baselines and BIC-based Auto Polynomial selection.
 - `src/calibration.py` (`CalibrationCore`): pixel→wavelength/Raman-shift polynomial calibration from
   detected reference peaks; `src/calibration_ui.py` wraps it in a `QDialog`.
-- `src/calibration_helper.py` (`ReferenceHelperWindow`): reference neon-line lookup dialog backed by
-  the pre-generated spectra JSON in `calibrationHelper/` (produced by
-  `calibrationHelper/generateCalibrationHelper.py`).
+- `src/calibration_reference.py`: Qt-independent emission-line catalogue loading and automatic
+  measured-peak/literature-line matching. `src/calibration_ui.py` overlays the selected Ne I, Ar I,
+  Hg I (or locally added) catalogues directly in the calibration dialog; confirmed assignments are
+  retained when catalogue visibility changes. Catalogue JSON lives in `calibrationStandards/`.
+  `src/calibration_helper.py` and `calibrationHelper/` remain only as legacy example-spectrum data
+  and are no longer part of the active calibration UI.
 - `src/configuration_catalog.py` (`ConfigurationCatalog`): Qt-independent, versioned configuration
   storage. Immutable JSON records contain hardware compatibility, grating, centre position, ROI,
   display state, and calibration; a SQLite catalog indexes active/history versions without scanning

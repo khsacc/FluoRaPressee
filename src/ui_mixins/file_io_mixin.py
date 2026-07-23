@@ -214,7 +214,7 @@ class FileIOMixin:
                 "excitation_wavelength_nm": float(self.spin_exc_wl.value()),
             },
             "calibration": {
-                "source": "neon_polynomial",
+                "source": "emission_standard_polynomial",
                 "unit": calibration_unit,
                 "excitation_wavelength_nm": (
                     float(excitation_wavelength_nm)
