@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime
 
-from src.ui_mixins.file_io_mixin import _background_default_filename
+from src.ui.ui_mixins.file_io_mixin import _background_default_filename
 
 
 class BackgroundFilenameTests(unittest.TestCase):

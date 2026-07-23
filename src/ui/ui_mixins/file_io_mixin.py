@@ -3,12 +3,12 @@ from datetime import datetime
 import numpy as np
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from src.configuration_browser import ConfigurationBrowserDialog
-from src.configuration_catalog import (
+from src.ui.configuration_browser import ConfigurationBrowserDialog
+from src.core.configuration_catalog import (
     ConfigurationError,
     format_configuration_label,
 )
-from src.measurement_metadata import background_mismatch_fields, build_hardware_metadata, public_axis_kind
+from src.core.measurement_metadata import background_mismatch_fields, build_hardware_metadata, public_axis_kind
 
 
 def _background_default_filename(

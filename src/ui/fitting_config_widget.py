@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
 )
 
-from src.ui_widgets import CustomComboBox, CustomDoubleSpinBox
+from src.ui.ui_widgets import CustomComboBox, CustomDoubleSpinBox
 
 
 class FittingConfigWidget(QGroupBox):

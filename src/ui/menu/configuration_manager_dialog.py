@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.configuration_catalog import ConfigurationError, format_configuration_label
+from src.core.configuration_catalog import ConfigurationError, format_configuration_label
 
 
 def _format_record_details(record: dict[str, Any]) -> str:

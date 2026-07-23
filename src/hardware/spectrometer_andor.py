@@ -6,7 +6,7 @@ import numpy as np
 from threading import RLock
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from src.andor_spectrometer_status import (
+from src.hardware.status.andor_spectrometer_status import (
     collect_shamrock_status,
     configure_status_prototypes,
     get_shamrock_gratings,

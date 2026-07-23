@@ -2,8 +2,8 @@ import math
 import numpy as np
 from PyQt6.QtWidgets import QMessageBox
 
-from src.accumulation import AccumulationCombiner
-from src.measurement_metadata import capture_hardware_state
+from src.hardware.accumulation import AccumulationCombiner
+from src.core.measurement_metadata import capture_hardware_state
 
 # Cap on how many raw frames we buffer in memory for spike rejection (list of
 # individual frames instead of an O(1) running sum). ~16MB worst case for a

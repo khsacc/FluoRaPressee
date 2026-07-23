@@ -1,6 +1,6 @@
 import unittest
 
-from src.window_title import live_window_title
+from src.ui.window_title import live_window_title
 
 
 class WindowTitleTests(unittest.TestCase):

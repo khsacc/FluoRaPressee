@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 import os
 
-from src.pylablib_loader import import_pylablib_module
+from src.hardware.pylablib_loader import import_pylablib_module
 
 
 SUPPLIER_ANDOR = "Andor"
@@ -112,7 +112,7 @@ def _probe_andor_camera(result, config):
 
 
 def _probe_andor_spectrometer(result, config):
-    from src.spectrometer_andor import SpectrometerControllerAndor
+    from src.hardware.spectrometer_andor import SpectrometerControllerAndor
 
     controller = SpectrometerControllerAndor(config=config, debug=False)
     try:
@@ -211,7 +211,7 @@ def _probe_pi_camera(result, config):
 
 
 def _probe_pi_spectrometer(result, config):
-    from src.spectrometer_princeton import SpectrometerControllerPI
+    from src.hardware.spectrometer_princeton import SpectrometerControllerPI
 
     controller = SpectrometerControllerPI(config=config, debug=False)
     try:
@@ -248,7 +248,7 @@ def _probe_oceanoptics(result, config):
 
     devices = list_devices()
     if not devices:
-        from src.oceanoptics_diagnostics import no_devices_error
+        from src.hardware.status.oceanoptics_diagnostics import no_devices_error
 
         raise RuntimeError(no_devices_error())
     result["camera_candidates"] = [

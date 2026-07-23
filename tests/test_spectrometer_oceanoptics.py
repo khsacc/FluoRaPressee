@@ -1,6 +1,6 @@
 import unittest
 
-from src.spectrometer_oceanoptics import SpectrometerControllerOceanOptics, SpectrometerMoveThread
+from src.hardware.spectrometer_oceanoptics import SpectrometerControllerOceanOptics, SpectrometerMoveThread
 
 
 class CapabilitiesTests(unittest.TestCase):

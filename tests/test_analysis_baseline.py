@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from src.analysis import DataAnalyzer
+from src.core.analysis import DataAnalyzer
 
 
 class AnalysisBaselineTests(unittest.TestCase):

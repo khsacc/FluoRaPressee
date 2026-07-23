@@ -12,8 +12,8 @@ from unittest import mock
 
 import numpy as np
 
-from src.ui_mixins.acquisition_mixin import AcquisitionMixin
-from src.ui_mixins.api_mixin import ApiMixin, ExposureApplyError
+from src.ui.ui_mixins.acquisition_mixin import AcquisitionMixin
+from src.ui.ui_mixins.api_mixin import ApiMixin, ExposureApplyError
 
 
 class _Value:
@@ -60,17 +60,17 @@ class BackendDetectionTests(unittest.TestCase):
     in with the "everything that isn't Princeton" Andor fallback."""
 
     def test_camera_backend_is_oceanoptics(self):
-        thread_type = _fake_type("FakeCameraThread", "src.camera_oceanoptics")
+        thread_type = _fake_type("FakeCameraThread", "src.hardware.camera_oceanoptics")
         gui = _Harness(thread=thread_type())
         self.assertEqual(gui._api_camera_backend(), "oceanoptics_seabreeze")
 
     def test_spectrometer_backend_is_oceanoptics(self):
-        ctrl_type = _fake_type("FakeSpecCtrl", "src.spectrometer_oceanoptics")
+        ctrl_type = _fake_type("FakeSpecCtrl", "src.hardware.spectrometer_oceanoptics")
         gui = _Harness(spec_ctrl=ctrl_type())
         self.assertEqual(gui._api_spectrometer_backend(), "oceanoptics_seabreeze")
 
     def test_camera_backend_still_defaults_to_andor(self):
-        thread_type = _fake_type("FakeCameraThread", "src.camera_andor")
+        thread_type = _fake_type("FakeCameraThread", "src.hardware.camera_andor")
         gui = _Harness(thread=thread_type())
         self.assertEqual(gui._api_camera_backend(), "andor_sdk2")
 
@@ -88,27 +88,27 @@ class HardwareConnectedDetectionTests(unittest.TestCase):
         )
         return thread_type()
 
-    @mock.patch("src.ui_mixins.api_mixin.capture_hardware_state")
+    @mock.patch("src.ui.ui_mixins.api_mixin.capture_hardware_state")
     def test_camera_reports_connected_via_spec_attribute(self, mock_capture):
         mock_capture.return_value = {"camera": {}, "spectrometer": {}}
-        connected_thread = self._thread("src.camera_oceanoptics", running=True, spec=object())
+        connected_thread = self._thread("src.hardware.camera_oceanoptics", running=True, spec=object())
         gui = _Harness(thread=connected_thread)
 
         info = gui._api_build_camera_info()
 
         self.assertTrue(info["hardware_connected"])
 
-    @mock.patch("src.ui_mixins.api_mixin.capture_hardware_state")
+    @mock.patch("src.ui.ui_mixins.api_mixin.capture_hardware_state")
     def test_camera_not_running_is_not_connected(self, mock_capture):
         mock_capture.return_value = {"camera": {}, "spectrometer": {}}
-        disconnected_thread = self._thread("src.camera_oceanoptics", running=False, spec=None)
+        disconnected_thread = self._thread("src.hardware.camera_oceanoptics", running=False, spec=None)
         gui = _Harness(thread=disconnected_thread)
 
         info = gui._api_build_camera_info()
 
         self.assertFalse(info["hardware_connected"])
 
-    @mock.patch("src.ui_mixins.api_mixin.capture_hardware_state")
+    @mock.patch("src.ui.ui_mixins.api_mixin.capture_hardware_state")
     def test_spectrometer_ignores_always_true_is_initialized_and_uses_camera_thread(
         self, mock_capture
     ):
@@ -116,26 +116,26 @@ class HardwareConnectedDetectionTests(unittest.TestCase):
         # is_initialized=True (SpectrometerControllerOceanOptics is always "initialized"),
         # but the shared physical device (owned by the camera thread) is not connected.
         ctrl_type = _fake_type(
-            "FakeSpecCtrl", "src.spectrometer_oceanoptics",
+            "FakeSpecCtrl", "src.hardware.spectrometer_oceanoptics",
             {"debug": False, "is_initialized": True},
         )
-        disconnected_thread = self._thread("src.camera_oceanoptics", running=True, spec=None)
+        disconnected_thread = self._thread("src.hardware.camera_oceanoptics", running=True, spec=None)
         gui = _Harness(thread=disconnected_thread, spec_ctrl=ctrl_type())
 
         info = gui._api_build_spectrometer_info()
 
         self.assertFalse(info["hardware_connected"])
 
-    @mock.patch("src.ui_mixins.api_mixin.capture_hardware_state")
+    @mock.patch("src.ui.ui_mixins.api_mixin.capture_hardware_state")
     def test_spectrometer_reports_connected_when_camera_thread_holds_a_device(
         self, mock_capture
     ):
         mock_capture.return_value = {"camera": {}, "spectrometer": {}}
         ctrl_type = _fake_type(
-            "FakeSpecCtrl", "src.spectrometer_oceanoptics",
+            "FakeSpecCtrl", "src.hardware.spectrometer_oceanoptics",
             {"debug": False, "is_initialized": True},
         )
-        connected_thread = self._thread("src.camera_oceanoptics", running=True, spec=object())
+        connected_thread = self._thread("src.hardware.camera_oceanoptics", running=True, spec=object())
         gui = _Harness(thread=connected_thread, spec_ctrl=ctrl_type())
 
         info = gui._api_build_spectrometer_info()

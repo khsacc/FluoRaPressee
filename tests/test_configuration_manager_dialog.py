@@ -8,8 +8,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QCheckBox
 
-from src.configuration_catalog import ConfigurationError
-from src.menu.configuration_manager_dialog import ConfigurationManagerDialog
+from src.core.configuration_catalog import ConfigurationError
+from src.ui.menu.configuration_manager_dialog import ConfigurationManagerDialog
 
 
 class _Catalog:
@@ -169,7 +169,7 @@ class ConfigurationManagerDialogTests(unittest.TestCase):
         self.assertTrue(self.dialog.btn_delete.isEnabled())
 
         with patch(
-            "src.menu.configuration_manager_dialog.QMessageBox.information",
+            "src.ui.menu.configuration_manager_dialog.QMessageBox.information",
             return_value=None,
         ):
             self.dialog._confirm = lambda message: True
@@ -184,7 +184,7 @@ class ConfigurationManagerDialogTests(unittest.TestCase):
         self._checkbox(row).setChecked(True)
 
         with patch(
-            "src.menu.configuration_manager_dialog.QMessageBox.information",
+            "src.ui.menu.configuration_manager_dialog.QMessageBox.information",
             return_value=None,
         ):
             self.dialog._confirm = lambda message: True

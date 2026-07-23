@@ -1,7 +1,7 @@
 import unittest
 
 try:
-    from src.analysis_ui import AnalysisWindow
+    from src.ui.analysis_ui import AnalysisWindow
 except ImportError:
     AnalysisWindow = None
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime
 
-from src.instrument_status import json_value
+from src.hardware.status.instrument_status import json_value
 
 
 METADATA_SCHEMA_VERSION = 1

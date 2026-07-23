@@ -5,8 +5,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     from PyQt6.QtWidgets import QApplication
-    from src.config_wizard import SUPPLIER_OCEANOPTICS
-    from src.menu.hardware_config_dialog import HardwareConfigDialog, _DisplayTab
+    from src.ui.config_wizard import SUPPLIER_OCEANOPTICS
+    from src.ui.menu.hardware_config_dialog import HardwareConfigDialog, _DisplayTab
 except ImportError:
     QApplication = None
 

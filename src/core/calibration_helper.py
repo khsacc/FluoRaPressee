@@ -3,7 +3,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 
-from src.calibration import CalibrationCore
+from src.core.calibration import CalibrationCore
 
 class ReferenceHelperWindow(QDialog):
     def __init__(self, json_data, is_raman=False, laser_wl=532.0, parent=None):

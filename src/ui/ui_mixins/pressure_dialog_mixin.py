@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QMessageBox
 
-from src.pressureCalc_ui import PressureCalculatorWindow
+from src.ui.pressureCalc_ui import PressureCalculatorWindow
 
 
 class PressureDialogMixin:

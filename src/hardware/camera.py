@@ -3,11 +3,11 @@ def CameraThread(config=None, debug=False):
     model = config.get("model", "Andor") if config else "Andor"
     
     if model == "PrincetonInstruments":
-        from src.camera_princeton import CameraThreadPI
+        from src.hardware.camera_princeton import CameraThreadPI
         return CameraThreadPI(config=config, debug=debug)
     elif model == "OceanOptics":
-        from src.camera_oceanoptics import CameraThreadOceanOptics
+        from src.hardware.camera_oceanoptics import CameraThreadOceanOptics
         return CameraThreadOceanOptics(config=config, debug=debug)
     else:
-        from src.camera_andor import CameraThreadAndor
+        from src.hardware.camera_andor import CameraThreadAndor
         return CameraThreadAndor(config=config, debug=debug)

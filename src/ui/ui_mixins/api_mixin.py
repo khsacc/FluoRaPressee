@@ -15,10 +15,10 @@ from src.api.info_helpers import (
     normalize_camera_metadata,
     normalize_spectrometer_metadata,
 )
-from src.configuration_catalog import format_configuration_label
-from src.instrument_status import legacy_camera_snapshot, unavailable_device
-from src.measurement_metadata import capture_hardware_state, public_axis_kind, public_axis_unit
-from src.pressureCalc import PressureCalculator
+from src.core.configuration_catalog import format_configuration_label
+from src.hardware.status.instrument_status import legacy_camera_snapshot, unavailable_device
+from src.core.measurement_metadata import capture_hardware_state, public_axis_kind, public_axis_unit
+from src.core.pressureCalc import PressureCalculator
 
 
 class BackgroundMismatchError(Exception):
@@ -430,7 +430,7 @@ class ApiMixin:
         axis_unit = public_axis_unit(self, axis_kind)
         # "configuration.unit" intentionally keeps the "Wavelength"/"Raman shift"/"pixel"
         # vocabulary (matching self.calib_unit and POST /calibration's request/response,
-        # see manuals/API.md) rather than axis_unit's "nm"/"cm-1"/None - the two fields serve
+        # see docs-site/docs/api/calibration.md) rather than axis_unit's "nm"/"cm-1"/None - the two fields serve
         # different callers. It must still track axis_kind rather than only
         # `calibrated`, though: a native-wavelength axis (Ocean Optics, no FluoraPressée
         # calibration loaded) is a real Wavelength/Raman-shift axis, not a pixel index.

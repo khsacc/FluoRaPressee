@@ -24,8 +24,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal
 
-from src.ui_widgets import CustomSpinBox
-from src.config_wizard import (
+from src.ui.ui_widgets import CustomSpinBox
+from src.ui.config_wizard import (
     _PathField, SUPPLIER_ANDOR, SUPPLIER_PI, SUPPLIER_OCEANOPTICS,
     DEFAULT_TEMPERATURE,
 )

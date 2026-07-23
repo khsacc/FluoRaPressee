@@ -2,10 +2,10 @@ import json
 
 from PyQt6.QtWidgets import QMessageBox
 
-from src.menu.hardware_config_dialog import HardwareConfigDialog
-from src.menu.instrument_status_dialog import InstrumentStatusDialog
-from src.menu.configuration_manager_dialog import ConfigurationManagerDialog
-from src.local_cache import load_local_cache, save_local_cache
+from src.ui.menu.hardware_config_dialog import HardwareConfigDialog
+from src.ui.menu.instrument_status_dialog import InstrumentStatusDialog
+from src.ui.menu.configuration_manager_dialog import ConfigurationManagerDialog
+from src.ui.local_cache import load_local_cache, save_local_cache
 
 class ConfigMixin:
     def on_open_hardware_config_clicked(self):
@@ -50,7 +50,7 @@ class ConfigMixin:
         # Lazy import: Analysis Mode's widgets aren't needed until this menu action is
         # used, and keeping the import out of module load time keeps src/ui.py's own
         # startup path unaffected by src/analysis_ui.py.
-        from src.analysis_ui import AnalysisWindow
+        from src.ui.analysis_ui import AnalysisWindow
 
         if self.analysis_window is None:
             self.analysis_window = AnalysisWindow()

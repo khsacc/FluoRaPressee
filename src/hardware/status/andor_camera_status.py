@@ -1,7 +1,7 @@
 """Read-only status collection for pyLabLib Andor SDK2 cameras."""
 from __future__ import annotations
 
-from src.instrument_status import device_snapshot, item, safe_item
+from src.hardware.status.instrument_status import device_snapshot, item, safe_item
 
 
 def collect_andor_camera_status(cam):

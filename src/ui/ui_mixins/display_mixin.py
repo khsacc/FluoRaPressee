@@ -3,7 +3,7 @@ from datetime import datetime
 import numpy as np
 import pyqtgraph as pg
 
-from src.measurement_metadata import public_axis_kind
+from src.core.measurement_metadata import public_axis_kind
 
 
 class DisplayMixin:

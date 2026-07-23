@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
-from src.ui_widgets import CustomSpinBox
+from src.ui.ui_widgets import CustomSpinBox
 
 # Default cooler target temperature (°C) pre-filled in the wizard and used as the
 # fallback in spectrometerConfig.json / SpectrometerGUI when the key is absent.
@@ -92,7 +92,7 @@ class _GratingDetectThread(QThread):
     def run(self):
         gratings = []
         try:
-            from src.spectrometer_princeton import SpectrometerControllerPI
+            from src.hardware.spectrometer_princeton import SpectrometerControllerPI
             ctrl = SpectrometerControllerPI(config={"com_port": self.com_port}, debug=False)
             if ctrl.initialize():
                 gratings = ctrl.get_gratings()
@@ -112,7 +112,7 @@ class _HardwareProbeThread(QThread):
         self.config = dict(config)
 
     def run(self):
-        from src.hardware_probe import probe_initial_hardware
+        from src.hardware.status.hardware_probe import probe_initial_hardware
 
         try:
             result = probe_initial_hardware(self.supplier, self.config)

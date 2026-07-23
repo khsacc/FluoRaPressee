@@ -158,12 +158,19 @@ macOS/Linux（``setup.sh``で作成した仮想環境を直接使用する場合
 
 Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``spectrometerConfig.json``は必要ありません。未較正のpixel軸データでもフィッティングは可能ですが、圧力計算には波長またはRaman shiftで較正されたデータが必要です。
 
+## ローカルでオンラインマニュアルを確認
+
+```bash
+cd docs-site
+NODENV_VERSION=22.22.0 npm start
+```
+
 ## スクリーンショット
 
 
 ### メイン画面
 
-![](manuals/img/MainWindowFull.jpg)
+![](docs-site/static/img/manual/MainWindowFull.jpg)
 
 * スペクトルの取得、保存
     * 単発測定および連続測定
@@ -178,14 +185,14 @@ Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``sp
 
 ### 横軸較正画面（「Calibrate x-axis」ボタンをクリックして開く）
 
-![](manuals/img/CalibrationWindow.png)
+![](docs-site/static/img/manual/CalibrationWindow.png)
 
 * 標準試料のスペクトルを取得し、ピーク検索、Gaussian函数によるピークフィット、波長の較正までを行えます。
 
 
 ### 横軸較正補助画面
 
-![](manuals/img/CalibrationHelperWindow.png)
+![](docs-site/static/img/manual/CalibrationHelperWindow.png)
 
 * よく使うネオンの波長領域のスペクトル（事前に測定してプログラム中に保存したもの）を表示してピークの帰属の参考にできます。
 
@@ -199,7 +206,7 @@ Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``sp
 
 ### 圧力計算画面（「Open pressure calculator」ボタンをクリックして開く）
 
-![](manuals/img/PressureCalculator.png)
+![](docs-site/static/img/manual/PressureCalculator.png)
 
 * 横軸が波長のモードの場合、蛍光スケール、横軸がRaman shiftのモードの場合、Ramanスケールを用いた圧力計算が可能です。使用できるスケールは以下の通りです
 * 蛍光スケール
@@ -272,7 +279,7 @@ Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``sp
 起動している間、GUI側の測定・設定系操作はロックされ（プロットの表示設定等は引き続き操作可）、
 **Stop API Server** を押すとローカルでの操作権が戻ります。
 
-エンドポイント一覧・リクエスト/レスポンスの詳細は [manuals/API.md](manuals/API.md) を参照してください。
+エンドポイント一覧・リクエスト/レスポンスの詳細は [オンラインマニュアルのAPIリファレンス](https://khsacc.github.io/FluoRaPressee/docs/api) を参照してください。
 
 ##  保存されるファイルの形式
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import ctypes
 
-from src.instrument_status import device_snapshot, item, unavailable_device
+from src.hardware.status.instrument_status import device_snapshot, item, unavailable_device
 
 
 SUCCESS = 20202

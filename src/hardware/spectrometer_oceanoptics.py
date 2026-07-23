@@ -1,6 +1,6 @@
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from src.instrument_status import device_snapshot, item
+from src.hardware.status.instrument_status import device_snapshot, item
 
 # Tolerance (nm) used by set_wavelength() to decide whether a requested centre wavelength
 # matches the device's actual fixed position - see work/work_OceanOptics.md 方針2/Step 2 for

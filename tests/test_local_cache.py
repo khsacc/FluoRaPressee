@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-import src.local_cache as local_cache
+import src.ui.local_cache as local_cache
 
 
 class LocalCacheTests(unittest.TestCase):

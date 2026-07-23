@@ -24,12 +24,12 @@ from PyQt6.QtWidgets import (
     QTextEdit, QFileDialog, QMessageBox,
 )
 
-from src.analysis import DataAnalyzer
-from src.file_io import DataFileIO
-from src.fitting_config_widget import FittingConfigWidget
-from src.fit_range_context_menu import FitRangeContextMenu
-from src.pressureCalc_ui import PressureCalculatorWindow
-from src.local_cache import load_local_cache, save_local_cache
+from src.core.analysis import DataAnalyzer
+from src.core.file_io import DataFileIO
+from src.ui.fitting_config_widget import FittingConfigWidget
+from src.ui.fit_range_context_menu import FitRangeContextMenu
+from src.ui.pressureCalc_ui import PressureCalculatorWindow
+from src.ui.local_cache import load_local_cache, save_local_cache
 
 _LAST_DIR_CACHE_KEY = "last_analysis_dir"
 

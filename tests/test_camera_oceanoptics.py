@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from src.camera_oceanoptics import CameraThreadOceanOptics, CameraInitError
+from src.hardware.camera_oceanoptics import CameraThreadOceanOptics, CameraInitError
 
 
 class _FakeSpectrometer:

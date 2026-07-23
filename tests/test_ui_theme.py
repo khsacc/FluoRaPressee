@@ -1,6 +1,6 @@
 import unittest
 
-from src.ui_theme import apply_application_style, colored_button_style
+from src.ui.theme import apply_application_style, colored_button_style
 
 
 class _FakeApplication:

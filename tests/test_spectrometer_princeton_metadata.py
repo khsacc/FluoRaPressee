@@ -33,7 +33,7 @@ if "PyQt6.QtCore" not in sys.modules:
         sys.modules["PyQt6"] = pyqt_stub
         sys.modules["PyQt6.QtCore"] = qtcore_stub
 
-from src.spectrometer_princeton import SpectrometerControllerPI
+from src.hardware.spectrometer_princeton import SpectrometerControllerPI
 
 
 class FakePIController(SpectrometerControllerPI):

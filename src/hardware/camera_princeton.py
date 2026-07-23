@@ -4,7 +4,7 @@ import numpy as np
 from threading import Lock, Condition
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from src.pylablib_loader import import_pylablib_module
+from src.hardware.pylablib_loader import import_pylablib_module
 
 # Wrapped in try-except so a missing SDK doesn't raise an error when running in debug (dummy) mode
 try:

@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 
-from src.file_io import DataFileIO
+from src.core.file_io import DataFileIO
 
 try:
     from src.api.schemas import AcquireFitRequest

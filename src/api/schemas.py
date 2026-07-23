@@ -2,7 +2,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from src.pressureCalc import PressureCalculator
+from src.core.pressureCalc import PressureCalculator
 
 
 class CalibrationRequest(BaseModel):

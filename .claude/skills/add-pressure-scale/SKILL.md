@@ -1,16 +1,16 @@
 ---
 name: add-pressure-scale
-description: Use when adding a new pressure calibration scale (or a new sensor material/line) to FluoraPressée's PressureCalculator — e.g. "add the XYZ 2024 ruby scale", "add a new temperature-correction scale for zircon", "add support for a new pressure sensor". Covers what must change in src/pressureCalc.py, what does NOT need to change (UI, API, file I/O are all data-driven), the temperature-mode gotchas, the required README_ja.md citation-list update, and how to verify without an automated test suite.
+description: Use when adding a new pressure calibration scale (or a new sensor material/line) to FluoraPressée's PressureCalculator — e.g. "add the XYZ 2024 ruby scale", "add a new temperature-correction scale for zircon", "add support for a new pressure sensor". Covers what must change in src/core/pressureCalc.py, what does NOT need to change (UI, API, file I/O are all data-driven), the temperature-mode gotchas, the required README_ja.md citation-list update, and how to verify without an automated test suite.
 ---
 
 # Adding a pressure scale to PressureCalculator
 
-`src/pressureCalc.py` (`PressureCalculator`) is the **single source of truth**. Everything else that
-touches pressure calculation — `src/pressureCalc_ui.py` (the calculator dialog), `src/ui_mixins/api_mixin.py`
-+ `src/api/schemas.py`/`server.py` (the HTTP API), and `src/file_io.py` (saving results) — reads the
+`src/core/pressureCalc.py` (`PressureCalculator`) is the **single source of truth**. Everything else that
+touches pressure calculation — `src/ui/pressureCalc_ui.py` (the calculator dialog), `src/ui/ui_mixins/api_mixin.py`
++ `src/api/schemas.py`/`server.py` (the HTTP API), and `src/core/file_io.py` (saving results) — reads the
 `SENSORS` / `PRESSURE_SCALES` / `TEMPERATURE_SCALES` dicts generically (combo boxes populated from the
 dicts; API `sensor`/`pressure_scale`/`scale` fields are plain `str` passed straight through). **In the
-common case, the only code file to edit is `src/pressureCalc.py`** — but the change isn't done until
+common case, the only code file to edit is `src/core/pressureCalc.py`** — but the change isn't done until
 `README_ja.md`'s scale list is updated too (step 4 below), since that's the only place citations live.
 Don't touch the UI or API layers unless you're doing something the checklist below calls out explicitly.
 
@@ -138,17 +138,17 @@ Match the existing structure exactly:
 
 ### 5. What you do NOT need to touch
 
-- `src/pressureCalc_ui.py` — combo boxes, mandatory-T banner, T0-fixed banner, and range warnings are
+- `src/ui/pressureCalc_ui.py` — combo boxes, mandatory-T banner, T0-fixed banner, and range warnings are
   all driven by the dicts/static methods above. No edits needed unless you're changing dialog *layout*.
-- `src/ui_mixins/api_mixin.py`, `src/api/schemas.py`, `src/api/server.py` — `sensor`/`pressure_scale`/
+- `src/ui/ui_mixins/api_mixin.py`, `src/api/schemas.py`, `src/api/server.py` — `sensor`/`pressure_scale`/
   `temperature_correction.scale` are plain `str` fields (see `schemas.py` `PressureRequest`), passed
   straight to `PressureCalculator.calculate()`. A new key works over the API the moment it's in
   `pressureCalc.py`, no schema change needed.
-- `src/file_io.py` — `save_fitting_results`/etc. take a generic `pressure_info` dict (`pressure`,
+- `src/core/file_io.py` — `save_fitting_results`/etc. take a generic `pressure_info` dict (`pressure`,
   `pressure_err`, `scale`, `sensor`, `lam0`) built from whatever the UI/API already resolved; nothing
   sensor-specific.
-- `manuals/API.md` — intentionally doesn't enumerate individual scale keys, just points at
-  `src/pressureCalc.py`.
+- `docs-site/docs/api/acquire-pressure.md` — intentionally doesn't enumerate individual scale keys,
+  just points at `src/core/pressureCalc.py`.
 - `README.md` — its scale-related bullet lives inside a `<!-- ## ✨ Features ... -->` HTML comment and
   isn't rendered; it's stale and not the maintained doc (see step 4).
 
@@ -189,7 +189,7 @@ without it the user's current peak-count setting is left alone.
    rounding. This is the real correctness check — the UI wiring alone doesn't validate the physics.
 5. If you touched a sensor that's also reachable via the HTTP API, optionally sanity-check
    `POST /acquire/pressure` with `"sensor"`/`"pressure_scale"` set to your new keys (see
-   `manuals/API.md`) — but this only re-exercises the same `PressureCalculator.calculate()` call, so
-   step 4 is the one that actually matters.
+   `docs-site/docs/api/acquire-pressure.md`) — but this only re-exercises the same
+   `PressureCalculator.calculate()` call, so step 4 is the one that actually matters.
 6. Confirm `README_ja.md`'s scale list was updated (step 4 of Case A, which Case B inherits) and that
    its citation format matches the surrounding entries.

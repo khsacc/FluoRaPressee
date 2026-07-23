@@ -23,11 +23,11 @@ from src.api.schemas import (
     SpectrometerInfoResponse,
     StatusResponse,
 )
-from src.configuration_catalog import (
+from src.core.configuration_catalog import (
     ConfigurationCompatibilityError,
     ConfigurationError,
 )
-from src.ui_mixins.api_mixin import BackgroundMismatchError, ExposureApplyError
+from src.ui.ui_mixins.api_mixin import BackgroundMismatchError, ExposureApplyError
 
 
 def _to_list(arr):

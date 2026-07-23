@@ -5,7 +5,7 @@ import time
 import serial
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from src.instrument_status import device_snapshot, item, safe_item, unavailable_device
+from src.hardware.status.instrument_status import device_snapshot, item, safe_item, unavailable_device
 
 
 class MoveCancelled(Exception):

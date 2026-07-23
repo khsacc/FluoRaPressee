@@ -12,14 +12,14 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
 from PyQt6.QtCore import QEvent, Qt
 import pyqtgraph as pg
 
-from src.calibration import CalibrationCore
-from src.calibration_reference import (
+from src.core.calibration import CalibrationCore
+from src.core.calibration_reference import (
     find_match_candidates,
     load_reference_standards,
     match_from_seed_axis,
 )
-from src.configuration_catalog import format_configuration_label
-from src.ui_theme import colored_button_style
+from src.core.configuration_catalog import format_configuration_label
+from src.ui.theme import colored_button_style
 
 class CustomDoubleSpinBox(QDoubleSpinBox):
     def __init__(self, *args, **kwargs):
@@ -86,7 +86,7 @@ class CalibrationWindow(QDialog):
             lambda: self._set_hovered_reference_line(None)
         )
         standards_dir = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "calibrationStandards"
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "calibrationStandards"
         )
         self.reference_standards = load_reference_standards(standards_dir)
         self.reference_lines_by_id = {

@@ -2,10 +2,10 @@ import tempfile
 import unittest
 from concurrent.futures import Future
 
-from src.configuration_catalog import ConfigurationCatalog
+from src.core.configuration_catalog import ConfigurationCatalog
 
 try:
-    from src.ui_mixins.file_io_mixin import FileIOMixin
+    from src.ui.ui_mixins.file_io_mixin import FileIOMixin
     HAS_QT = True
 except ModuleNotFoundError:
     class FileIOMixin:

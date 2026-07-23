@@ -2,8 +2,8 @@ import time
 import numpy as np
 from threading import Lock, Condition
 from PyQt6.QtCore import QThread, pyqtSignal
-from src.instrument_status import device_snapshot, item, unavailable_device
-from src.oceanoptics_diagnostics import no_devices_error
+from src.hardware.status.instrument_status import device_snapshot, item, unavailable_device
+from src.hardware.status.oceanoptics_diagnostics import no_devices_error
 
 # Ocean Optics devices report a factory wavelength calibration but have no grating/centre
 # wavelength to move and no cooler/EM gain; see work/work_OceanOptics.md for the full design

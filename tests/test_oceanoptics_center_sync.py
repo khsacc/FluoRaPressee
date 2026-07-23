@@ -9,7 +9,7 @@ import unittest
 
 import numpy as np
 
-from src.ui_mixins.acquisition_mixin import AcquisitionMixin
+from src.ui.ui_mixins.acquisition_mixin import AcquisitionMixin
 
 
 class _Thread:

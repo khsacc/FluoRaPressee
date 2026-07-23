@@ -13,27 +13,27 @@ from PyQt6.QtCore import Qt, QTimer
 import pyqtgraph as pg
 
 # ---- Imports from the split-out modules ----
-from src.camera import CameraThread
-from src.spectrometer import SpectrometerController, SpectrometerMoveThread
-from src.analysis import DataAnalyzer
-from src.calibration_ui import CalibrationWindow
-from src.configuration_catalog import ConfigurationCatalog
-from src.pressureCalc import PressureCalculator
-from src.pressureCalc_ui import PressureCalculatorWindow
-from src.file_io import DataFileIO
-from src.ui_widgets import CustomSpinBox, CustomDoubleSpinBox, CustomComboBox
-from src.ui_theme import colored_button_style
-from src.window_title import live_window_title
-from src.fitting_config_widget import FittingConfigWidget
-from src.fit_range_context_menu import FitRangeContextMenu
-from src.ui_mixins.config_mixin import ConfigMixin
-from src.ui_mixins.file_io_mixin import FileIOMixin
-from src.ui_mixins.spectrometer_control_mixin import SpectrometerControlMixin
-from src.ui_mixins.sequential_mixin import SequentialMixin
-from src.ui_mixins.acquisition_mixin import AcquisitionMixin
-from src.ui_mixins.display_mixin import DisplayMixin
-from src.ui_mixins.pressure_dialog_mixin import PressureDialogMixin
-from src.ui_mixins.api_mixin import ApiMixin
+from src.hardware.camera import CameraThread
+from src.hardware.spectrometer import SpectrometerController, SpectrometerMoveThread
+from src.core.analysis import DataAnalyzer
+from src.ui.calibration_ui import CalibrationWindow
+from src.core.configuration_catalog import ConfigurationCatalog
+from src.core.pressureCalc import PressureCalculator
+from src.ui.pressureCalc_ui import PressureCalculatorWindow
+from src.core.file_io import DataFileIO
+from src.ui.ui_widgets import CustomSpinBox, CustomDoubleSpinBox, CustomComboBox
+from src.ui.theme import colored_button_style
+from src.ui.window_title import live_window_title
+from src.ui.fitting_config_widget import FittingConfigWidget
+from src.ui.fit_range_context_menu import FitRangeContextMenu
+from src.ui.ui_mixins.config_mixin import ConfigMixin
+from src.ui.ui_mixins.file_io_mixin import FileIOMixin
+from src.ui.ui_mixins.spectrometer_control_mixin import SpectrometerControlMixin
+from src.ui.ui_mixins.sequential_mixin import SequentialMixin
+from src.ui.ui_mixins.acquisition_mixin import AcquisitionMixin
+from src.ui.ui_mixins.display_mixin import DisplayMixin
+from src.ui.ui_mixins.pressure_dialog_mixin import PressureDialogMixin
+from src.ui.ui_mixins.api_mixin import ApiMixin
 # ----------------------------------------
 
 BUTTON_STYLE_BLUE = "background-color: #2196F3; color: white; font-weight: bold;"

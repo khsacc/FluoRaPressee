@@ -14,8 +14,8 @@ if "serial" not in sys.modules:
         serial_stub.Serial = None
         sys.modules["serial"] = serial_stub
 
-from src.camera import CameraThread
-from src.spectrometer import SpectrometerController, SpectrometerMoveThread
+from src.hardware.camera import CameraThread
+from src.hardware.spectrometer import SpectrometerController, SpectrometerMoveThread
 
 
 class CameraFactoryTests(unittest.TestCase):
@@ -58,9 +58,9 @@ class SpectrometerFactoryTests(unittest.TestCase):
                 self.assertIn(
                     move_thread.__class__.__module__,
                     (
-                        "src.spectrometer_andor",
-                        "src.spectrometer_princeton",
-                        "src.spectrometer_oceanoptics",
+                        "src.hardware.spectrometer_andor",
+                        "src.hardware.spectrometer_princeton",
+                        "src.hardware.spectrometer_oceanoptics",
                     ),
                 )
 

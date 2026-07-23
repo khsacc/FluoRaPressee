@@ -1,9 +1,9 @@
 from PyQt6.QtWidgets import QVBoxLayout, QLabel, QDialog, QMessageBox, QPushButton
 from PyQt6.QtCore import Qt
 
-from src.spectrometer import SpectrometerMoveThread
-from src.calibration_ui import CalibrationWindow
-from src.measurement_metadata import public_axis_kind
+from src.hardware.spectrometer import SpectrometerMoveThread
+from src.ui.calibration_ui import CalibrationWindow
+from src.core.measurement_metadata import public_axis_kind
 
 
 class SpectrometerControlMixin:

@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from src.instrument_status import (
+from src.hardware.status.instrument_status import (
     display_value,
     legacy_camera_snapshot,
     make_report,
