@@ -10,11 +10,11 @@ gc.enable()
 
 from PyQt6.QtWidgets import QApplication
 
-# Deliberately does not import src.ui / src.camera / src.spectrometer / src.api --
+# Deliberately does not import src.ui / src.hardware.camera / src.hardware.spectrometer / src.api --
 # Analysis Mode never touches hardware, so this entry point stays independent of
 # the Andor SDK (pylablib/pyserial/ShamrockCIF.dll) and spectrometerConfig.json.
-from src.analysis_ui import AnalysisWindow
-from src.ui_theme import apply_application_style
+from src.ui.analysis_ui import AnalysisWindow
+from src.ui.theme import apply_application_style
 
 
 def main():

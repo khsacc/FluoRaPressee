@@ -7,8 +7,8 @@ try:
     from PyQt6.QtWidgets import QApplication
     import pyqtgraph as pg
 
-    from src.fit_range_context_menu import FitRangeContextMenu
-    from src.ui_widgets import CustomDoubleSpinBox
+    from src.ui.fit_range_context_menu import FitRangeContextMenu
+    from src.ui.ui_widgets import CustomDoubleSpinBox
 except ImportError:
     QApplication = None
 

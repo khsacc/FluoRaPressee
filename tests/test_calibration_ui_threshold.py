@@ -5,7 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication
 
-from src.calibration_ui import CalibrationWindow
+from src.ui.calibration_ui import CalibrationWindow
 
 
 _APP = QApplication.instance() or QApplication([])

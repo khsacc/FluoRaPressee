@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.configuration_catalog import (
+from src.core.configuration_catalog import (
     ConfigurationCatalog,
     ConfigurationCompatibilityError,
     ConfigurationError,

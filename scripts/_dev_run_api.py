@@ -1,6 +1,6 @@
 """Temporary dev helper for Step 7 verification (work/work_API.md).
 
-Launches FluoraPressée in --debug mode with the API server started immediately
+Launches FluoRaPressée in --debug mode with the API server started immediately
 on a fixed dev key/port, so the HTTP layer can be exercised with curl without
 waiting for Step 8's Start/Stop API Server GUI button.
 
@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import QApplication
 from src.ui import SpectrometerGUI
 from src.app_bootstrap import print_software_and_author_info, check_and_create_config
 from src.api.gui_bridge import GuiBridge
-from src.ui_theme import apply_application_style
+from src.ui.theme import apply_application_style
 from src.api.server import create_app
 
 DEV_API_KEY = "devkey"

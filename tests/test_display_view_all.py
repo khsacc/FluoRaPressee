@@ -7,7 +7,7 @@ try:
     from PyQt6.QtWidgets import QApplication
     import pyqtgraph as pg
 
-    from src.ui_mixins.display_mixin import DisplayMixin
+    from src.ui.ui_mixins.display_mixin import DisplayMixin
 except ImportError:
     QApplication = None
 

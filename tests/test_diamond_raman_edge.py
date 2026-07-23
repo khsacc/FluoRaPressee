@@ -3,8 +3,8 @@ import unittest
 import numpy as np
 from scipy.special import erfc
 
-from src.analysis import DataAnalyzer
-from src.pressureCalc import PressureCalculator
+from src.core.analysis import DataAnalyzer
+from src.core.pressureCalc import PressureCalculator
 
 try:
     from src.api.schemas import AcquirePressureRequest

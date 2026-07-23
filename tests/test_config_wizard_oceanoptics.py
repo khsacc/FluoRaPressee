@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     from PyQt6.QtWidgets import QApplication
-    from src.config_wizard import (
+    from src.ui.config_wizard import (
         ConfigWizard, SUPPLIER_OCEANOPTICS, SUPPLIER_PI, _PagePaths,
     )
 except ImportError:

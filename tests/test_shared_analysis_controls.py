@@ -6,8 +6,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     import numpy as np
     from PyQt6.QtWidgets import QApplication
-    from src.analysis_ui import AnalysisWindow
-    from src.fitting_config_widget import FittingConfigWidget
+    from src.ui.analysis_ui import AnalysisWindow
+    from src.ui.fitting_config_widget import FittingConfigWidget
 except ImportError:
     AnalysisWindow = None
     FittingConfigWidget = None

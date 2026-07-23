@@ -12,8 +12,8 @@ from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
-from src.calibration_ui import CalibrationWindow
-from src.calibration_reference import MatchCandidate
+from src.ui.calibration_ui import CalibrationWindow
+from src.core.calibration_reference import MatchCandidate
 
 
 _APP = QApplication.instance() or QApplication([])
@@ -62,7 +62,7 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
             self.window._flip_x_enabled = lambda flip_state=flip_state: flip_state
 
             with patch(
-                "src.calibration_ui.find_match_candidates", return_value=[]
+                "src.ui.calibration_ui.find_match_candidates", return_value=[]
             ) as matcher:
                 self.window.find_assignment_candidates()
 

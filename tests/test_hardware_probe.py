@@ -3,7 +3,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from src import hardware_probe
+from src.hardware.status import hardware_probe
 
 
 class _FakeDevice:

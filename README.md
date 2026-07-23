@@ -15,7 +15,7 @@ Author: Hiroki Kobayashi (Geochemical Research Center, The University of Tokyo).
 
 ## Acknowledgements
 
-The design of FluoraPressée was inspired by [Rubycond](https://github.com/CelluleProjet/Rubycond), an open-source software for ruby fluorescence measurements and pressure determination, which I used every day during my 1-year stay at l'Institut de minéralogie, de physique des matériaux et de cosmochimie (IMPMC), Paris, France. The experience of using Rubycond motivated the development of this more general-purpose platform, which extends the scope towards the use of Raman sensors for high-temperature experiments and API-based remote operation. I gratefully acknowledge the Rubycond developers (Yiuri Garino and Silvia Boccato).
+The design of FluoRaPressée was inspired by [Rubycond](https://github.com/CelluleProjet/Rubycond), an open-source software for ruby fluorescence measurements and pressure determination, which I used every day during my 1-year stay at l'Institut de minéralogie, de physique des matériaux et de cosmochimie (IMPMC), Paris, France. The experience of using Rubycond motivated the development of this more general-purpose platform, which extends the scope towards the use of Raman sensors for high-temperature experiments and API-based remote operation. I gratefully acknowledge the Rubycond developers (Yiuri Garino and Silvia Boccato).
 
 
 This software was developed in the Geochemical Research Center (GcRC), Graduate School of Science, the University of Tokyo, with the support from Profs. K. Komatsu and H. Kagi. I thank the members of the group who helped me with testing and improving the software, especially K. Komatsu and S. Koyano.
@@ -66,7 +66,7 @@ This software was developed in the Geochemical Research Center (GcRC), Graduate 
 
 ### Ocean Optics support (optional)
 
-FluoraPressée can also drive Ocean Optics USB2000/USB4000 spectrometers via
+FluoRaPressée can also drive Ocean Optics USB2000/USB4000 spectrometers via
 [python-seabreeze](https://github.com/ap--/python-seabreeze). This is optional and not installed
 by the base `setup.bat`/`setup.sh`.
 
@@ -82,7 +82,7 @@ Instruments, so the following do not apply and are hidden in the GUI when connec
 * 2D image mode and custom vertical ROI (the detector is a single row).
 * Grating selection and centre-wavelength "Apply" (the device has neither).
 
-Before a FluoraPressée neon calibration is applied, the X-axis shows the device's own
+Before a FluoRaPressée neon calibration is applied, the X-axis shows the device's own
 factory-calibrated wavelength (a warning banner above the plot makes this explicit) rather than a
 plain pixel index; this is not the same as "uncalibrated".
 

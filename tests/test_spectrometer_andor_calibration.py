@@ -16,7 +16,7 @@ except ImportError:
     sys.modules["PyQt6"] = pyqt6
     sys.modules["PyQt6.QtCore"] = qtcore
 
-from src.spectrometer_andor import SpectrometerControllerAndor
+from src.hardware.spectrometer_andor import SpectrometerControllerAndor
 
 
 class _Function:

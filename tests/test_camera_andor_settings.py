@@ -28,7 +28,7 @@ except ImportError:
     sys.modules["PyQt6"] = pyqt6
     sys.modules["PyQt6.QtCore"] = qtcore
 
-from src.camera_andor import CameraThreadAndor
+from src.hardware.camera_andor import CameraThreadAndor
 
 
 class FakeAndorCamera:

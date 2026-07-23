@@ -1,7 +1,7 @@
 import sys
 import unittest
 
-from src.pylablib_loader import import_pylablib_module
+from src.hardware.pylablib_loader import import_pylablib_module
 
 
 class PylablibLoaderTests(unittest.TestCase):

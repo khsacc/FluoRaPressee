@@ -1,4 +1,4 @@
-# FluoraPressée: Spectrometer Control & Analysis GUI
+# FluoRaPressée: Spectrometer Control & Analysis GUI
 
 * Author: Hiroki Kobayashi (Geochemical Research Center, The University of Tokyo). 
     * https://orcid.org/0000-0002-3682-7558 
@@ -36,95 +36,10 @@
      仮想環境の作成、共通パッケージと``seabreeze``のインストール、``seabreeze_os_setup``による
      OS依存の設定まで自動的に行われます。macOS/Linuxでは``./setup_oceanoptics.sh``を``./setup.sh``の代わりに実行します。
 3. ``spectrometerConfig.json``が存在しない状態でアプリを初めて起動すると、セットアップウィザードが自動的に開きます。
-   1. メーカー選択（Andor / Princeton Instruments / Ocean Optics）
-   2. 接続設定（Andor: ``ShamrockCIF.dll`` のパス。Princeton Instruments: COMポート、PICam Runtimeのパス、カメラのシリアル番号。Ocean Optics: シリアル番号（省略可）、seabreeze backend（通常は空欄のままでよい））。
-      「Read parameters from connected hardware」ボタンで、接続済みの実機からこれらの値や回折格子構成を自動取得することもできます。
-   3. 回折格子（grooves/mm）、``flip_x``（スペクトルの左右反転）、冷却温度などの初期値（Ocean Optics選択時はグレーティング・冷却温度の項目は表示されません — 固定分光器かつ無冷却のため）
-
-   ウィザード完了後、``spectrometerConfig.json``がプロジェクトルートに生成されます（ウィザードをキャンセルした場合は、Andor用のデフォルト設定が生成されます）。内容は以下のようなJSONファイルで、直接編集して再起動すれば変更が反映されます。
-
-### Andor の場合
-
-```json
-{
-    "model": "Andor",
-    "dll_path": "C:\\Program Files\\Andor SDK\\Shamrock64\\ShamrockCIF.dll",
-    "grating": [
-        {
-            "index": 1,
-            "grooves": 2400,
-            "defaultROI": {"from": 80, "to": 100}
-        },
-        {
-            "index": 2,
-            "grooves": 1800,
-            "defaultROI": {"from": 115, "to": 130}
-        },
-        {
-            "index": 3,
-            "grooves": 1200,
-            "defaultROI": {"from": 113, "to": 125}
-        }
-    ],
-    "flip_x": true,
-    "default_temperature": -65,
-    "default_fan_mode": "full"
-}
-```
-
-### Princeton Instruments の場合
-
-```json
-{
-    "model": "PrincetonInstruments",
-    "com_port": "COM3",
-    "PIcam_dll_path": "C:\\Program Files\\Princeton Instruments\\PICam\\Runtime",
-    "camera_serial_number": "0412060001",
-    "grating": [
-        {
-            "index": 1,
-            "grooves": 1200,
-            "defaultROI": {"from": 100, "to": 140}
-        },
-        {
-            "index": 2,
-            "grooves": 1800,
-            "defaultROI": {"from": 100, "to": 140}
-        }
-    ],
-    "flip_x": false,
-    "default_temperature": -65
-}
-```
-
-``default_fan_mode``はAndor SDK2の冷却ファン制御に固有の項目のため、Princeton Instrumentsの設定には含まれません。カメラのシリアル番号（``camera_serial_number``）は、接続されているカメラが1台のみであれば省略できます。
-
-### Ocean Optics の場合
-
-```json
-{
-    "model": "OceanOptics",
-    "serial_number": null,
-    "seabreeze_backend": null,
-    "correct_dark_counts": true,
-    "correct_nonlinearity": true,
-    "grating": [
-        {"index": 1, "grooves": 0, "defaultROI": {"from": 0, "to": 1}}
-    ],
-    "flip_x": false
-}
-```
-
-Ocean Opticsは分光器とカメラが一体になった固定分光器です。可動グレーティング・可動中心波長・
-冷却器を持たないため、GUI上でもこれらの項目（2D Image View、垂直方向カスタムROI、グレーティング
-選択、中心波長のApply）は表示されません。``grating``キー内の値（``grooves: 0``）は
-ConfigurationCatalog（較正保存機構）との互換性を保つための内部的なプレースホルダーであり、
-ユーザーが編集する必要はありません。``serial_number``を指定すると特定の個体を、``null``のままなら
-最初に見つかったデバイスを使用します。
-
-FluoraPressée自身のネオン較正（「Calibrate x-axis」）を適用するまでは、X軸には装置内蔵の
-工場較正済み波長軸がそのまま表示され、プロット上部に注意書きが表示されます。これは
-「未較正」とは異なり、Ocean Optics自身の較正データに基づく正しい波長軸です。
+   装置メーカー・接続設定・回折格子構成などを入力すると、``spectrometerConfig.json``がプロジェクトルートに
+   生成されます。ウィザードの各ステップおよび``spectrometerConfig.json``自体の詳しい仕様は
+   [オンラインマニュアルの「ハードウェア設定」](https://khsacc.github.io/FluoRaPressee/docs/hardware-config)
+   を参照してください。
 
 ##  使い方 
 
@@ -158,12 +73,19 @@ macOS/Linux（``setup.sh``で作成した仮想環境を直接使用する場合
 
 Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``spectrometerConfig.json``は必要ありません。未較正のpixel軸データでもフィッティングは可能ですが、圧力計算には波長またはRaman shiftで較正されたデータが必要です。
 
+## ローカルでオンラインマニュアルを確認
+
+```bash
+cd docs-site
+NODENV_VERSION=22.22.0 npm start
+```
+
 ## スクリーンショット
 
 
 ### メイン画面
 
-![](manuals/img/MainWindowFull.jpg)
+![](docs-site/static/img/manual/MainWindowFull.jpg)
 
 * スペクトルの取得、保存
     * 単発測定および連続測定
@@ -178,14 +100,14 @@ Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``sp
 
 ### 横軸較正画面（「Calibrate x-axis」ボタンをクリックして開く）
 
-![](manuals/img/CalibrationWindow.png)
+![](docs-site/static/img/manual/CalibrationWindow.png)
 
 * 標準試料のスペクトルを取得し、ピーク検索、Gaussian函数によるピークフィット、波長の較正までを行えます。
 
 
 ### 横軸較正補助画面
 
-![](manuals/img/CalibrationHelperWindow.png)
+![](docs-site/static/img/manual/CalibrationHelperWindow.png)
 
 * よく使うネオンの波長領域のスペクトル（事前に測定してプログラム中に保存したもの）を表示してピークの帰属の参考にできます。
 
@@ -199,67 +121,7 @@ Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``sp
 
 ### 圧力計算画面（「Open pressure calculator」ボタンをクリックして開く）
 
-![](manuals/img/PressureCalculator.png)
-
-* 横軸が波長のモードの場合、蛍光スケール、横軸がRaman shiftのモードの場合、Ramanスケールを用いた圧力計算が可能です。使用できるスケールは以下の通りです
-* 蛍光スケール
-    * ルビー（Cr<sup>3+</sup>:Al<sub>2</sub>O<sub>3</sub>）
-        * 圧力シフト
-            * Shen et al., <i>High Press. Res.</i> (2020) [DOI: 10.1080/08957959.2020.1791107](https://doi.org/10.1080/08957959.2020.1791107)
-            * Kraus et al., <i>Phys. Rev. B.</i> (2016) [DOI: 10.1103/PhysRevB.93.134105](https://doi.org/10.1103/PhysRevB.93.134105)
-            * Sokolova et al., <i>Russ. Geol. Geophys.</i> (2013) [DOI: 10.1016/j.rgg.2013.01.005](https://doi.org/10.1016/j.rgg.2013.01.005)
-            * Jacobsen et al., <i>Am. Min.</i> (2008) [for helium pressure medium, calibrated against the MgO scale] [DOI: 10.2138/am.2008.2988](https://doi.org/10.2138/am.2008.2988)
-            * Dorogokupets and Oganov, <i>Phys. Rev. B.</i> (2007) [DOI: 10.1103/PhysRevB.75.024115](https://doi.org/10.1103/PhysRevB.75.024115)
-            * Holzapfel, <i>J. Appl. Phys.</i> (2003) [DOI: 10.1063/1.1525856](https://doi.org/10.1063/1.1525856)
-            * Mao et al., <i>J. Geophys. Res.</i> (1986) [DOI: 10.1029/JB091iB05p04673](https://doi.org/10.1029/JB091iB05p04673)
-            * Piermarini et al., <i>J. Appl. Phys.</i> (1975) [DOI: 10.1063/1.321957](https://doi.org/10.1063/1.321957)
-        * 温度シフト
-            * 0 - 600 K, Ragan et al., <i>J. Appl. Phys.</i> (1992) [DOI: 10.1063/1.351951](https://doi.org/10.1063/1.351951)
-            * 0 - 600 K, Yen and Nicol, <i>J. Appl. Phys.</i> (1992) [DOI: 10.1063/1.351950](https://doi.org/10.1063/1.351950)
-            * 0 - 296 K [低温域], Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
-            * 296 - 900 K [高温域], Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
-            * 0 - 300 K, Kobayashi et al., unpublished
-    * Sm<sup>2+</sup>:SrB<sub>4</sub>O<sub>7</sub>
-        * 圧力シフト
-            * Datchi et al., <i>J. Appl. Phys.</i> (1997) [calibrated using the MXB1986 ruby scale] [DOI: 10.1063/1.365025](https://doi.org/10.1063/1.365025)
-            * Datchi et al., <i>High Press. Res.</i> (2007) [calibrated using the DO2007 ruby scale] [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
-            * Rashchenko et al., <i>J. Appl. Phys.</i> (2015) [0-0線(λ1)・0-1線(λ2–λ4)の4系統から選択可] [DOI: 10.1063/1.4918304](https://doi.org/10.1063/1.4918304)
-        * 温度シフト
-            * 296 - 900 K, Datchi et al., <i>High Press. Res.</i> (2007) [DOI: 10.1080/08957950701659593](https://doi.org/10.1080/08957950701659593)
-    * Sm<sup>2+</sup>:SrFCl
-        * 圧力シフト
-            * Lorenz et al., <i>High Press. Res.</i> (1994) [DOI: 10.1080/08957959408203170](https://doi.org/10.1080/08957959408203170)
-            * Shen et al., <i>High Press. Res.</i> (2021) [DOI: 10.1080/08957959.2021.1931168](https://doi.org/10.1080/08957959.2021.1931168)
-            * Shen et al., <i>High Press. Res.</i> (1991) [DOI: 10.1080/08957959108245510](https://doi.org/10.1080/08957959108245510)
-        * 温度シフト
-            * 20 - 650 K, Lorenz et al., <i>High Press. Res.</i> (1994) [DOI: 10.1080/08957959408203170](https://doi.org/10.1080/08957959408203170)
-* Raman スケール
-    * <sup>13</sup>C diamond first order
-        * 圧力シフト
-            * Schiferl et al., <i>J. Appl. Phys.</i> (1997) [DOI: 10.1063/1.366268](https://doi.org/10.1063/1.366268)
-            * Mysen and Yamashita, <i>Geochim. Cosmochim. Acta</i> (2010) [温度依存項を内包、基準温度T<sub>0</sub> = 298.15 K (25℃) 固定] [DOI: 10.1016/j.gca.2010.05.004](https://doi.org/10.1016/j.gca.2010.05.004)
-    * Cubic BN TO
-        * 圧力シフト
-            * Datchi et al., <i>Phys. Rev. B.</i> (2004) [温度依存項を内包、有効範囲 300–723 K] [DOI: 10.1103/PhysRevB.69.144106](https://doi.org/10.1103/PhysRevB.69.144106)
-            * Kawamoto et al., <i>Rev. Sci. Instrum.</i> (2004) [DOI: 10.1063/1.1765756](https://doi.org/10.1063/1.1765756)
-        * 温度シフト
-            * 300 - 1000 K, Kawamoto et al., <i>Rev. Sci. Instrum.</i> (2004) [DOI: 10.1063/1.1765756](https://doi.org/10.1063/1.1765756)
-    * Zircon B<sub>1g</sub>
-        * 圧力シフト
-            * Schmidt et al., <i>Am. Min.</i> (2013) [DOI: 10.2138/am.2013.4143](https://doi.org/10.2138/am.2013.4143)
-            * Takahashi et al., <i>J. Raman Spectrosc.</i> (2024) [DOI: 10.1002/jrs.6663](https://doi.org/10.1002/jrs.6663)
-        * 温度シフト
-            * 296 - 1223 K, Schmidt et al., <i>Am. Min.</i> (2013) [DOI: 10.2138/am.2013.4143](https://doi.org/10.2138/am.2013.4143)
-            * 294 - 1078 K, Takahashi et al., <i>J. Raman Spectrosc.</i> (2024) [DOI: 10.1002/jrs.6663](https://doi.org/10.1002/jrs.6663)
-    * Quartz 464 cm<sup>-1</sup>
-        * 圧力シフト
-            * Schmidt and Ziemann, <i>Am. Min.</i> (2000) [23℃付近、2次式、0 < Δν ≤ 20 cm<sup>-1</sup>（~2.1 GPaまで）] [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
-            * Schmidt and Ziemann, <i>Am. Min.</i> (2000) [100–560℃、線形近似 9 cm<sup>-1</sup>/GPa] [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
-        * 温度シフト
-            * 77.15 - 833.15 K (-196 - 560℃), Schmidt and Ziemann, <i>Am. Min.</i> (2000) [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
-    * Quartz 128 cm<sup>-1</sup>
-        * 圧力シフト
-            * Li et al., <i>Chem. Geol.</i> (2025) [温度依存項を内包、基準温度T<sub>0</sub> = 296.15 K (23℃) 固定、有効範囲 296.15–973.15 K] [DOI: 10.1016/j.chemgeo.2024.122558](https://doi.org/10.1016/j.chemgeo.2024.122558)
+![](docs-site/static/img/manual/PressureCalculator.png)
 
 
 
@@ -272,142 +134,14 @@ Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``sp
 起動している間、GUI側の測定・設定系操作はロックされ（プロットの表示設定等は引き続き操作可）、
 **Stop API Server** を押すとローカルでの操作権が戻ります。
 
-エンドポイント一覧・リクエスト/レスポンスの詳細は [manuals/API.md](manuals/API.md) を参照してください。
+エンドポイント一覧・リクエスト/レスポンスの詳細は [オンラインマニュアルのAPIリファレンス](https://khsacc.github.io/FluoRaPressee/docs/api) を参照してください。
 
-##  保存されるファイルの形式
+## 保存されるファイルの形式
 
-### データファイル
-
-#### Background を差し引かない場合
-
-```
-# Timestamp: 2026-04-15 20:22:03
-# Grating: 1200 grooves/mm
-# Spectrometer Mode: Wavelength
-# Centre Wavelength: 694.0 nm
-# Acquisition Time: 0.1 s
-# Accumulations: 1
-# Calibration Coefficients (c0, c1, c2: y = c0 + c1x + c2x^2): 673.3405851432854, 0.020990883361968825, -2.889725985123467e-07
-# ROI Start (Vertical Pixel): 113
-# ROI End (Vertical Pixel): 125
-# Measurement Mode: 1D Spectrum (Custom ROI)
-# Wavelength_or_Pixel,Intensity
-673.63,1122
-673.65,1130
-673.671,1126
-673.691,1126
-673.712,1125
-673.732,1132
-673.753,1128
-...
-```
-
-#### Background を差し引く場合
-```
-# Timestamp: 2026-04-15 21:05:42
-# Grating: 1200 grooves/mm
-# Spectrometer Mode: Wavelength
-# Centre Wavelength: 694.0 nm
-# Acquisition Time: 2.0 s
-# Accumulations: 1
-# Calibration Coefficients (c0, c1, c2: y = c0 + c1x + c2x^2): 673.3405851432854, 0.020990883361968825, -2.889725985123467e-07
-# ROI Start (Vertical Pixel): 113
-# ROI End (Vertical Pixel): 125
-# Measurement Mode: 1D Spectrum (Custom ROI)
-# Wavelength_or_Pixel,Intensity_Subtracted,Intensity_Raw,Background
-673.341,2,1031,1029
-673.362,3,1035,1032
-673.383,3,1031,1028
-673.404,-7,1029,1036
-673.425,-1,1032,1033
-673.446,5,1036,1031
-673.467,0,1030,1030
-673.488,-2,1032,1034
-673.508,1,1031,1030
-673.529,-3,1029,1032
-...
-```
-
-較正係数が未適用の場合、``Calibration Coefficients`` の行は ``# Calibration Coefficients: None`` となります。横軸がRaman shiftモードの場合、``Spectrometer Mode: Raman shift`` に加えて ``Excitation Wavelength`` と ``Centre Raman shift`` の行が挿入されます。また、測定時のカメラ・分光器の詳細情報（機種名・シリアル番号・ROI・ビニング・冷却温度など、Andor / Princeton Instruments いずれの場合も共通のスキーマで記録されます）を持つ ``hardware_metadata`` 行が末尾に付加されることがあります。
-
-### Background file
-```json
-{
-    "detector_settings": {
-        "mode": "1D Spectrum (Custom ROI)",
-        "roi_start": 100,
-        "roi_end": 140
-    },
-    "acquisition_time": "1.00",
-    "accumulations": 1,
-    "detector_temperature": -65.0,
-    "hardware_metadata": { "...": "..." },
-    "signal": [
-        1085,
-        1089,
-        1088,
-        1090, ...
-    ]
-}
-```
-
-### Configuration file
-
-Configurationは校正ダイアログの ``Save and apply`` でアプリケーション管理領域へ自動保存されます。
-任意の保存先・ファイル名を毎回指定する必要はありません。同じ装置、grating、centre position、ROIで
-再度保存すると新しいversionがactiveになり、以前のversionは履歴として保持されます。メイン画面の
-``Load previous configuration`` は、接続中の装置と互換性があるactive configurationだけを通常表示し、
-必要な場合だけ ``Show version history`` で旧versionを表示します。
-
-Configurationはgrating、centre position、ROI、装置互換性と横軸calibrationを一体として扱います。
-露光時間、積算数、試料・物質名、background、fitting条件は測定ごとに変更する値なので含みません。
-保存場所はOSのユーザー別application data領域にある ``FluoraPressee/configurations`` です。個々の
-JSON recordを正本とし、一覧検索には全JSONを読み込まずSQLite catalogを使用します。
-装置互換性は、保存時にserial numberを取得できた場合はその完全一致を必須とし、取得できないbackendでは
-modelの完全一致へfallbackします。旧形式の任意保存calibration JSONはこのcatalogへimportされず、
-ファイル自体は削除されませんがLoad画面の対象にはなりません。
-
-```json
-{
-    "schema_version": 1,
-    "configuration_id": "cfg_...",
-    "slot_id": "slot_...",
-    "created_at": "2026-07-22T15:30:00+09:00",
-    "compatibility": {
-        "spectrometer_model": "SP-2750",
-        "spectrometer_serial_number": "SPEC-001",
-        "camera_model": "DU-401",
-        "camera_serial_number": "CAM-001"
-    },
-    "spectrometer": {
-        "grating_index": 2,
-        "grating_grooves_per_mm": 1200,
-        "target_center_wavelength_nm": 694.0,
-        "actual_center_wavelength_nm": 693.9998
-    },
-    "detector": {
-        "roi_mode": "1d_roi",
-        "roi_start": 113,
-        "roi_end": 125
-    },
-    "calibration": {
-        "unit": "Wavelength",
-        "excitation_wavelength_nm": null,
-        "coefficients": {
-            "c0": 673.3405851432854,
-            "c1": 0.020990883361968825,
-            "c2": -2.889725985123467e-07
-        }
-    }
-}
-```
-
-``configuration_id`` は変更されない特定version、``slot_id`` は同一のgrating・centre・ROI条件を表します。
-外部自動化用の ``GET /configurations`` もGUIのLoad画面と同じcatalog summaryと互換性判定を使用します。
-取得APIへ ``configuration_id`` を指定するとconfiguration適用から測定までを一つの排他操作として実行し、
-省略すると現在と同じ条件のまま測定します。
-
-
+測定データ、バックグラウンド、フィッティング結果、連続測定のログ、Configuration（較正込みの装置設定）
+など、アプリが保存する各ファイルの形式については
+[オンラインマニュアルの「保存データの形式」](https://khsacc.github.io/FluoRaPressee/docs/data-formats)
+を参照してください。
 
 ## 実機試験
 

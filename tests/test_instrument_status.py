@@ -2,11 +2,11 @@ import json
 import unittest
 from collections import namedtuple
 
-from src.andor_camera_status import collect_andor_camera_status
-from src.andor_spectrometer_status import collect_shamrock_status
-from src.instrument_status import legacy_camera_snapshot, make_report
-from src.camera_oceanoptics import CameraThreadOceanOptics
-from src.spectrometer_oceanoptics import SpectrometerControllerOceanOptics
+from src.hardware.status.andor_camera_status import collect_andor_camera_status
+from src.hardware.status.andor_spectrometer_status import collect_shamrock_status
+from src.hardware.status.instrument_status import legacy_camera_snapshot, make_report
+from src.hardware.camera_oceanoptics import CameraThreadOceanOptics
+from src.hardware.spectrometer_oceanoptics import SpectrometerControllerOceanOptics
 
 
 DeviceInfo = namedtuple("DeviceInfo", "controller_model head_model serial_number")

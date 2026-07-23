@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from src.file_io import DataFileIO
+from src.core.file_io import DataFileIO
 
 
 def metadata(spec_mode="Wavelength", exc_wl=532.0):

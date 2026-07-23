@@ -20,7 +20,7 @@ except (ImportError, ModuleNotFoundError):
     create_app = None
 
 try:
-    from src.ui_mixins.api_mixin import ApiMixin
+    from src.ui.ui_mixins.api_mixin import ApiMixin
 except (ImportError, ModuleNotFoundError):
     ApiMixin = None
 

@@ -1,0 +1,13 @@
+def CameraThread(config=None, debug=False):
+    # Determine the hardware model from config (defaults to Andor)
+    model = config.get("model", "Andor") if config else "Andor"
+    
+    if model == "PrincetonInstruments":
+        from src.hardware.camera_princeton import CameraThreadPI
+        return CameraThreadPI(config=config, debug=debug)
+    elif model == "OceanOptics":
+        from src.hardware.camera_oceanoptics import CameraThreadOceanOptics
+        return CameraThreadOceanOptics(config=config, debug=debug)
+    else:
+        from src.hardware.camera_andor import CameraThreadAndor
+        return CameraThreadAndor(config=config, debug=debug)

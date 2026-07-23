@@ -1,5 +1,5 @@
 ---
-sidebar_position: 3
+sidebar_position: 4
 title: 基本操作
 description: 測定、較正、解析の基本的な流れ
 ---
@@ -34,4 +34,5 @@ Windowsでは`FluoRaPressee_run.bat`を実行します。
 - Pseudo-Voigt、Moffat、Gaussian、Lorentzianによるピークフィット
 - 蛍光およびRamanスケールを用いた圧力計算
 
-より詳細な説明は、今後このオンラインマニュアルへ順次追加します。
+より詳細な説明は、今後このオンラインマニュアルへ順次追加します。圧力計算で使えるセンサー・圧力スケール・
+温度補正の詳細は[圧力計算](pressure-calculation/index.md)を参照してください。

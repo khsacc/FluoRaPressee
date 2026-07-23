@@ -5,8 +5,8 @@ import unittest
 
 import numpy as np
 
-from src.file_io import DataFileIO
-from src.measurement_metadata import (
+from src.core.file_io import DataFileIO
+from src.core.measurement_metadata import (
     build_hardware_metadata,
     capture_hardware_state,
     public_axis_kind,
@@ -232,7 +232,7 @@ class PublicAxisKindTests(unittest.TestCase):
         self.assertEqual(public_axis_unit(window), "cm-1")
 
     def test_axis_state_source_is_oceanoptics_native_when_uncalibrated_with_native_wavelengths(self):
-        from src.measurement_metadata import _axis_state  # exercise the richer provenance field too
+        from src.core.measurement_metadata import _axis_state  # exercise the richer provenance field too
 
         window = Window()
         window.calib_coeffs = None
@@ -245,7 +245,7 @@ class PublicAxisKindTests(unittest.TestCase):
         self.assertIsNone(state["calibration_coefficients"])
 
     def test_axis_state_hardware_shamrock_is_still_preserved(self):
-        from src.measurement_metadata import _axis_state
+        from src.core.measurement_metadata import _axis_state
 
         window = Window()
         window.calib_coeffs = None
@@ -275,7 +275,7 @@ class BackgroundCorrectionMismatchTests(unittest.TestCase):
     subtracted, mirroring every other hardware-state comparison in background_mismatch_fields()."""
 
     def _window_with_background(self, current_dark, current_nonlinearity, saved_dark, saved_nonlinearity):
-        from src.measurement_metadata import background_mismatch_fields
+        from src.core.measurement_metadata import background_mismatch_fields
 
         window = Window()
         window.thread = OceanOpticsCamera(current_dark, current_nonlinearity)
@@ -310,7 +310,7 @@ class BackgroundCorrectionMismatchTests(unittest.TestCase):
         self.assertIn("camera.nonlinearity_corrected", fields)
 
     def test_andor_backgrounds_without_the_field_are_unaffected(self):
-        from src.measurement_metadata import background_mismatch_fields
+        from src.core.measurement_metadata import background_mismatch_fields
 
         window = Window()  # plain Camera fixture - no hardware_dark_corrected key at all
         capture = capture_hardware_state(window, 3)

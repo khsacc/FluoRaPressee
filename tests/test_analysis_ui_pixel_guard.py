@@ -11,8 +11,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
-    from src.analysis_ui import AnalysisWindow
-    from src.file_io import DataFileIO
+    from src.ui.analysis_ui import AnalysisWindow
+    from src.core.file_io import DataFileIO
 except ImportError:
     AnalysisWindow = None
 
