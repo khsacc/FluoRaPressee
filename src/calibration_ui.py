@@ -57,6 +57,7 @@ class CalibrationWindow(QDialog):
         self.fitted_peaks = []
         self.peak_lines = []
         self.peak_texts = []
+        self.peak_tick_items = []
         self.reference_overlay_items = []
         self.is_acquiring = False
         
@@ -107,6 +108,23 @@ class CalibrationWindow(QDialog):
         self.plot_widget.setLabel('left', 'Intensity (Counts)', color='k')
         self.plot_widget.setLabel('bottom', 'Pixel', color='k')
         self.plot_widget.getViewBox().setMouseMode(pg.ViewBox.RectMode)
+        self.plot_legend = self.plot_widget.addLegend(offset=(10, 10))
+        if hasattr(self.plot_legend, "setLabelTextColor"):
+            self.plot_legend.setLabelTextColor("k")
+        self.plot_legend.addItem(
+            pg.PlotDataItem(pen=pg.mkPen("#1565C0", width=3)),
+            "Literature line",
+        )
+        self.plot_legend.addItem(
+            pg.PlotDataItem(pen=pg.mkPen("#EF6C00", width=3)),
+            "Detected peak",
+        )
+        self.plot_legend.addItem(
+            pg.PlotDataItem(
+                pen=pg.mkPen("#D32F2F", width=2, style=Qt.PenStyle.DashLine)
+            ),
+            "Used peak",
+        )
         self.plot_scatter = self.plot_widget.plot(pen=None, symbol='o', symbolSize=3, symbolBrush='b')
         self.peak_select_scatter = pg.ScatterPlotItem(
             symbol="o", size=11, pen=pg.mkPen("#C62828", width=2),
@@ -115,8 +133,8 @@ class CalibrationWindow(QDialog):
         self.peak_select_scatter.sigClicked.connect(self.on_measured_peak_clicked)
         self.plot_widget.addItem(self.peak_select_scatter)
         self.reference_select_scatter = pg.ScatterPlotItem(
-            symbol="t", size=12, pen=pg.mkPen("#6A1B9A"),
-            brush=pg.mkBrush(156, 39, 176, 180),
+            symbol="s", size=9, pen=pg.mkPen("#1565C0"),
+            brush=pg.mkBrush(21, 101, 192, 180),
         )
         self.reference_select_scatter.sigClicked.connect(self.on_reference_line_clicked)
         self.plot_widget.addItem(self.reference_select_scatter)
@@ -389,6 +407,28 @@ class CalibrationWindow(QDialog):
             return None
         return value if np.isfinite(value) and value > 0 else None
 
+    def _tick_levels(self):
+        """Return separated y ranges below the measured spectrum for peak ticks."""
+        if self.current_spectrum is None or len(self.current_spectrum) == 0:
+            return {
+                "literature": (-0.08, -0.02),
+                "detected": (-0.17, -0.11),
+            }
+        y_min = float(np.min(self.current_spectrum))
+        y_max = float(np.max(self.current_spectrum))
+        span = max(y_max - y_min, abs(y_max) * 0.1, 1.0)
+        baseline = min(0.0, y_min)
+        return {
+            "literature": (
+                baseline - 0.08 * span,
+                baseline - 0.02 * span,
+            ),
+            "detected": (
+                baseline - 0.17 * span,
+                baseline - 0.11 * span,
+            ),
+        }
+
     def find_peaks(self):
         if self.current_spectrum is None:
             return
@@ -406,14 +446,15 @@ class CalibrationWindow(QDialog):
         self.match_candidates = []
         self.combo_match_candidate.clear()
         self.btn_apply_candidate.setEnabled(False)
-        for item in self.peak_lines + self.peak_texts:
+        for item in self.peak_lines + self.peak_texts + self.peak_tick_items:
             self.plot_widget.removeItem(item)
         self.peak_lines.clear()
         self.peak_texts.clear()
+        self.peak_tick_items.clear()
         while self.bottom_layout.count():
             child = self.bottom_layout.takeAt(0)
             if child.widget(): child.widget().deleteLater()
-        max_y = np.max(self.current_spectrum)
+        detected_tick_low, detected_tick_high = self._tick_levels()["detected"]
         peak_spots = []
         for i, p_data in enumerate(fitted_peaks):
             center = p_data["center"]
@@ -433,12 +474,24 @@ class CalibrationWindow(QDialog):
             chk.checkStateChanged.connect(lambda state, r=row: self.on_use_toggled(state, r))
             self.table.setItem(row, 3, QTableWidgetItem(""))
             self.table.setItem(row, 4, QTableWidgetItem("Unassigned"))
-            line = pg.InfiniteLine(pos=center, angle=90, pen=pg.mkPen('r', style=Qt.PenStyle.DashLine))
-            text = pg.TextItem(f"#{i+1}", color='r', anchor=(0, 1))
-            text.setPos(center, max_y * 0.95)
+            line = pg.InfiniteLine(
+                pos=center,
+                angle=90,
+                pen=pg.mkPen("#D32F2F", width=2, style=Qt.PenStyle.DashLine),
+            )
+            line.setVisible(False)
+            tick = pg.PlotDataItem(
+                [center, center],
+                [detected_tick_low, detected_tick_high],
+                pen=pg.mkPen("#EF6C00", width=3),
+            )
+            text = pg.TextItem(f"#{i+1}", color="#EF6C00", anchor=(0.5, 1.0))
+            text.setPos(center, detected_tick_low)
             self.plot_widget.addItem(line)
+            self.plot_widget.addItem(tick)
             self.plot_widget.addItem(text)
             self.peak_lines.append(line)
+            self.peak_tick_items.append(tick)
             self.peak_texts.append(text)
             nearest_index = int(np.clip(round(center), 0, len(self.current_spectrum) - 1))
             peak_spots.append({
@@ -448,6 +501,7 @@ class CalibrationWindow(QDialog):
             small_plot = pg.PlotWidget()
             small_plot.setFixedSize(180, 180)
             small_plot.setBackground('w')
+            small_plot.setTitle(f"Peak #{i + 1}", color="k", size="11pt")
             small_plot.plot(p_data["x_fit"], p_data["y_data"], pen=None, symbol='o', symbolSize=3, symbolBrush='b')
             small_plot.plot(p_data["x_curve"], p_data["y_curve"], pen=pg.mkPen('r', width=2))
             self.bottom_layout.addWidget(small_plot)
@@ -466,6 +520,7 @@ class CalibrationWindow(QDialog):
                 self.assignments[closest] = assignment
                 self.row_widgets[closest]["check"].setChecked(True)
         self._refresh_calibration_preview()
+        self._refresh_peak_plot_styles()
         self.update_reference_overlay()
 
     def _laser_wavelength(self):
@@ -581,6 +636,7 @@ class CalibrationWindow(QDialog):
             self._update_assignment_row(row)
             self._refresh_calibration_preview()
             self.update_reference_overlay()
+        self._refresh_peak_plot_styles()
 
     def update_table_value_widgets(self):
         for row in range(self.table.rowCount()):
@@ -628,14 +684,28 @@ class CalibrationWindow(QDialog):
         self.lbl_assignment_help.setText(
             f"Peak #{row + 1} selected. Click a literature marker to assign it."
         )
+        self._refresh_peak_plot_styles()
+
+    def _refresh_peak_plot_styles(self):
+        if self.current_spectrum is None:
+            return
         spots = []
         for index, row_data in enumerate(self.row_widgets):
+            is_used = row_data["check"].isChecked()
+            if index < len(self.peak_lines):
+                self.peak_lines[index].setVisible(is_used)
             pixel = row_data["px"]
             data_index = int(np.clip(round(pixel), 0, len(self.current_spectrum) - 1))
+            if index == self.selected_peak_row:
+                brush = pg.mkBrush("#FFB300")
+            elif is_used:
+                brush = pg.mkBrush("#D32F2F")
+            else:
+                brush = pg.mkBrush(255, 255, 255, 180)
             spots.append({
                 "pos": (pixel, float(self.current_spectrum[data_index])),
                 "data": index,
-                "brush": pg.mkBrush("#FFB300") if index == row else pg.mkBrush(255, 255, 255, 180),
+                "brush": brush,
             })
         self.peak_select_scatter.setData(spots)
 
@@ -892,7 +962,7 @@ class CalibrationWindow(QDialog):
             if line is not None:
                 visible_lines[line_id] = line
 
-        max_y = float(np.max(self.current_spectrum))
+        literature_tick_low, literature_tick_high = self._tick_levels()["literature"]
         spots = []
         for line in sorted(visible_lines.values(), key=lambda item: item.wavelength_nm):
             if not low <= line.wavelength_nm <= high:
@@ -901,15 +971,16 @@ class CalibrationWindow(QDialog):
                 line.wavelength_nm, interpolation_axis, interpolation_pixels
             ))
             assigned = line.line_id in assigned_ids
-            color = "#D32F2F" if assigned else "#7B1FA2"
-            marker = pg.InfiniteLine(
-                pos=pixel, angle=90,
-                pen=pg.mkPen(color, width=2 if assigned else 1),
+            color = "#0D47A1" if assigned else "#1565C0"
+            marker = pg.PlotDataItem(
+                [pixel, pixel],
+                [literature_tick_low, literature_tick_high],
+                pen=pg.mkPen(color, width=4 if assigned else 3),
             )
             self.plot_widget.addItem(marker)
             self.reference_overlay_items.append(marker)
             spots.append({
-                "pos": (pixel, max_y * 0.96),
+                "pos": (pixel, (literature_tick_low + literature_tick_high) / 2.0),
                 "data": line.line_id,
                 "brush": pg.mkBrush(color),
             })

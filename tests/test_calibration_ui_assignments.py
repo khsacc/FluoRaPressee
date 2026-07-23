@@ -74,6 +74,35 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
         self.assertIn(0, self.window.assignments)
         self.assertNotIn(1, self.window.assignments)
 
+    def test_only_used_peak_has_full_height_dashed_marker(self):
+        self.assertFalse(self.window.peak_lines[0].isVisible())
+
+        neon = self.window.reference_standards["Ne-I"].lines[17]
+        self.window.assign_reference_line(0, neon)
+        self.assertTrue(self.window.peak_lines[0].isVisible())
+        self.assertFalse(self.window.peak_lines[1].isVisible())
+
+        self.window.row_widgets[0]["check"].setChecked(False)
+        self.assertFalse(self.window.peak_lines[0].isVisible())
+
+    def test_individual_fit_plots_have_peak_number_titles(self):
+        first_plot = self.window.bottom_layout.itemAt(0).widget()
+        second_plot = self.window.bottom_layout.itemAt(1).widget()
+
+        self.assertEqual(first_plot.plotItem.titleLabel.text, "Peak #1")
+        self.assertEqual(second_plot.plotItem.titleLabel.text, "Peak #2")
+
+    def test_literature_markers_are_short_bars_below_zero(self):
+        neon = self.window.reference_standards["Ne-I"].lines[17]
+        argon = self.window.reference_standards["Ar-I"].lines[8]
+        self.window.assign_reference_line(0, neon)
+        self.window.assign_reference_line(1, argon)
+
+        self.assertTrue(self.window.reference_overlay_items)
+        for marker in self.window.reference_overlay_items:
+            _x, y = marker.getData()
+            self.assertLess(float(np.max(y)), 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
