@@ -4,7 +4,159 @@
     * https://orcid.org/0000-0002-3682-7558 
     * E-mail as of 2026: hiroki (at) eqchem.s.u-tokyo.ac.jp
 
-Andor製またはPrinceton Instruments製のカメラ（検出器）および分光器を制御し、スペクトルのリアルタイム取得からバックグラウンド補正、キャリブレーション、ピークフィッティング、そして高圧実験における圧力計算までを一貫して行うためのPythonベースのGUIアプリケーションです。
+スペクトルのリアルタイム取得からバックグラウンド補正、キャリブレーション、ピークフィッティング、そして高圧実験における圧力計算までを一貫して行うためのPythonベースのGUIアプリケーションです。現在、Andor、Princeton Instruments、Ocean Opticsの分光器に対応しています。
+
+
+
+## 必須環境 (Requirements)
+
+* **OS**: Windows 10 / 11 (Andor SDK・Princeton Instruments PICam Runtime のいずれもWindows専用のため)
+* **Python**: Python 3.9 以上, 3.13以下
+* **Hardware**: 以下のいずれかの組み合わせに対応しています（起動時の設定ウィザードで選択します）
+  * Andor製 カメラ（検出器）+ Andor製 分光器（Kymera / Shamrock シリーズ、``ShamrockCIF.dll`` 経由で制御）
+  * Princeton Instruments製 カメラ（検出器、PICam対応機種）+ Princeton Instruments製 分光器（Acton SP シリーズ、シリアル(COMポート)通信で制御）
+  * Ocean Optics製分光器
+* **Drivers/SDK**:
+  * Andorの場合: Andor SDK (ドライバパッケージがPCにインストールされている必要があります)
+  * Princeton Instrumentsの場合: PICam Runtime（カメラSDK。分光器側は追加ドライバ不要でシリアルポート経由で通信します）
+
+## インストール方法 
+
+1. リポジトリをクローンします。AndorまたはPrinceton Instrumentsを使用する場合は、``setup.bat``をダブルクリック
+   （またはコマンドプロンプト/PowerShellから実行）します。Ocean Opticsを使用する場合は、代わりに
+   ``setup_oceanoptics.bat``を右クリックして「管理者として実行」します。
+   プロジェクトフォルダ内に仮想環境``.venv``が作成され、``requirements.txt``に記載された必要なPythonパッケージ
+   （``PyQt6``, ``pyqtgraph``, ``numpy``, ``scipy``, ``pylablib``, ``pyserial``、および後述のAPI機能用の
+   ``fastapi``, ``uvicorn``, ``pydantic``）がすべて自動的にインストールされます。
+   手動でインストールする場合は、作成した仮想環境内で ``pip install -r requirements.txt`` を実行してください。
+2. 使用する装置メーカーに応じて、SDK/ドライバを正しくインストールします。
+   * Andorの場合: Andor SDK
+   * Princeton Instrumentsの場合: PICam Runtime（カメラ用）。分光器（Acton SP シリーズ）はシリアル接続のため、PC側のCOMポート番号を確認しておきます。
+   * Ocean Opticsの場合: ``setup.bat``を先に実行する必要はありません。``setup_oceanoptics.bat``の1回の実行で、
+     仮想環境の作成、共通パッケージと``seabreeze``のインストール、``seabreeze_os_setup``による
+     OS依存の設定まで自動的に行われます。macOS/Linuxでは``./setup_oceanoptics.sh``を``./setup.sh``の代わりに実行します。
+3. ``spectrometerConfig.json``が存在しない状態でアプリを初めて起動すると、セットアップウィザードが自動的に開きます。
+   1. メーカー選択（Andor / Princeton Instruments / Ocean Optics）
+   2. 接続設定（Andor: ``ShamrockCIF.dll`` のパス。Princeton Instruments: COMポート、PICam Runtimeのパス、カメラのシリアル番号。Ocean Optics: シリアル番号（省略可）、seabreeze backend（通常は空欄のままでよい））。
+      「Read parameters from connected hardware」ボタンで、接続済みの実機からこれらの値や回折格子構成を自動取得することもできます。
+   3. 回折格子（grooves/mm）、``flip_x``（スペクトルの左右反転）、冷却温度などの初期値（Ocean Optics選択時はグレーティング・冷却温度の項目は表示されません — 固定分光器かつ無冷却のため）
+
+   ウィザード完了後、``spectrometerConfig.json``がプロジェクトルートに生成されます（ウィザードをキャンセルした場合は、Andor用のデフォルト設定が生成されます）。内容は以下のようなJSONファイルで、直接編集して再起動すれば変更が反映されます。
+
+### Andor の場合
+
+```json
+{
+    "model": "Andor",
+    "dll_path": "C:\\Program Files\\Andor SDK\\Shamrock64\\ShamrockCIF.dll",
+    "grating": [
+        {
+            "index": 1,
+            "grooves": 2400,
+            "defaultROI": {"from": 80, "to": 100}
+        },
+        {
+            "index": 2,
+            "grooves": 1800,
+            "defaultROI": {"from": 115, "to": 130}
+        },
+        {
+            "index": 3,
+            "grooves": 1200,
+            "defaultROI": {"from": 113, "to": 125}
+        }
+    ],
+    "flip_x": true,
+    "default_temperature": -65,
+    "default_fan_mode": "full"
+}
+```
+
+### Princeton Instruments の場合
+
+```json
+{
+    "model": "PrincetonInstruments",
+    "com_port": "COM3",
+    "PIcam_dll_path": "C:\\Program Files\\Princeton Instruments\\PICam\\Runtime",
+    "camera_serial_number": "0412060001",
+    "grating": [
+        {
+            "index": 1,
+            "grooves": 1200,
+            "defaultROI": {"from": 100, "to": 140}
+        },
+        {
+            "index": 2,
+            "grooves": 1800,
+            "defaultROI": {"from": 100, "to": 140}
+        }
+    ],
+    "flip_x": false,
+    "default_temperature": -65
+}
+```
+
+``default_fan_mode``はAndor SDK2の冷却ファン制御に固有の項目のため、Princeton Instrumentsの設定には含まれません。カメラのシリアル番号（``camera_serial_number``）は、接続されているカメラが1台のみであれば省略できます。
+
+### Ocean Optics の場合
+
+```json
+{
+    "model": "OceanOptics",
+    "serial_number": null,
+    "seabreeze_backend": null,
+    "correct_dark_counts": true,
+    "correct_nonlinearity": true,
+    "grating": [
+        {"index": 1, "grooves": 0, "defaultROI": {"from": 0, "to": 1}}
+    ],
+    "flip_x": false
+}
+```
+
+Ocean Opticsは分光器とカメラが一体になった固定分光器です。可動グレーティング・可動中心波長・
+冷却器を持たないため、GUI上でもこれらの項目（2D Image View、垂直方向カスタムROI、グレーティング
+選択、中心波長のApply）は表示されません。``grating``キー内の値（``grooves: 0``）は
+ConfigurationCatalog（較正保存機構）との互換性を保つための内部的なプレースホルダーであり、
+ユーザーが編集する必要はありません。``serial_number``を指定すると特定の個体を、``null``のままなら
+最初に見つかったデバイスを使用します。
+
+FluoraPressée自身のネオン較正（「Calibrate x-axis」）を適用するまでは、X軸には装置内蔵の
+工場較正済み波長軸がそのまま表示され、プロット上部に注意書きが表示されます。これは
+「未較正」とは異なり、Ocean Optics自身の較正データに基づく正しい波長軸です。
+
+##  使い方 
+
+``FluoRaPressee_run.bat``をダブルクリック（またはコマンドプロンプト/PowerShellから実行）すると、選択したsetupスクリプトで作成した仮想環境を使ってアプリが起動します。
+
+<!-- ※ ハードウェアを接続せずにUIのテストだけを行いたい場合は、``FluoRaPressee_run_debug.bat``を使うとデバッグモードで起動できます。
+
+macOS/Linux上でUI開発のみ行う場合（ハードウェア制御は非対応）は、``./setup.sh``と``./FluoRaPressee_run_debug.sh``を使用してください。 -->
+
+### Analysis Modeをスタンドアロンで起動する
+
+保存済みの1Dスペクトルを読み込んでフィッティングや圧力計算を行うAnalysis Modeは、装置制御用のメイン画面を起動せず、単独で使用できます。プロジェクトのルートフォルダで次のコマンドを実行してください。
+
+Windows（``setup.bat``で作成した仮想環境を直接使用する場合）:
+
+```powershell
+.venv\Scripts\python.exe analysis_main.py
+```
+
+仮想環境をすでに有効化している場合:
+
+```bash
+python analysis_main.py
+```
+
+macOS/Linux（``setup.sh``で作成した仮想環境を直接使用する場合）:
+
+```bash
+.venv/bin/python analysis_main.py
+```
+
+Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``spectrometerConfig.json``は必要ありません。未較正のpixel軸データでもフィッティングは可能ですが、圧力計算には波長またはRaman shiftで較正されたデータが必要です。
 
 ## スクリーンショット
 
@@ -99,126 +251,18 @@ Andor製またはPrinceton Instruments製のカメラ（検出器）および分
         * 温度シフト
             * 296 - 1223 K, Schmidt et al., <i>Am. Min.</i> (2013) [DOI: 10.2138/am.2013.4143](https://doi.org/10.2138/am.2013.4143)
             * 294 - 1078 K, Takahashi et al., <i>J. Raman Spectrosc.</i> (2024) [DOI: 10.1002/jrs.6663](https://doi.org/10.1002/jrs.6663)
+    * Quartz 464 cm<sup>-1</sup>
+        * 圧力シフト
+            * Schmidt and Ziemann, <i>Am. Min.</i> (2000) [23℃付近、2次式、0 < Δν ≤ 20 cm<sup>-1</sup>（~2.1 GPaまで）] [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
+            * Schmidt and Ziemann, <i>Am. Min.</i> (2000) [100–560℃、線形近似 9 cm<sup>-1</sup>/GPa] [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
+        * 温度シフト
+            * 77.15 - 833.15 K (-196 - 560℃), Schmidt and Ziemann, <i>Am. Min.</i> (2000) [DOI: 10.2138/am-2000-11-1216](https://pubs.geoscienceworld.org/msa/ammin/article/85/11-12/1725/133600/In-situ-Raman-spectroscopy-of-quartz-A-pressure)
+    * Quartz 128 cm<sup>-1</sup>
+        * 圧力シフト
+            * Li et al., <i>Chem. Geol.</i> (2025) [温度依存項を内包、基準温度T<sub>0</sub> = 296.15 K (23℃) 固定、有効範囲 296.15–973.15 K] [DOI: 10.1016/j.chemgeo.2024.122558](https://doi.org/10.1016/j.chemgeo.2024.122558)
 
 
 
-
-## 必須環境 (Requirements)
-
-* **OS**: Windows 10 / 11 (Andor SDK・Princeton Instruments PICam Runtime のいずれもWindows専用のため)
-* **Python**: Python 3.8 以上, 3.13以下
-* **Hardware**: 以下のいずれかの組み合わせに対応しています（起動時の設定ウィザードでどちらかを選択します）
-  * Andor製 カメラ（検出器）+ Andor製 分光器（Kymera / Shamrock シリーズ、``ShamrockCIF.dll`` 経由で制御）
-  * Princeton Instruments製 カメラ（検出器、PICam対応機種）+ Princeton Instruments製 分光器（Acton SP シリーズ、シリアル(COMポート)通信で制御）
-* **Drivers/SDK**:
-  * Andorの場合: Andor SDK (ドライバパッケージがPCにインストールされている必要があります)
-  * Princeton Instrumentsの場合: PICam Runtime（カメラSDK。分光器側は追加ドライバ不要でシリアルポート経由で通信します）
-
-## インストール方法 
-
-1. リポジトリをクローンしたのち、``setup.bat``をダブルクリック（またはコマンドプロンプト/PowerShellから実行）します。
-   プロジェクトフォルダ内に仮想環境``.venv``が作成され、``requirements.txt``に記載された必要なPythonパッケージ
-   （``PyQt5``, ``pyqtgraph``, ``numpy``, ``scipy``, ``pylablib``, ``pyserial``、および後述のAPI機能用の
-   ``fastapi``, ``uvicorn``, ``pydantic``）がすべて自動的にインストールされます。
-   手動でインストールする場合は、作成した仮想環境内で ``pip install -r requirements.txt`` を実行してください。
-2. 使用する装置メーカーに応じて、SDK/ドライバを正しくインストールします。
-   * Andorの場合: Andor SDK
-   * Princeton Instrumentsの場合: PICam Runtime（カメラ用）。分光器（Acton SP シリーズ）はシリアル接続のため、PC側のCOMポート番号を確認しておきます。
-3. ``spectrometerConfig.json``が存在しない状態でアプリを初めて起動すると、セットアップウィザードが自動的に開きます。
-   1. メーカー選択（Andor / Princeton Instruments）
-   2. 接続設定（Andor: ``ShamrockCIF.dll`` のパス。Princeton Instruments: COMポート、PICam Runtimeのパス、カメラのシリアル番号）。
-      「Read parameters from connected hardware」ボタンで、接続済みの実機からこれらの値や回折格子構成を自動取得することもできます。
-   3. 回折格子（grooves/mm）、``flip_x``（スペクトルの左右反転）、冷却温度などの初期値
-
-   ウィザード完了後、``spectrometerConfig.json``がプロジェクトルートに生成されます（ウィザードをキャンセルした場合は、Andor用のデフォルト設定が生成されます）。内容は以下のようなJSONファイルで、直接編集して再起動すれば変更が反映されます。
-
-### Andor の場合
-
-```json
-{
-    "model": "Andor",
-    "dll_path": "C:\\Program Files\\Andor SDK\\Shamrock64\\ShamrockCIF.dll",
-    "grating": [
-        {
-            "index": 1,
-            "grooves": 2400,
-            "defaultROI": {"from": 80, "to": 100}
-        },
-        {
-            "index": 2,
-            "grooves": 1800,
-            "defaultROI": {"from": 115, "to": 130}
-        },
-        {
-            "index": 3,
-            "grooves": 1200,
-            "defaultROI": {"from": 113, "to": 125}
-        }
-    ],
-    "flip_x": true,
-    "default_temperature": -65,
-    "default_fan_mode": "full"
-}
-```
-
-### Princeton Instruments の場合
-
-```json
-{
-    "model": "PrincetonInstruments",
-    "com_port": "COM3",
-    "PIcam_dll_path": "C:\\Program Files\\Princeton Instruments\\PICam\\Runtime",
-    "camera_serial_number": "0412060001",
-    "grating": [
-        {
-            "index": 1,
-            "grooves": 1200,
-            "defaultROI": {"from": 100, "to": 140}
-        },
-        {
-            "index": 2,
-            "grooves": 1800,
-            "defaultROI": {"from": 100, "to": 140}
-        }
-    ],
-    "flip_x": false,
-    "default_temperature": -65
-}
-```
-
-``default_fan_mode``はAndor SDK2の冷却ファン制御に固有の項目のため、Princeton Instrumentsの設定には含まれません。カメラのシリアル番号（``camera_serial_number``）は、接続されているカメラが1台のみであれば省略できます。
-
-##  使い方 
-
-``FluoRaPressee_run.bat``をダブルクリック（またはコマンドプロンプト/PowerShellから実行）すると、``setup.bat``で作成した仮想環境を使ってアプリが起動します。
-
-<!-- ※ ハードウェアを接続せずにUIのテストだけを行いたい場合は、``FluoRaPressee_run_debug.bat``を使うとデバッグモードで起動できます。
-
-macOS/Linux上でUI開発のみ行う場合（ハードウェア制御は非対応）は、``./setup.sh``と``./FluoRaPressee_run_debug.sh``を使用してください。 -->
-
-### Analysis Modeをスタンドアロンで起動する
-
-保存済みの1Dスペクトルを読み込んでフィッティングや圧力計算を行うAnalysis Modeは、装置制御用のメイン画面を起動せず、単独で使用できます。プロジェクトのルートフォルダで次のコマンドを実行してください。
-
-Windows（``setup.bat``で作成した仮想環境を直接使用する場合）:
-
-```powershell
-.venv\Scripts\python.exe analysis_main.py
-```
-
-仮想環境をすでに有効化している場合:
-
-```bash
-python analysis_main.py
-```
-
-macOS/Linux（``setup.sh``で作成した仮想環境を直接使用する場合）:
-
-```bash
-.venv/bin/python analysis_main.py
-```
-
-Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``spectrometerConfig.json``は必要ありません。未較正のpixel軸データでもフィッティングは可能ですが、圧力計算には波長またはRaman shiftで較正されたデータが必要です。
 
 ## API機能（同一LAN内の他PCからの操作）
 
@@ -308,32 +352,73 @@ Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``sp
 ```
 
 ### Configuration file
+
+Configurationは校正ダイアログの ``Save and apply`` でアプリケーション管理領域へ自動保存されます。
+任意の保存先・ファイル名を毎回指定する必要はありません。同じ装置、grating、centre position、ROIで
+再度保存すると新しいversionがactiveになり、以前のversionは履歴として保持されます。メイン画面の
+``Load previous configuration`` は、接続中の装置と互換性があるactive configurationだけを通常表示し、
+必要な場合だけ ``Show version history`` で旧versionを表示します。
+
+Configurationはgrating、centre position、ROI、装置互換性と横軸calibrationを一体として扱います。
+露光時間、積算数、試料・物質名、background、fitting条件は測定ごとに変更する値なので含みません。
+保存場所はOSのユーザー別application data領域にある ``FluoraPressee/configurations`` です。個々の
+JSON recordを正本とし、一覧検索には全JSONを読み込まずSQLite catalogを使用します。
+装置互換性は、保存時にserial numberを取得できた場合はその完全一致を必須とし、取得できないbackendでは
+modelの完全一致へfallbackします。旧形式の任意保存calibration JSONはこのcatalogへimportされず、
+ファイル自体は削除されませんがLoad画面の対象にはなりません。
+
 ```json
 {
-    "timestamp": "2026-04-15 21:01:52",
-    "spectrometer_settings": {
-        "grating_grooves_per_mm": "1200",
-        "center_wavelength_nm": 694.0,
-        "calibration_unit": "Wavelength",
-        "display_mode": "Wavelength",
-        "excitation_wavelength_nm": 532.0
+    "schema_version": 1,
+    "configuration_id": "cfg_...",
+    "slot_id": "slot_...",
+    "created_at": "2026-07-22T15:30:00+09:00",
+    "compatibility": {
+        "spectrometer_model": "SP-2750",
+        "spectrometer_serial_number": "SPEC-001",
+        "camera_model": "DU-401",
+        "camera_serial_number": "CAM-001"
     },
-    "detector_settings": {
-        "mode": "1D Spectrum (Custom ROI)",
+    "spectrometer": {
+        "grating_index": 2,
+        "grating_grooves_per_mm": 1200,
+        "target_center_wavelength_nm": 694.0,
+        "actual_center_wavelength_nm": 693.9998
+    },
+    "detector": {
+        "roi_mode": "1d_roi",
         "roi_start": 113,
         "roi_end": 125
     },
-    "calibration_coefficients": {
-        "c0": 673.3405851432854,
-        "c1": 0.020990883361968825,
-        "c2": -2.889725985123467e-07
+    "calibration": {
+        "unit": "Wavelength",
+        "excitation_wavelength_nm": null,
+        "coefficients": {
+            "c0": 673.3405851432854,
+            "c1": 0.020990883361968825,
+            "c2": -2.889725985123467e-07
+        }
     }
 }
 ```
 
-``calibration_unit`` は較正時の基準値（ネオン輝線波長など）に使われた単位、``display_mode`` は保存時にメイン画面が波長モード／Raman shiftモードのどちらであったかを表します（Raman shiftモードで励起波長を用いて較正した場合は ``excitation_wavelength_nm`` も併せて記録されます）。
+``configuration_id`` は変更されない特定version、``slot_id`` は同一のgrating・centre・ROI条件を表します。
+外部自動化用の ``GET /configurations`` もGUIのLoad画面と同じcatalog summaryと互換性判定を使用します。
+取得APIへ ``configuration_id`` を指定するとconfiguration適用から測定までを一つの排他操作として実行し、
+省略すると現在と同じ条件のまま測定します。
 
 
+
+## 実機試験
+
+開発段階では、以下の実機を用いて動作確認を行っております。
+
+| 製造元 | 分光器 | 分光器との通信  | 検出器  | 検出器との通信 | 場所 |
+| --- | --- | --- | --- |  --- |  --- | 
+| Zolix (Andor) | Omni-λ5006i | USB | iVac316 | USB | 東京大学 |
+| Andor | Kymera KY-2775 | USB | iDus DV401 | USB | 東京大学 |
+| Princeton Instruments | Acton SpectraPro SP-2750 | RS-232C–USB | ProEM 1600<sup>2</sup> | GigE | BL-18C, PF, KEK |
+| Ocean Optics | USB2000 | USB | USB2000 | USB | 東京大学 |
 
 
 

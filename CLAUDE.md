@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-FluoraPressée is a PyQt5 desktop GUI for controlling Andor/Princeton Instruments spectrometer+camera
+FluoraPressée is a PyQt6 desktop GUI for controlling Andor/Princeton Instruments spectrometer+camera
 rigs and analyzing the resulting spectra for high-pressure experiments (ruby
 fluorescence pressure scale, Raman shift, etc.). It is a lab instrument-control tool, not a library or
 service. 
@@ -16,15 +16,18 @@ python main.py            # normal mode — requires real hardware + Andor SDK i
 python main.py --debug    # debug mode — simulates camera/spectrometer, no hardware needed
 ```
 
-Dependencies are listed in `requirements.txt` (no `pyproject.toml`): `PyQt5`, `pyqtgraph`, `numpy`,
-`scipy`, plus `pylablib` (Andor SDK wrapper) and `pyserial` (Princeton spectrometer serial control)
+Dependencies are listed in `requirements.txt` (no `pyproject.toml`): `PyQt6`, `pyqtgraph`, `numpy`,
+`scipy`, plus `pylablib` (Andor/Princeton camera SDK wrappers; its optional Qt5 GUI import is blocked
+by `src/pylablib_loader.py`, so only PyQt6 is loaded into the process) and `pyserial` (Princeton
+spectrometer serial control)
 for hardware mode, plus `fastapi`/`uvicorn`/`pydantic` for the optional HTTP API layer (see
 Architecture below). Install with `pip install -r requirements.txt`. The app targets Windows (Andor
 SDK is Windows-only, and `ShamrockCIF.dll` at repo root is loaded via `ctypes` for Shamrock
 spectrometer control), but `--debug` mode runs fine cross-platform for UI development.
 
-There are no automated tests, build step, or lint config in this repo. Verify changes by running the
-app in `--debug` mode and exercising the relevant UI flow.
+Automated tests use the standard-library `unittest` runner. Run them headlessly with
+`QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -v`, then verify GUI changes by
+running the app in `--debug` mode and exercising the relevant UI flow.
 
 It is not required to verify screenshots once you made changes to GUI. If something is needed to be checked, ask the user. 
 
@@ -83,21 +86,37 @@ usable standalone or from scripts:
   with Constant/Linear/Quadratic baselines and BIC-based Auto Polynomial selection.
 - `src/calibration.py` (`CalibrationCore`): pixel→wavelength/Raman-shift polynomial calibration from
   detected reference peaks; `src/calibration_ui.py` wraps it in a `QDialog`.
-- `src/calibration_helper.py` (`ReferenceHelperWindow`): reference neon-line lookup dialog backed by
-  the pre-generated spectra JSON in `calibrationHelper/` (produced by
-  `calibrationHelper/generateCalibrationHelper.py`).
+- `src/calibration_reference.py`: Qt-independent emission-line catalogue loading and automatic
+  measured-peak/literature-line matching. `src/calibration_ui.py` overlays the selected Ne I, Ar I,
+  Hg I (or locally added) catalogues directly in the calibration dialog; confirmed assignments are
+  retained when catalogue visibility changes. Catalogue JSON lives in `calibrationStandards/`.
+  `src/calibration_helper.py` and `calibrationHelper/` remain only as legacy example-spectrum data
+  and are no longer part of the active calibration UI.
+- `src/configuration_catalog.py` (`ConfigurationCatalog`): Qt-independent, versioned configuration
+  storage. Immutable JSON records contain hardware compatibility, grating, centre position, ROI,
+  display state, and calibration; a SQLite catalog indexes active/history versions without scanning
+  every JSON file. A slot is identified by hardware namespace + grating + target centre + ROI, and
+  saving another calibration for the same slot atomically makes the new record active. Both the GUI
+  and future API discovery endpoints must call this class rather than duplicating selection rules.
+  Hardware identity requires an exact saved serial when available and otherwise falls back to an
+  exact model match; model identity is indexed in catalog schema v2.
+- `src/configuration_browser.py` (`ConfigurationBrowserDialog`): the GUI's Load Configuration
+  selector. It shows active, hardware-compatible catalog summaries by default and can expose
+  compatible history explicitly; it never browses arbitrary legacy configuration JSON files.
 - `src/pressureCalc.py` (`PressureCalculator`): static methods mapping peak shift → pressure (GPa) for
   several sensors (Ruby, Sm2+:SrB4O7, diamond, cBN, zircon) and published calibration scales, with
   per-scale temperature-validity ranges; `src/pressureCalc_ui.py` wraps it in a `QDialog`.
-- `src/file_io.py` (`DataFileIO`): all file I/O (spectrum CSV, background JSON, calibration JSON,
-  fitting-result files, sequential-measurement summaries) is deliberately isolated here with **no
-  PyQt5 dependency**, so it can be reused from external scripts. Keep new save/load logic here rather
-  than inlining it in `ui.py`.
+- `src/file_io.py` (`DataFileIO`): spectrum, background, fitting-result, and sequential-result file
+  I/O, deliberately isolated with **no Qt dependency**. Versioned spectrometer configuration
+  persistence is the separate responsibility of `ConfigurationCatalog`.
 
 **Config/state files** (generated at runtime, not checked in): `spectrometerConfig.json` (grating list,
 default ROIs, `flip_x`, hardware `model`) at the repo root, plus a local UI cache read/written by
 `_load_local_cache`/`_save_local_cache` in `src/ui_mixins/config_mixin.py` (last save/sequential
-directories, etc.).
+directories, etc.). Versioned measurement configurations are stored below the user's application-data
+directory in `FluoraPressee/configurations/`: canonical records under `records/YYYY/MM/` and the
+query-oriented `catalog.sqlite3` index. Exposure, accumulation, sample/material, dark,
+fit, and pressure settings deliberately do not belong to these records.
 
 **Optional HTTP API layer** (`src/api/`, `src/ui_mixins/api_mixin.py`): exposes a subset of
 `SpectrometerGUI`'s functionality over HTTP so other machines on the same LAN can trigger
@@ -118,9 +137,18 @@ full local control.
 - `src/api/schemas.py` / `src/api/server.py` (`create_app`): Pydantic request/response models and the
   FastAPI app factory (routes, `X-API-Key` header auth). `src/ui_mixins/api_mixin.py` (`ApiMixin`)
   implements the actual logic each route calls into (`api_acquire`, `api_fit`, `api_pressure`,
-  `api_apply_calibration`, `api_get_status`) independent of the GUI's own `radio_bg_on`/`chk_flip_x`/
-  fit-panel widgets, so a remote request never depends on or mutates what the operator is currently
-  looking at.
+  configuration list/get/resolve/apply, `api_get_status`, and the read-only hardware/config
+  endpoints) independent of
+  the GUI's own `radio_bg_on`/`chk_flip_x`/fit-panel widgets, so a remote request never depends on or
+  mutates what the operator is currently looking at. `GET /hardware/camera` and
+  `GET /hardware/spectrometer` use cached metadata by default; `refresh=true` performs an exclusive
+  live status query. `GET /config` distinguishes active startup hardware settings from values saved
+  for the next restart and redacts secret-like keys.
+- `GET /configurations` uses the exact catalog discovery rules used by the GUI. Acquisition requests
+  may optionally supply an immutable `configuration_id`; when supplied, configuration movement and
+  acquisition share one exclusion-gate ownership, while omission preserves the current instrument
+  and axis state. `axis_mode="pixel"` positions the configuration without applying its calibration.
+  The inline-coefficient `POST /calibration` route is deprecated.
 - Background (dark) subtraction over the API defaults to rejecting a mismatched exposure/ROI outright
   (`BackgroundMismatchError` → HTTP 422) rather than silently subtracting an invalid dark frame;
   callers can opt into subtracting anyway (`dark.ignore_mismatch`) or supply their own dark spectrum

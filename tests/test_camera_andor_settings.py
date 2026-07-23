@@ -18,15 +18,15 @@ class _QThread:
 
 
 try:
-    from PyQt5.QtCore import QThread  # noqa: F401
+    from PyQt6.QtCore import QThread  # noqa: F401
 except ImportError:
-    qtcore = types.ModuleType("PyQt5.QtCore")
+    qtcore = types.ModuleType("PyQt6.QtCore")
     qtcore.QThread = _QThread
     qtcore.pyqtSignal = lambda *args, **kwargs: _Signal()
-    pyqt5 = types.ModuleType("PyQt5")
-    pyqt5.QtCore = qtcore
-    sys.modules["PyQt5"] = pyqt5
-    sys.modules["PyQt5.QtCore"] = qtcore
+    pyqt6 = types.ModuleType("PyQt6")
+    pyqt6.QtCore = qtcore
+    sys.modules["PyQt6"] = pyqt6
+    sys.modules["PyQt6.QtCore"] = qtcore
 
 from src.camera_andor import CameraThreadAndor
 

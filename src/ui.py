@@ -1,14 +1,15 @@
 import os
 import time
 import threading
+from copy import deepcopy
 from datetime import datetime
 import numpy as np
-from PyQt5.QtWidgets import (QMainWindow, QPushButton, QVBoxLayout,
+from PyQt6.QtWidgets import (QMainWindow, QPushButton, QVBoxLayout,
                              QHBoxLayout, QWidget, QLabel, QRadioButton, QGroupBox,
                              QStackedWidget,
                              QScrollArea, QFileDialog, QButtonGroup, QGridLayout,
                              QDialog, QTextEdit, QCheckBox, QMessageBox)
-from PyQt5.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer
 import pyqtgraph as pg
 
 # ---- Imports from the split-out modules ----
@@ -16,11 +17,15 @@ from src.camera import CameraThread
 from src.spectrometer import SpectrometerController, SpectrometerMoveThread
 from src.analysis import DataAnalyzer
 from src.calibration_ui import CalibrationWindow
+from src.configuration_catalog import ConfigurationCatalog
 from src.pressureCalc import PressureCalculator
 from src.pressureCalc_ui import PressureCalculatorWindow
 from src.file_io import DataFileIO
 from src.ui_widgets import CustomSpinBox, CustomDoubleSpinBox, CustomComboBox
+from src.ui_theme import colored_button_style
+from src.window_title import live_window_title
 from src.fitting_config_widget import FittingConfigWidget
+from src.fit_range_context_menu import FitRangeContextMenu
 from src.ui_mixins.config_mixin import ConfigMixin
 from src.ui_mixins.file_io_mixin import FileIOMixin
 from src.ui_mixins.spectrometer_control_mixin import SpectrometerControlMixin
@@ -77,6 +82,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.resize(1400, 900)
 
         self.config = self.load_spectrometer_config()
+        # Hardware/connection keys are consumed only when the controller objects
+        # are constructed. Keep the startup snapshot so GET /config can distinguish
+        # currently active values from changes saved for the next restart.
+        self._startup_config = deepcopy(self.config)
         _cache = self._load_local_cache()
         self._api_key = self.get_or_create_api_key()
 
@@ -88,11 +97,18 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.calib_coeffs = None
         self.calib_unit = 'Wavelength'   # 'Wavelength' (pixel→nm) or 'Raman shift' (pixel→cm⁻¹)
         self.calib_laser_wl = None       # excitation wavelength (nm) used when calib_unit=='Raman shift'
-        self.calib_file_name = "None"
+        self.configuration_label = "None"
+        self.active_configuration_id = None
+        self.active_configuration_slot_id = None
+        # Physical grating/centre/ROI may correspond to a configuration even
+        # when its calibration is deliberately not applied (API pixel mode).
+        self.positioned_configuration_id = None
+        self.positioned_configuration_slot_id = None
         self.axis_source = "pixel"
         self._latest_hardware_capture = None
         self._hardware_capture_by_mode = {}
         self._camera_identity = {"model": None, "serial_number": None}
+        self._spectrometer_identity = {"model": None, "serial_number": None}
         self._last_temperature_c = None
         self._last_temperature_status = None
         self.current_w_peak1 = None
@@ -121,6 +137,18 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # Future that api_acquire() waits on for a single-shot acquisition to complete (set from the
         # API worker thread via GuiBridge, resolved on the GUI thread by _process_completed_data()).
         self._api_pending_future = None
+        # Future used only by GET /hardware/camera?refresh=true. The camera owns
+        # its SDK and reports the live snapshot asynchronously via status_ready.
+        self._api_camera_status_future = None
+        self._pending_calib_coeffs = None
+        self._pending_configuration_label = None
+        self._pending_calib_unit = None
+        self._pending_calib_laser_wl = None
+        self._pending_axis_source = None
+        self._pending_configuration_id = None
+        self._pending_configuration_slot_id = None
+        self._pending_configuration_axis_mode = "calibrated"
+        self._pending_configuration_future = None
         # Set of "reasons the measurement controls are locked" (sequential run in progress,
         # API server running, etc.). Re-enabled only once every reason has been cleared
         # (see _lock_ui/_unlock_ui in sequential_mixin.py).
@@ -138,8 +166,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spec_ctrl = SpectrometerController(config=self.config, debug=self.debug)
         self.analyzer = DataAnalyzer()
         self.file_io = DataFileIO()
+        self.configuration_catalog = ConfigurationCatalog()
         self._last_save_dir = _cache.get("last_save_dir", "")
-        self._last_calib_dir = _cache.get("last_calib_dir", "")
 
         first_grating = self.config.get("grating", [{}])[0].get("grooves", 600)
         self.physical_grating = str(first_grating)
@@ -169,6 +197,16 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.lbl_accum_status.setVisible(False)
         plot_layout.addWidget(self.lbl_accum_status)
 
+        # Shown only while displaying Ocean Optics' native (factory-calibrated) wavelength
+        # axis with no FluoraPressée calibration loaded - see
+        # SpectrometerControlMixin.update_plot_labels() (work/work_OceanOptics.md Step 6).
+        self.lbl_axis_warning = QLabel(
+            "X-axis: uncalibrated (Ocean Optics factory-calibrated values)"
+        )
+        self.lbl_axis_warning.setStyleSheet("color: #F03511; font-weight: bold; font-size: 14px;")
+        self.lbl_axis_warning.setVisible(False)
+        plot_layout.addWidget(self.lbl_axis_warning)
+
         self.plot_content_layout = QHBoxLayout()
 
         self.fitting_panel = QGroupBox("Fitting Results")
@@ -197,6 +235,11 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.fit_curve = self.plot_widget.plot(pen=pg.mkPen('y', width=2))
         self.fit_curve_sub1 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
         self.fit_curve_sub2 = self.plot_widget.plot(pen=pg.mkPen('y', width=1, style=Qt.PenStyle.DashLine))
+        self.edge_marker = pg.InfiniteLine(
+            angle=90, movable=False, pen=pg.mkPen('#00E5FF', width=2, style=Qt.PenStyle.DashLine)
+        )
+        self.edge_marker.hide()
+        self.plot_widget.addItem(self.edge_marker)
         
         self.stacked_widget.addWidget(self.plot_widget) 
 
@@ -343,6 +386,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # visibility (requires the whole window to be shown), not just this group's
         # own setVisible() state.
         self._temp_control_available = False
+        self._temp_capability_known = False
         # Whether the 5s poll timer is allowed to keep/resume running. Only
         # on_temperature_capability_ready and on_temperature_set_finished may set this
         # True; a manual "Read current temperature" click while stopped must never
@@ -421,15 +465,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         spec_group = QGroupBox("Spectrometer Configurations")
         spec_layout = QGridLayout()
 
-        self.btn_load_calib = QPushButton("Load previous configuration")
-        self._set_button_style(self.btn_load_calib, self.BUTTON_STYLE_PURPLE)
-        self.lbl_notes_calib_loading = QLabel('Loading a configuration will change the grating, centre, ROI, and pixel-wavelength calibration.')
+        self.btn_load_configuration = QPushButton("Load previous configuration")
+        self._set_button_style(self.btn_load_configuration, self.BUTTON_STYLE_PURPLE)
+        self.lbl_notes_calib_loading = QLabel('Loading a configuration will change the grating, centre, ROI, and x-axis calibration.')
         self.lbl_notes_calib_loading.setStyleSheet("font-style: italic;")
         self.lbl_notes_calib_loading.setWordWrap(True) # Enable word wrap to prevent layout overflow
         
-        self.lbl_loaded_calib = QLabel("Loaded: None")
-        self.lbl_loaded_calib.setStyleSheet("color: #333; font-size: 12px; font-weight: bold; margin-bottom: 10px;")
-        self.lbl_loaded_calib.setWordWrap(True)
+        self.lbl_loaded_configuration = QLabel("Loaded: None")
+        self.lbl_loaded_configuration.setStyleSheet("color: #333; font-size: 12px; font-weight: bold; margin-bottom: 10px;")
+        self.lbl_loaded_configuration.setWordWrap(True)
         
         self.grating_list = [str(g.get("grooves")) for g in self.config.get("grating", [])]
         self.combo_grating = CustomComboBox()
@@ -459,11 +503,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         
         self.btn_calib_neon = QPushButton("Calibrate x-axis")
         
-        spec_layout.addWidget(self.btn_load_calib, 0, 0, 1, 2)
+        spec_layout.addWidget(self.btn_load_configuration, 0, 0, 1, 2)
         spec_layout.addWidget(self.lbl_notes_calib_loading, 1, 0, 1, 2)
-        spec_layout.addWidget(self.lbl_loaded_calib, 2, 0, 1, 2)
+        spec_layout.addWidget(self.lbl_loaded_configuration, 2, 0, 1, 2)
         
-        spec_layout.addWidget(QLabel("Grating (grooves/mm):"), 3, 0)
+        self.lbl_grating = QLabel("Grating (grooves/mm):")
+        spec_layout.addWidget(self.lbl_grating, 3, 0)
         spec_layout.addWidget(self.combo_grating, 3, 1)
         spec_layout.addLayout(spec_radio_layout, 4, 0, 1, 2)
         spec_layout.addWidget(self.lbl_centre, 5, 0)
@@ -491,12 +536,14 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         roi_layout.addWidget(self.chk_flip_x)
         
         roi_spin_layout = QHBoxLayout()
-        roi_spin_layout.addWidget(QLabel("Start Row:"))
+        self.lbl_roi_start = QLabel("Start Row:")
+        roi_spin_layout.addWidget(self.lbl_roi_start)
         self.spin_vstart = CustomSpinBox()
-        self.spin_vstart.setMaximum(4000) 
+        self.spin_vstart.setMaximum(4000)
         roi_spin_layout.addWidget(self.spin_vstart)
-        
-        roi_spin_layout.addWidget(QLabel("End Row:"))
+
+        self.lbl_roi_end = QLabel("End Row:")
+        roi_spin_layout.addWidget(self.lbl_roi_end)
         self.spin_vend = CustomSpinBox()
         self.spin_vend.setMaximum(4000) 
         roi_spin_layout.addWidget(self.spin_vend)
@@ -621,6 +668,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.combo_baseline_model.currentIndexChanged.connect(self.on_fit_settings_changed)
         self.spin_fit_start.valueChanged.connect(self.on_fit_settings_changed)
         self.spin_fit_end.valueChanged.connect(self.on_fit_settings_changed)
+        self.fit_range_context_menu = FitRangeContextMenu(
+            self.plot_widget,
+            self.spin_fit_start,
+            self.spin_fit_end,
+            lambda: getattr(self, "raw_1d_data", None) is not None,
+        )
         
         
         
@@ -637,7 +690,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.btn_apply_spec.clicked.connect(self.on_apply_spectrometer)
         self.btn_calib_neon.clicked.connect(self.on_calibrate_neon)
-        self.btn_load_calib.clicked.connect(self.on_load_calibration)
+        self.btn_load_configuration.clicked.connect(self.on_load_configuration)
 
         self.btn_start_api.clicked.connect(self.on_start_api_server_clicked)
         self.btn_stop_api.clicked.connect(self.on_stop_api_server_clicked)
@@ -648,6 +701,13 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.action_camera_status = hardware_menu.addAction("Instrument Status...")
         self.action_camera_status.triggered.connect(self.on_open_camera_status_clicked)
+
+        self.action_manage_configurations = hardware_menu.addAction(
+            "Manage Configuration Files..."
+        )
+        self.action_manage_configurations.triggered.connect(
+            self.on_open_configuration_manager_clicked
+        )
 
         api_menu = self.menuBar().addMenu("API")
         self.action_regenerate_api_key = api_menu.addAction("Regenerate Key")
@@ -702,9 +762,14 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         if hasattr(self.spec_ctrl, "get_device_identity"):
             spec_identity = self.spec_ctrl.get_device_identity()
+            self._spectrometer_identity = {
+                "model": spec_identity.get("model") or None,
+                "serial_number": spec_identity.get("serial_number") or None,
+            }
             self.check_and_record_hardware_identity(
                 "spectrometer", spec_identity.get("model"), spec_identity.get("serial_number")
             )
+            self._update_window_title()
 
         current_wl = self.spec_ctrl.get_wavelength()
         print(f"[Init] Spectrometer centre wavelength readback: {current_wl} nm")
@@ -741,7 +806,9 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.init_dialog.setModal(True)
         self.init_dialog.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint)
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("Initialising camera and cooler...\nPlease wait until the operation is completed."))
+        layout.addWidget(QLabel(
+            "Initialising camera...\nPlease wait until the operation is completed."
+        ))
         self.init_dialog.setLayout(layout)
         self.init_dialog.show()
 
@@ -755,6 +822,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.thread.acquisition_failed.connect(self.on_acquisition_failed)
         self.thread.em_gain_info_ready.connect(self.on_em_gain_info_ready)
         self.thread.identity_ready.connect(self.on_camera_identity_ready)
+        if hasattr(self.thread, "status_ready"):
+            self.thread.status_ready.connect(self._api_on_camera_status_ready)
         if hasattr(self.thread, "exposure_applied"):
             self.thread.exposure_applied.connect(self.on_exposure_applied)
         if hasattr(self.thread, "roi_applied"):
@@ -767,16 +836,27 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.thread.start()
 
-    def _set_button_style(self, button, enabled_style):
-        button.setStyleSheet(
-            f"QPushButton {{ {enabled_style} }}\n"
-            f"QPushButton:disabled {{ {BUTTON_STYLE_DISABLED} }}"
+    def _update_window_title(self):
+        """Show the connected instrument models once both have been identified."""
+        if self.debug:
+            return
+
+        title = live_window_title(
+            self.debug,
+            self._spectrometer_identity.get("model"),
+            self._camera_identity.get("model"),
         )
+        if title:
+            self.setWindowTitle(title)
+
+    def _set_button_style(self, button, enabled_style):
+        button.setStyleSheet(colored_button_style(enabled_style, BUTTON_STYLE_DISABLED))
 
     def closeEvent(self, event):
+        confirmation = self._close_confirmation_message()
         reply = QMessageBox.question(
             self, "Confirm Exit",
-            "Closing this window will terminate the cooler of the camera. Are you sure you want to close FluoraPressée?",
+            confirmation,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -800,3 +880,14 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
             event.accept()
         else:
             event.ignore()
+
+    def _close_confirmation_message(self):
+        if (
+            getattr(self, "_temp_capability_known", False)
+            and getattr(self, "_temp_control_available", False)
+        ):
+            return (
+                "Closing this window will terminate the cooler of the camera. "
+                "Are you sure you want to close FluoraPressée?"
+            )
+        return "Are you sure you want to close FluoraPressée?"

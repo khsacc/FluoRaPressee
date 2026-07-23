@@ -1,8 +1,9 @@
-from PyQt5.QtWidgets import QVBoxLayout, QLabel, QDialog, QMessageBox, QPushButton
-from PyQt5.QtCore import Qt
+from PyQt6.QtWidgets import QVBoxLayout, QLabel, QDialog, QMessageBox, QPushButton
+from PyQt6.QtCore import Qt
 
 from src.spectrometer import SpectrometerMoveThread
 from src.calibration_ui import CalibrationWindow
+from src.measurement_metadata import public_axis_kind
 
 
 class SpectrometerControlMixin:
@@ -48,16 +49,23 @@ class SpectrometerControlMixin:
             self.check_spectrometer_changes()
 
     def update_plot_labels(self):
-        if self.calib_coeffs is not None:
+        axis_kind = public_axis_kind(self)
+        if axis_kind == "calibrated":
             if self.radio_spec_mode_raman.isChecked():
                 x_label = 'Raman shift (cm⁻¹)'
             else:
                 x_label = 'Wavelength (nm)'
+        elif axis_kind == "native_wavelength":
+            if self.radio_spec_mode_raman.isChecked():
+                x_label = 'Raman shift (cm⁻¹) [Ocean Optics factory calibration]'
+            else:
+                x_label = 'Wavelength (nm) [Ocean Optics factory calibration]'
         else:
             x_label = 'Pixel'
 
         self.plot_widget.setLabel('bottom', x_label)
         self.image_view.getView().setLabel('bottom', x_label)
+        self.lbl_axis_warning.setVisible(axis_kind == "native_wavelength")
 
     def check_spectrometer_changes(self, *args):
         curr_g = self.combo_grating.currentText()
@@ -121,13 +129,18 @@ class SpectrometerControlMixin:
                 QMessageBox.warning(self, "Busy", "Could not resume measurement: acquisition is busy.")
 
     def _set_spectrometer_controls_enabled(self, enabled):
+        # A completed API-triggered move must not partially undo the broader
+        # API-server/sequential UI lock. _unlock_ui() will restore controls
+        # after every lock reason has been removed.
+        if enabled and getattr(self, "_ui_lock_reasons", set()):
+            enabled = False
         self.combo_grating.setEnabled(enabled)
         self.radio_spec_mode_wl.setEnabled(enabled)
         self.radio_spec_mode_raman.setEnabled(enabled)
         self.spin_centre_wl.setEnabled(enabled)
         self.spin_exc_wl.setEnabled(enabled and self.radio_spec_mode_raman.isChecked())
         self.btn_calib_neon.setEnabled(enabled)
-        self.btn_load_calib.setEnabled(enabled)
+        self.btn_load_configuration.setEnabled(enabled)
         if enabled:
             self.check_spectrometer_changes()
         else:
@@ -239,20 +252,18 @@ class SpectrometerControlMixin:
             self.spin_centre_wl.blockSignals(False)
 
             # Position no longer matches whatever the pixel calibration was taken at.
-            self.calib_coeffs = None
-            self.axis_source = "pixel"
-            self.calib_unit = 'Wavelength'
-            self.calib_laser_wl = None
-            self.calib_file_name = "None"
-            self.lbl_loaded_calib.setText("Loaded: None")
-            self.update_plot_labels()
+            self.clear_active_configuration()
+            handled_by_api = self._fail_pending_configuration(
+                "The spectrometer move was cancelled."
+            )
 
             self._set_spectrometer_controls_enabled(True)
-            QMessageBox.information(
-                self, "Move cancelled",
-                f"The spectrometer move was cancelled. Actual position read back: "
-                f"grating index {actual_grating_idx}, {actual_wl:.3f} nm."
-            )
+            if not handled_by_api:
+                QMessageBox.information(
+                    self, "Move cancelled",
+                    f"The spectrometer move was cancelled. Actual position read back: "
+                    f"grating index {actual_grating_idx}, {actual_wl:.3f} nm."
+                )
             return
 
         if getattr(self.spec_move_thread, "success", True) is False:
@@ -261,10 +272,11 @@ class SpectrometerControlMixin:
                 "error_message",
                 "The spectrometer setting change failed."
             )
-            self._loading_config = False
+            handled_by_api = self._fail_pending_configuration(message)
             self._close_spectrometer_moving_dialog()
             self._set_spectrometer_controls_enabled(True)
-            QMessageBox.warning(self, "Spectrometer error", message)
+            if not handled_by_api:
+                QMessageBox.warning(self, "Spectrometer error", message)
             return
 
         self.physical_grating = self.combo_grating.currentText()
@@ -278,31 +290,12 @@ class SpectrometerControlMixin:
         self.btn_apply_spec.setEnabled(False)
 
         if getattr(self, '_loading_config', False):
-            if hasattr(self, '_pending_calib_coeffs') and self._pending_calib_coeffs is not None:
-                self.apply_calibration(
-                    self._pending_calib_coeffs,
-                    self._pending_calib_filename,
-                    calib_unit=getattr(self, '_pending_calib_unit', 'Wavelength'),
-                    calib_laser_wl=getattr(self, '_pending_calib_laser_wl', None),
-                    axis_source=getattr(self, '_pending_axis_source', 'loaded_calibration'),
-                )
-                self._pending_calib_coeffs = None
-                self._pending_calib_filename = None
-                self._pending_calib_unit = None
-                self._pending_calib_laser_wl = None
-                self._pending_axis_source = None
-            self._loading_config = False
+            self._finalize_pending_configuration()
         else:
             # Grating/centre-wavelength changes invalidate the pixel calibration (it was only
             # valid at the previous physical position), but must NOT touch the ROI: ROI is set
-            # independently via config load, calibration-file load, or direct user edits only.
-            self.calib_coeffs = None
-            self.axis_source = "pixel"
-            self.calib_unit = 'Wavelength'
-            self.calib_laser_wl = None
-            self.calib_file_name = "None"
-            self.lbl_loaded_calib.setText("Loaded: None")
-            self.update_plot_labels()
+            # independently via configuration load or direct user edits only.
+            self.clear_active_configuration()
 
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
             self.update_display(is_new_data=False)

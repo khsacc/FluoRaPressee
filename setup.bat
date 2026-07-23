@@ -20,8 +20,9 @@ if not exist .venv (
 echo Installing dependencies...
 call .venv\Scripts\python.exe -m pip install --upgrade pip
 call .venv\Scripts\pip.exe install -r requirements.txt
+call .venv\Scripts\pip.exe check
 
 echo.
-echo Setup complete. Use FluoRaPressee_run.bat (hardware) or FluoRaPressee_run_debug.bat (no hardware) to launch the app.
+echo Setup complete. Use FluoraPressee_run.bat (hardware) or FluoRaPressee_run_debug.bat (no hardware) to launch the app.
 
 endlocal

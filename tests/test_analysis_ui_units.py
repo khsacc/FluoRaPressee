@@ -15,7 +15,7 @@ class UnitForMetadataTests(unittest.TestCase):
 
     def setUp(self):
         if AnalysisWindow is None:
-            self.skipTest("PyQt5 is not importable in this environment")
+            self.skipTest("PyQt6 is not importable in this environment")
 
     def test_calibrated_wavelength(self):
         meta = {"calib_coeffs": (690.0, 0.05, 0.0), "spec_mode": "Wavelength"}

@@ -3,8 +3,19 @@ from datetime import datetime
 import numpy as np
 import pyqtgraph as pg
 
+from src.measurement_metadata import public_axis_kind
+
 
 class DisplayMixin:
+    def _configure_spectrum_plot_range(self, min_x, max_x):
+        view_box = self.plot_widget.getViewBox()
+        view_box.setLimits(xMin=min_x, xMax=max_x)
+        view_box.setDefaultPadding(0)
+        # Keep complete curve bounds available to pyqtgraph's standard
+        # "View All", as the calibration plot does. With clip-to-view enabled,
+        # autoRange can only see the currently zoomed x-range.
+        self.plot_widget.setClipToView(False)
+
     def toggle_fitting_panel(self):
         is_on = self.radio_fit_on.isChecked()
         self.fitting_panel.setVisible(is_on)
@@ -26,6 +37,7 @@ class DisplayMixin:
             self.fit_baseline_curve.clear()
             self.fit_curve_sub1.clear()
             self.fit_curve_sub2.clear()
+            self.edge_marker.hide()
             self.current_w_peak1 = None
             self.latest_fit_res = None
             self.latest_fit_func = None
@@ -91,16 +103,17 @@ class DisplayMixin:
             self.stacked_widget.setCurrentIndex(0)
 
             x_data = self.get_x_axis(len(disp_data))
-            if self.chk_flip_x.isChecked() and self.calib_coeffs is not None:
+            if self.chk_flip_x.isChecked() and public_axis_kind(self) != "pixel":
+                # A meaningful physical x-axis (native wavelength or FluoraPressée-calibrated)
+                # must flip together with y, unlike a bare pixel index (see public_axis_kind()
+                # docstring) - otherwise flip_x desyncs wavelength/Raman-shift from intensity.
                 x_data = x_data[::-1]
 
             min_x = np.min(x_data)
             max_x = np.max(x_data)
 
             # Plot design
-            self.plot_widget.getViewBox().setLimits(xMin=min_x, xMax=max_x)
-            self.plot_widget.getViewBox().setDefaultPadding(0)
-            self.plot_widget.setClipToView(True)
+            self._configure_spectrum_plot_range(min_x, max_x)
 
             if self.radio_plot_scatter.isChecked():
                 self.plot_scatter.setData(x_data, disp_data)
@@ -143,7 +156,14 @@ class DisplayMixin:
                 if x_fit is not None:
                     self._seq_fit_failed = False
                     self.fit_curve.setData(x_fit, y_fit)
-                    self.fit_baseline_curve.setData(x_fit, res["y_baseline"])
+                    is_edge = res.get("analysis_type") == "diamond_raman_edge"
+                    if is_edge:
+                        self.fit_baseline_curve.clear()
+                        self.edge_marker.setValue(res["edge_position"])
+                        self.edge_marker.show()
+                    else:
+                        self.fit_baseline_curve.setData(x_fit, res["y_baseline"])
+                        self.edge_marker.hide()
 
                     first_peak = res["peaks"][0]
                     w_peak1 = first_peak["position"]
@@ -163,22 +183,26 @@ class DisplayMixin:
 
                     text = (
                         f"<span><b>Function:</b> {func}<br>"
-                        f"<b>Fit Peaks:</b> {peak_count}<br>"
-                        f"<b>Sort peaks:</b> {self.combo_peak_sort.currentText()}<br>"
                     )
-
-                    baseline = res["baseline"]
-                    baseline_text = baseline["requested"]
-                    if baseline["requested"] != baseline["selected"]:
-                        baseline_text += f" &rarr; {baseline['selected']}"
-                    text += f"<b>Baseline:</b> {baseline_text}<br><br>"
+                    if is_edge:
+                        text += "<b>Method:</b> -dI/dν, pseudo-Voigt + linear baseline<br><br>"
+                    else:
+                        text += (
+                            f"<b>Fit Peaks:</b> {peak_count}<br>"
+                            f"<b>Sort peaks:</b> {self.combo_peak_sort.currentText()}<br>"
+                        )
+                        baseline = res["baseline"]
+                        baseline_text = baseline["requested"]
+                        if baseline["requested"] != baseline["selected"]:
+                            baseline_text += f" &rarr; {baseline['selected']}"
+                        text += f"<b>Baseline:</b> {baseline_text}<br><br>"
 
                     self.latest_fit_res = res.copy()
                     self.latest_fit_func = func
 
                     for peak in res["peaks"]:
                         i = peak["index"]
-                        text += f"<u>Peak {i}</u><br>"
+                        text += f"<u>{'Diamond edge' if is_edge else f'Peak {i}'}</u><br>"
                         text += f" Pos: {peak['position']:.3f} ± {peak['position_err']:.3f}<br>"
                         text += f" Width: {peak['width']:.3f} ± {peak['width_err']:.3f}<br><br>"
 
@@ -204,6 +228,7 @@ class DisplayMixin:
                     self.fit_baseline_curve.clear()
                     self.fit_curve_sub1.clear()
                     self.fit_curve_sub2.clear()
+                    self.edge_marker.hide()
                     self.current_w_peak1 = None
                     self.latest_fit_res = None
                     self.latest_fit_func = None
@@ -220,6 +245,7 @@ class DisplayMixin:
                 self.fit_baseline_curve.clear()
                 self.fit_curve_sub1.clear()
                 self.fit_curve_sub2.clear()
+                self.edge_marker.hide()
                 self.current_w_peak1 = None
                 self.latest_fit_res = None
                 self.latest_fit_func = None
@@ -293,7 +319,8 @@ class DisplayMixin:
                     x_val = mouse_point.x()
 
                     x_pixel = int(np.round(x_val))
-                    if self.calib_coeffs is not None and self.latest_1d_data is not None:
+                    axis_kind = public_axis_kind(self)
+                    if axis_kind != "pixel" and self.latest_1d_data is not None:
                         x_arr = self.get_x_axis(len(self.latest_1d_data))
                         if self.chk_flip_x.isChecked():
                             x_arr = x_arr[::-1]
@@ -309,7 +336,7 @@ class DisplayMixin:
                     unit = "Wavelength" if not self.radio_spec_mode_raman.isChecked() else "Raman shift"
                     unit_sym = "nm" if not self.radio_spec_mode_raman.isChecked() else "cm⁻¹"
 
-                    if self.calib_coeffs is not None:
+                    if axis_kind != "pixel":
                         self.coord_label.setText(f"1D Spectrum - {unit}: {x_val:.3f} {unit_sym} (Pixel: {disp_idx}){data_val_str}")
                     else:
                         self.coord_label.setText(f"1D Spectrum - Pixel: {x_val:.1f}{data_val_str}")

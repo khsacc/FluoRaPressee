@@ -2,8 +2,9 @@ import ctypes
 import time
 import json  
 import os    
+import numpy as np
 from threading import RLock
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal
 
 from src.andor_spectrometer_status import (
     collect_shamrock_status,
@@ -108,6 +109,68 @@ class SpectrometerControllerAndor:
         except Exception as e:
             pass
         return 1
+
+    def get_calibration_seed_axis(self, number_pixels, pixel_width_um):
+        """Return Shamrock's model-based wavelength value for every detector pixel.
+
+        This is an initial/approximate axis used to identify reference lines.  It
+        is intentionally not treated as the user-verified neon/argon calibration.
+        Shamrock requires the attached detector geometry to be supplied before
+        ``ShamrockGetCalibration`` can calculate the array.
+        """
+        if (
+            not self.is_initialized
+            or self.shamrock is None
+            or number_pixels is None
+            or pixel_width_um is None
+        ):
+            return None
+        try:
+            count = int(number_pixels)
+            pixel_width = float(pixel_width_um)
+            if count <= 0 or not np.isfinite(pixel_width) or pixel_width <= 0:
+                return None
+            calibration = (ctypes.c_float * count)()
+            with self._hw_lock:
+                ret = self.shamrock.ShamrockSetNumberPixels(
+                    self.device_id, ctypes.c_int(count)
+                )
+                if ret != self.SHAMROCK_SUCCESS:
+                    raise RuntimeError(
+                        f"ShamrockSetNumberPixels failed with code {ret}"
+                    )
+                ret = self.shamrock.ShamrockSetPixelWidth(
+                    self.device_id, ctypes.c_float(pixel_width)
+                )
+                if ret != self.SHAMROCK_SUCCESS:
+                    raise RuntimeError(
+                        f"ShamrockSetPixelWidth failed with code {ret}"
+                    )
+                ret = self.shamrock.ShamrockGetCalibration(
+                    self.device_id, calibration, ctypes.c_int(count)
+                )
+                if ret != self.SHAMROCK_SUCCESS:
+                    raise RuntimeError(
+                        f"ShamrockGetCalibration failed with code {ret}"
+                    )
+            axis = np.ctypeslib.as_array(calibration).astype(float, copy=True)
+            if (
+                len(axis) != count
+                or not np.all(np.isfinite(axis))
+                or np.any(axis <= 0)
+                or (
+                    count > 1
+                    and not (
+                        np.all(np.diff(axis) > 0)
+                        or np.all(np.diff(axis) < 0)
+                    )
+                )
+            ):
+                raise RuntimeError("Shamrock returned an invalid wavelength axis")
+            return axis
+        except Exception as exc:
+            print(f"Failed to get Shamrock detector wavelength calibration: {exc}")
+            return None
 
     def get_device_identity(self):
         """Return {"model": None, "serial_number": str|None} for hardware_identity
@@ -228,6 +291,12 @@ class SpectrometerControllerAndor:
                 "center_wavelength_nm": self._current_wavelength_nm,
                 "wavelength_limits_nm": limits,
             }
+
+    def get_capabilities(self):
+        """Duck-typing counterpart to SpectrometerControllerOceanOptics.get_capabilities()
+        (src/spectrometer_oceanoptics.py) - this spectrometer has a movable grating/centre
+        wavelength, unlike Ocean Optics' fixed spectrometer."""
+        return {"supports_grating": True, "supports_movable_center": True}
 
     def close(self):
         if self.is_initialized and self.shamrock:

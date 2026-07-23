@@ -40,6 +40,10 @@ X-API-Key: <API Server パネルに表示されているキー>
 
 同時に実行できる取得は1つだけ(ローカルのGUI操作・他のAPIリクエストを含めて)。取得中に別の
 取得リクエストが来た場合、後から来た方は `409 Conflict`(`{"detail": "acquisition busy"}`)を返す。
+`GET /hardware/camera?refresh=true` と `GET /hardware/spectrometer?refresh=true` のライブ状態照会も
+同じ排他ゲートを使用する。測定・校正・分光器移動・別のライブ照会と競合した場合は
+`409 Conflict`(`{"detail": "instrument busy"}`)を返す。`refresh=false` のキャッシュ取得と
+`GET /config` はこの排他ゲートを使用しない。
 
 ## エンドポイント一覧
 
@@ -55,14 +59,237 @@ X-API-Key: <API Server パネルに表示されているキー>
   "exposure_time_s": 0.1,
   "calibration": {"applied": true, "unit": "Wavelength", "label": "manual-20260709"},
   "roi": {"mode": "1d_roi", "start": 100, "end": 140},
-  "background": {"loaded": false, "metadata": null}
+  "background": {"loaded": false, "metadata": null},
+  "configuration": {
+    "configuration_id": "cfg_...", "slot_id": "slot_...",
+    "axis_mode": "calibrated", "calibration_applied": true,
+    "unit": "Wavelength"
+  },
+  "hardware_state": {
+    "grating_index": 2, "grooves_per_mm": 1200,
+    "actual_center_wavelength_nm": 694.0,
+    "roi_mode": "1d_roi", "roi_start": 100, "roi_end": 140
+  }
 }
 ```
 
-### `POST /calibration`
+### `GET /hardware/camera`
 
-校正パラメータ(既にGUIまたは他の手段で計算済みの多項式係数)を適用する。校正計算そのものは
-このAPIでは行わない。
+カメラの識別情報、センサー寸法、露光時間、ROI、binning、温度などを返す。
+
+- `refresh=false`(既定): カメラスレッドが保持しているキャッシュだけを読み、SDK呼び出しを行わない。
+- `refresh=true`: カメラスレッドへライブ状態照会を依頼し、共通形式の `status` を追加する。
+  測定・分光器移動・別のライブ照会と競合した場合は `409`、10秒以内に完了しない場合は `504`。
+
+**レスポンス例:**
+```json
+{
+  "schema_version": 1,
+  "captured_at": "2026-07-22T15:30:00+09:00",
+  "mode": "hardware",
+  "operational": true,
+  "hardware_connected": true,
+  "busy": false,
+  "backend": "andor_sdk2",
+  "metadata_source": "cache",
+  "metadata": {
+    "identity": {
+      "controller_model": "C-1",
+      "model": "DU-401",
+      "serial_number": "CAM-001"
+    },
+    "detector_size_px": {"width": 1024, "height": 127},
+    "pixel_pitch_um": {"width": 26.0, "height": 26.0},
+    "exposure_time_s": 0.1,
+    "accumulations": 3,
+    "accumulation_mode": "software_sum",
+    "roi": {
+      "mode": "1d_roi",
+      "horizontal_start": 0,
+      "horizontal_end": 1024,
+      "vertical_start": 100,
+      "vertical_end": 127
+    },
+    "binning": {"horizontal": 1, "vertical": 27},
+    "read_mode": "image",
+    "output_rows": 1,
+    "software_vertical_sum": false,
+    "temperature": {
+      "current_c": -64.9,
+      "setpoint_c": -65.0,
+      "status": "locked"
+    }
+  },
+  "status": null
+}
+```
+
+`mode` は `hardware` または `debug`。`operational` はデバッグバックエンドを含めてAPIから
+利用可能か、`hardware_connected` は物理デバイスに接続されているかを表す。debugモードでは
+`operational: true`, `hardware_connected: false` となる。
+
+### `GET /hardware/spectrometer`
+
+分光器の識別情報、中心波長、現在のグレーティングを返す。Andor/Princeton Instrumentsとも
+同じ公開形式で、通常は各コントローラの `get_cached_hardware_metadata()` の結果を利用する。
+
+- `refresh=false`(既定): DLL/RS-232通信なし。
+- `refresh=true`: `get_status_snapshot()` で実機を照会し、`status` を追加する。
+  測定・分光器移動・別のライブ照会と競合した場合は `409`、30秒以内に完了しない場合は `504`。
+
+**レスポンス例:**
+```json
+{
+  "schema_version": 1,
+  "captured_at": "2026-07-22T15:30:00+09:00",
+  "mode": "hardware",
+  "operational": true,
+  "hardware_connected": true,
+  "busy": false,
+  "backend": "princeton_acton",
+  "metadata_source": "cache",
+  "metadata": {
+    "identity": {"model": "SP-2750", "serial_number": "SPEC-001"},
+    "center_wavelength_nm": 694.0,
+    "grating": {"index": 1, "grooves_per_mm": 600, "blaze": null},
+    "wavelength_limits_nm": null
+  },
+  "status": null
+}
+```
+
+`refresh=true` の `status` は以下の共通形式。取得できない機器固有項目は推測せず
+`state: "unsupported"` とする。一部項目だけ失敗した場合はその項目を `state: "error"` とし、
+他の取得結果は返す。
+
+```json
+{
+  "backend": "princeton_acton",
+  "available": true,
+  "error": null,
+  "sections": {
+    "Current position": [
+      {
+        "key": "centre_wavelength",
+        "label": "Centre wavelength",
+        "value": 694.0,
+        "unit": "nm",
+        "state": "ok",
+        "error": null
+      }
+    ]
+  }
+}
+```
+
+未接続はHTTP通信の失敗ではないため `200` を返し、`hardware_connected: false`、
+`status.available: false` で表現する。
+
+### `GET /config`
+
+現在のプロセスで有効な設定と、`spectrometerConfig.json` に保存されている設定を返す。
+
+```json
+{
+  "schema_version": 1,
+  "captured_at": "2026-07-22T15:30:00+09:00",
+  "source_file": "spectrometerConfig.json",
+  "active_config": {
+    "model": "PrincetonInstruments",
+    "com_port": "COM3",
+    "grating": [],
+    "flip_x": false,
+    "default_temperature": -65
+  },
+  "stored_config": {
+    "model": "PrincetonInstruments",
+    "com_port": "COM3",
+    "grating": [],
+    "flip_x": false,
+    "default_temperature": -65
+  },
+  "restart_required": false,
+  "pending_restart_keys": [],
+  "redacted_fields": []
+}
+```
+
+- `active_config`: 実行中プロセスへ現在適用されている設定。グレーティング、ROI、表示設定などの
+  ライブ変更は反映するが、起動時にしか読まれない接続設定は起動時の値を返す。
+- `stored_config`: 現在の `spectrometerConfig.json` の内容。
+- `restart_required`: `model`, `com_port`, `dll_path`, `PIcam_dll_path`,
+  `camera_serial_number` のいずれかに未反映の変更があるか。
+- `pending_restart_keys`: 再起動待ちのキー一覧。
+- `redacted_fields`: `api_key`, `password`, `token`, `secret` を名前に含むキーをレスポンスから
+  除外した場合のパス一覧。APIキー用の別ファイル `fluora_pressee_api_key.json` は常に対象外。
+
+### `GET /configurations`
+
+GUIのLoad Configurationと同じcatalogから、configurationの軽量summaryを返す。既定では
+接続中の装置と互換性がある各slotのactive versionだけを返すため、同じ条件で校正を繰り返しても
+通常の選択肢は増えない。
+
+- `active_only=true`: `false`にすると旧versionも含める。
+- `include_incompatible=false`: `true`にすると非互換configurationも理由付きで含める。
+- `limit=100`: 1～1000。
+- `offset=0`: pagination offset。
+
+応答には`catalog_revision`, `items`, `total`, `limit`, `offset`を含む。summaryにはgrating、
+centre position、ROI、calibration unitを含むが、calibration係数は含まない。
+
+### `GET /configurations/{configuration_id}`
+
+immutableなconfiguration record全体を返す。`configuration.calibration.coefficients`を使えば、
+pixel軸で取得したデータへクライアント側で後から校正を適用できる。現在の装置との互換性も返す。
+
+### `POST /configurations/resolve`
+
+ES等が保持するstableな`slot_id`を、実行に使うexactな`configuration_id`へ固定する。
+
+```json
+{"slot_ids": ["slot_690nm", "slot_694nm", "slot_700nm"]}
+```
+
+```json
+{
+  "catalog_revision": 42,
+  "resolved": [
+    {"slot_id": "slot_690nm", "configuration_id": "cfg_exact_1"},
+    {"slot_id": "slot_694nm", "configuration_id": "cfg_exact_2"},
+    {"slot_id": "slot_700nm", "configuration_id": "cfg_exact_3"}
+  ]
+}
+```
+
+ESはsequence検証時にresolveし、実行中は返されたexact IDを使用する。これにより、検証後に
+同じslotへ新しい校正が保存されても実行中のconfigurationは暗黙に変化しない。
+
+### `POST /configurations/{configuration_id}/apply`
+
+指定configurationのgrating、centre position、ROIと横軸状態を適用し、移動完了後に応答する。
+
+```json
+{"axis_mode": "calibrated"}
+```
+
+- `axis_mode="calibrated"`（既定）: 保存済みcalibrationを適用する。
+- `axis_mode="pixel"`: grating・centre・ROIだけを適用し、横軸はpixelにする。
+
+応答の`configuration.axis_mode`自体は`"pixel"` / `"native_wavelength"` / `"calibrated"`の3値を
+取りうる（Ocean Optics等、FluoraPressée較正なしで独自の波長軸を報告する機種向け。詳細は
+`POST /acquire`の`x_axis`説明を参照）。リクエストの`axis_mode`パラメータ自体は引き続き
+`"calibrated"`/`"pixel"`の2値のみを受け付ける。
+
+`configuration.unit`は`x_axis.unit`とは別の語彙("Wavelength" / "Raman shift" / "pixel"、
+`POST /calibration`の`unit`と同じ)を使う。`axis_mode="native_wavelength"`の場合も、pixelでは
+なく表示モードに応じて"Wavelength"または"Raman shift"を返す。
+
+現在のgrating・centre・ROIが同じslotと一致している場合、装置移動は省略して横軸状態だけを更新する。
+応答には`configuration`, `hardware_state`, `display_label`を含む。
+
+### `POST /calibration`（deprecated）
+
+係数を直接適用する旧endpoint。新規連携ではconfiguration endpointを使用すること。将来削除予定。
 
 **リクエスト:**
 ```json
@@ -89,11 +316,18 @@ X-API-Key: <API Server パネルに表示されているキー>
 **リクエスト:**
 ```json
 {
+  "configuration_id": "cfg_exact_1",
+  "axis_mode": "calibrated",
   "exposure_time_s": 0.5,
   "accumulations": 3,
   "dark": {"mode": "none"}
 }
 ```
+- `configuration_id`は省略可。省略時は分光器・ROI・横軸を変更せず、現在と同じ条件で取得する。
+- `configuration_id`指定時は、互換性確認、configuration適用、移動完了、取得を一つの排他操作として
+  実行する。同じ物理条件なら移動を省略する。
+- `axis_mode`は`configuration_id`指定時だけ使用でき、`"calibrated"`または`"pixel"`。
+  省略時は`"calibrated"`。configurationなしで`axis_mode`だけ指定すると`422`。
 - `exposure_time_s` / `accumulations` を省略すると、現在GUIに設定されている値がそのまま使われる。
 - `dark.mode`:
   - `"none"`(既定): 減算しない。
@@ -115,13 +349,32 @@ X-API-Key: <API Server パネルに表示されているキー>
   "exposure_time_s": 0.5,
   "accumulations": 3,
   "detector_temperature_c": -64.8,
-  "timestamp": "2026-07-09T10:11:06.677845"
+  "timestamp": "2026-07-09T10:11:06.677845",
+  "configuration": {
+    "configuration_id": "cfg_exact_1", "slot_id": "slot_690nm",
+    "axis_mode": "calibrated", "calibration_applied": true,
+    "unit": "Wavelength"
+  },
+  "hardware_state": {
+    "grating_index": 1, "grooves_per_mm": 600,
+    "actual_center_wavelength_nm": 690.0,
+    "roi_mode": "1d_roi", "roi_start": 45, "roi_end": 65
+  },
+  "x_axis": {"source": "calibrated", "unit": "nm", "calibrated": true}
 }
 ```
-- `x` は較正済みなら較正後の単位(nm または cm⁻¹)、未較正ならpixel番号。GUIの "Flip X-axis" 設定
-  には依存せず、常に昇順で返す。
+- `x` は較正済みなら較正後の単位(nm または cm⁻¹)、未較正ならpixel番号(Ocean Optics等
+  ネイティブ波長軸を持つ機種では、FluoraPressée較正が無くてもその軸を返す)。GUIの
+  "Flip X-axis" 設定には依存せず、常に昇順で返す。
 - `y_raw` は生データ、`y` はdark減算後(`dark.mode="none"` の場合は `y_raw` と同じ)。
 - 2Dイメージモードで取得した場合、`x` は `null`、`y_raw`/`y` はネストした配列(行×列)になる。
+- `x_axis`は`x`列の解釈を`configuration.axis_mode`と同じ語彙で明示する:
+  - `source`: `"pixel"` / `"native_wavelength"`(FluoraPressée較正なしだが機種側の
+    factory-calibratedな波長軸、現状Ocean Opticsのみ) / `"calibrated"`(FluoraPressée較正適用済み)。
+  - `unit`: `source="pixel"`なら常に`null`。それ以外はRaman shiftモードなら`"cm-1"`、
+    Wavelengthモードなら`"nm"`。
+  - `calibrated`: `source == "calibrated"`と等価の真偽値。`false`は「FluoraPressée較正が
+    未適用」を意味するだけであり、`native_wavelength`の軸自体が無較正という意味ではない。
 
 ### `POST /acquire/fit`
 
@@ -137,7 +390,9 @@ X-API-Key: <API Server パネルに表示されているキー>
   "fit_range": {"start": 690.0, "end": 700.0}
 }
 ```
-- `fit_function`: `"Gauss"`, `"Lorentz"`, `"Pseudo Voigt"`, `"Moffat"` のいずれか。
+- `fit_function`: `"Gauss"`, `"Lorentz"`, `"Pseudo Voigt"`, `"Moffat"`,
+  `"Diamond Raman Edge"` のいずれか。Diamond Raman Edge は負の一次微分を
+  pseudo-Voigt＋線形背景でフィットし、`fit_peak_count` は必ず `1` にする。
 - `fit_peak_count`: フィットするピーク数。1～5、既定値は2。
 - `peak_sort_order`: `"x_desc"`, `"x_asc"`, `"intensity_desc"`, `"intensity_asc"` のいずれか。
 - `baseline_model`: `"constant"`, `"linear"`, `"quadratic"`, `"auto_polynomial"` のいずれか。
@@ -188,6 +443,11 @@ X-API-Key: <API Server パネルに表示されているキー>
 }
 ```
 - `sensor`/`pressure_scale`: `src/pressureCalc.py` の `SENSORS` / `PRESSURE_SCALES` で定義された key。
+- Diamond Raman Edge の場合は `sensor: "diamond_raman_edge"` と
+  `diamond_edge_...` スケールを指定する。`fit_function: "Diamond Raman Edge"` と通常の
+  ピーク圧力スケール、または通常のピークフィットとDiamond Edgeスケールを組み合わせると
+  測定開始前に422エラーになる。Edgeスケール固有の `nu0` を使うため、
+  `zero_pressure_peak` の値は計算には使用されない（互換性のためフィールド自体は必須）。
 - `zero_pressure_peak`: 温度補正を使わない場合のゼロ圧力ピーク位置。
 - `temperature_correction` は省略可。`enabled: false`、または省略した場合は温度補正無しで
   `zero_pressure_peak` がそのまま使われる。`enabled: true` の場合のみ、`scale` に
@@ -211,6 +471,7 @@ X-API-Key: <API Server パネルに表示されているキー>
 `zero_pressure_peak_at_current_t`/`temperature_warning` はすべて `null` になる。
 ダブルピークフィットの場合、圧力計算にはPeak1(較正済みx軸で値が小さい方の
 主ピーク)が使われる。
+横軸がpixelの場合は圧力計算できないため`400 Bad Request`を返す。
 
 ## エラーコード一覧
 
@@ -218,11 +479,12 @@ X-API-Key: <API Server パネルに表示されているキー>
 |---|---|
 | 400 | リクエストの内容が不正(`dark.data` の長さ不一致、2Dモードでのフィット要求など) |
 | 401 | `X-API-Key` が無い、または一致しない |
-| 409 | 他の取得が進行中(ローカルGUIまたは他のAPIリクエスト) |
+| 404 | 指定configurationまたはslotが存在しない |
+| 409 | 他の操作が進行中、またはconfigurationが装置と非互換 |
 | 422 | リクエストボディのバリデーションエラー(Pydantic)、または `dark.mode="reuse_loaded"` の
       設定ミスマッチ |
 | 500 | 予期しないサーバーエラー |
-| 504 | 取得がタイムアウトした |
+| 504 | configuration適用、取得またはライブ状態照会がタイムアウトした |
 
 ## 既知の制限
 
@@ -239,6 +501,23 @@ X-API-Key: <API Server パネルに表示されているキー>
 ```bash
 # 状態確認
 curl -H "X-API-Key: <キー>" http://<IP>:8765/status
+
+# キャッシュ済みカメラ情報
+curl -H "X-API-Key: <キー>" http://<IP>:8765/hardware/camera
+
+# 分光器のライブ詳細情報
+curl -H "X-API-Key: <キー>" "http://<IP>:8765/hardware/spectrometer?refresh=true"
+
+# 実行中・保存済みconfig
+curl -H "X-API-Key: <キー>" http://<IP>:8765/config
+
+# Load Configurationと同じactive候補
+curl -H "X-API-Key: <キー>" http://<IP>:8765/configurations
+
+# configurationを適用してpixel軸で取得
+curl -X POST -H "X-API-Key: <キー>" -H "Content-Type: application/json" \
+  -d '{"configuration_id":"cfg_...", "axis_mode":"pixel"}' \
+  http://<IP>:8765/acquire
 
 # データ取得+フィット+圧力算出
 curl -X POST -H "X-API-Key: <キー>" -H "Content-Type: application/json" \

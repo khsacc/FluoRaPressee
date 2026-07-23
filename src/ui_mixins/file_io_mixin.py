@@ -1,9 +1,32 @@
 import os
 from datetime import datetime
 import numpy as np
-from PyQt5.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-from src.measurement_metadata import background_mismatch_fields, build_hardware_metadata
+from src.configuration_browser import ConfigurationBrowserDialog
+from src.configuration_catalog import (
+    ConfigurationError,
+    format_configuration_label,
+)
+from src.measurement_metadata import background_mismatch_fields, build_hardware_metadata, public_axis_kind
+
+
+def _background_default_filename(
+    acquisition_time, accumulations, roi_start, roi_end, custom_roi, timestamp
+):
+    date_str = timestamp.strftime("%Y%m%d_%H%M%S")
+    roi_str = (
+        f"ROI_from_{int(roi_start)}_to_{int(roi_end)}"
+        if custom_roi
+        else "ROI_full"
+    )
+    return (
+        f"background_{date_str}"
+        f"_acq_{float(acquisition_time):.3f}s"
+        f"_accum_{int(accumulations)}"
+        f"_{roi_str}.txt"
+    )
+
 
 class FileIOMixin:
     def check_bg_mismatch(self):
@@ -55,72 +78,291 @@ class FileIOMixin:
             self._release_acquisition_gate()
 
     def apply_calibration(
-        self, coeffs, filename, calib_unit='Wavelength', calib_laser_wl=None,
-        axis_source="loaded_calibration",
+        self, coeffs, label, calib_unit='Wavelength', calib_laser_wl=None,
+        axis_source="loaded_configuration", configuration_id=None, slot_id=None,
     ):
         self.calib_coeffs = coeffs
         self.calib_unit = calib_unit
         self.calib_laser_wl = calib_laser_wl
-        self.calib_file_name = filename
+        self.configuration_label = label
+        self.active_configuration_id = configuration_id
+        self.active_configuration_slot_id = slot_id
+        self.positioned_configuration_id = configuration_id
+        self.positioned_configuration_slot_id = slot_id
         self.axis_source = axis_source
-        self.lbl_loaded_calib.setText(f"Loaded: {filename}")
+        self.lbl_loaded_configuration.setText(f"Loaded: {label}")
         self.update_plot_labels()
         self.sync_fit_range_to_spectrum(force=True)
 
         if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
             self.update_display(is_new_data=False)
 
-    def on_load_calibration(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Load Configuration", self._last_calib_dir, "JSON Files (*.json)")
-        if not file_path:
-            return
-        self._last_calib_dir = os.path.dirname(file_path)
-        self._save_local_cache("last_calib_dir", self._last_calib_dir)
+    def clear_active_configuration(self):
+        self.calib_coeffs = None
+        self.axis_source = "pixel"
+        self.calib_unit = "Wavelength"
+        self.calib_laser_wl = None
+        self.configuration_label = "None"
+        self.active_configuration_id = None
+        self.active_configuration_slot_id = None
+        self.positioned_configuration_id = None
+        self.positioned_configuration_slot_id = None
+        self.lbl_loaded_configuration.setText("Loaded: None")
+        self.update_plot_labels()
 
+    def configuration_hardware_context(self):
+        """Return cached hardware facts used by both GUI and future API queries."""
+        spec_metadata = {}
+        getter = getattr(self.spec_ctrl, "get_cached_hardware_metadata", None)
+        if getter is not None:
+            spec_metadata = getter() or {}
+        configured = self.config.get("hardware_identity", {})
+        camera_identity = getattr(self, "_camera_identity", {})
+        configured_camera = configured.get("camera", {})
+        configured_spectrometer = configured.get("spectrometer", {})
+        return {
+            "spectrometer_model": (
+                spec_metadata.get("model")
+                or configured_spectrometer.get("model")
+                or self.config.get("model")
+            ),
+            "spectrometer_serial_number": (
+                spec_metadata.get("serial_number")
+                or configured_spectrometer.get("serial_number")
+            ),
+            "camera_model": (
+                camera_identity.get("model") or configured_camera.get("model")
+            ),
+            "camera_serial_number": (
+                camera_identity.get("serial_number")
+                or configured_camera.get("serial_number")
+            ),
+            "gratings": [
+                {
+                    "index": int(item.get("index", index + 1)),
+                    "grooves": int(item.get("grooves", 0)),
+                }
+                for index, item in enumerate(self.config.get("grating", []))
+            ],
+            "detector_width": getattr(self.thread, "det_width", None),
+            "detector_height": getattr(self.thread, "det_height", None),
+            "current_grating": spec_metadata.get("grating"),
+            "actual_center_wavelength_nm": spec_metadata.get("center_wavelength_nm"),
+        }
+
+    def _is_oceanoptics_backend(self):
+        """Return True only for the integrated fixed Ocean Optics backend.
+
+        This deliberately uses the configured backend identity instead of inferring from
+        generic capabilities.  Other fixed or partially movable instruments must continue
+        through their existing grating/centre movement and validation paths unchanged.
+        """
+        return self.config.get("model") == "OceanOptics"
+
+    def _current_grating_definition(self, hardware_context=None):
+        cached_grating = (hardware_context or {}).get("current_grating") or {}
+        if (
+            cached_grating.get("index") is not None
+            and cached_grating.get("grooves_per_mm") is not None
+        ):
+            return {
+                "index": int(cached_grating["index"]),
+                "grooves_per_mm": int(cached_grating["grooves_per_mm"]),
+            }
+        combo_index = self.combo_grating.currentIndex()
+        gratings = self.config.get("grating", [])
+        if not 0 <= combo_index < len(gratings):
+            raise ConfigurationError("The selected grating is not defined in the hardware configuration.")
+        item = gratings[combo_index]
+        return {
+            "index": int(item.get("index", combo_index + 1)),
+            "grooves_per_mm": int(item.get("grooves", 0)),
+        }
+
+    def _current_roi_definition(self):
+        if self.radio_2d.isChecked():
+            mode = "2d"
+            start, end = 0, int(self.thread.det_height)
+        elif self.radio_1d_full.isChecked():
+            mode = "1d_full"
+            start, end = 0, int(self.thread.det_height)
+        else:
+            mode = "1d_roi"
+            start, end = self.spin_vstart.value(), self.spin_vend.value()
+        return {"roi_mode": mode, "roi_start": int(start), "roi_end": int(end)}
+
+    def register_current_configuration(
+        self, coeffs, calibration_unit="Wavelength", excitation_wavelength_nm=None
+    ):
+        """Create a new active record for the current grating/centre/ROI slot."""
+        hardware = self.configuration_hardware_context()
+        grating = self._current_grating_definition(hardware)
+        roi = self._current_roi_definition()
+        c0, c1, c2 = coeffs
+        draft = {
+            "compatibility": {
+                "spectrometer_model": hardware["spectrometer_model"],
+                "spectrometer_serial_number": hardware["spectrometer_serial_number"],
+                "camera_model": hardware["camera_model"],
+                "camera_serial_number": hardware["camera_serial_number"],
+            },
+            "spectrometer": {
+                "grating_index": grating["index"],
+                "grating_grooves_per_mm": grating["grooves_per_mm"],
+                # Slot identity follows the commanded/nominal position. Manual
+                # calibration occurs after movement, so physical_center_wl is the
+                # stable target rather than a fresh noisy readback.
+                "target_center_wavelength_nm": float(self.physical_center_wl),
+                "actual_center_wavelength_nm": float(
+                    hardware["actual_center_wavelength_nm"]
+                    if hardware["actual_center_wavelength_nm"] is not None
+                    else self.physical_center_wl
+                ),
+            },
+            "detector": {
+                **roi,
+                "detector_width": hardware["detector_width"],
+                "detector_height": hardware["detector_height"],
+            },
+            "display": {
+                "mode": (
+                    "Raman shift" if self.radio_spec_mode_raman.isChecked()
+                    else "Wavelength"
+                ),
+                "excitation_wavelength_nm": float(self.spin_exc_wl.value()),
+            },
+            "calibration": {
+                "source": "emission_standard_polynomial",
+                "unit": calibration_unit,
+                "excitation_wavelength_nm": (
+                    float(excitation_wavelength_nm)
+                    if calibration_unit == "Raman shift"
+                    else None
+                ),
+                "coefficients": {
+                    "c0": float(c0), "c1": float(c1), "c2": float(c2),
+                },
+            },
+        }
+        return self.configuration_catalog.register_configuration(draft)
+
+    def on_load_configuration(self):
+        dialog = ConfigurationBrowserDialog(
+            self.configuration_catalog,
+            self.configuration_hardware_context(),
+            active_configuration_id=self.active_configuration_id,
+            parent=self,
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
         try:
-            cfg = self.file_io.load_calibration_config(file_path)
+            record = self.configuration_catalog.get_configuration(
+                dialog.selected_configuration_id
+            )
+            self.configuration_catalog.assert_compatible(
+                record, self.configuration_hardware_context()
+            )
+            self._prepare_configuration_for_loading(
+                record,
+                # Ocean Optics' model+serial compatibility was already checked above.
+                # It has no movable centre, so a saved display/slot centre must not be
+                # sent through SpectrometerMoveThread.  Every other backend retains the
+                # previous unconditional GUI move/apply behaviour.
+                skip_move=self._is_oceanoptics_backend(),
+            )
         except Exception as e:
             self._loading_config = False
             self._pending_calib_coeffs = None
             self._pending_axis_source = None
             QMessageBox.warning(self, "Error", f"Failed to load configuration:\n{e}")
-            return
+            self._clear_pending_configuration()
 
-        # For Raman shift calibrations the excitation wavelength is embedded in the
-        # polynomial coefficients; a mismatch means every x-axis value will be wrong.
-        if cfg.get("calibration_unit") == "Raman shift":
-            saved_exc_wl = cfg.get("exc_wl")
-            if saved_exc_wl is None:
-                QMessageBox.critical(self, "Invalid File",
-                    "This calibration file does not contain an excitation wavelength.\n"
-                    "Cannot load a Raman shift calibration without it.")
-                return
-            current_exc_wl = self.spin_exc_wl.value()
-            if abs(saved_exc_wl - current_exc_wl) > 1e-6:
-                QMessageBox.critical(self, "Excitation Wavelength Mismatch",
-                    f"This calibration was created with an excitation wavelength of "
-                    f"{saved_exc_wl:.6f} nm, but the current setting is {current_exc_wl:.6f} nm.\n\n"
-                    f"Please set the excitation wavelength to exactly {saved_exc_wl:.6f} nm before loading.")
-                return
+    def _apply_pixel_configuration(self, label, configuration_id, slot_id):
+        """Keep the configuration's physical state but expose an uncalibrated axis."""
+        self.calib_coeffs = None
+        self.calib_unit = "Wavelength"
+        self.calib_laser_wl = None
+        self.configuration_label = label
+        self.active_configuration_id = None
+        self.active_configuration_slot_id = None
+        self.positioned_configuration_id = configuration_id
+        self.positioned_configuration_slot_id = slot_id
+        self.axis_source = "pixel"
+        self.lbl_loaded_configuration.setText(f"Loaded: {label} (pixel axis)")
+        self.update_plot_labels()
+        self.sync_fit_range_to_spectrum(force=True)
+        if (
+            getattr(self, "raw_1d_data", None) is not None
+            and hasattr(self.thread, "is_measuring")
+            and not self.thread.is_measuring
+        ):
+            self.update_display(is_new_data=False)
 
-        if "2D" in cfg["mode"]:
+    def _configuration_matches_current_state(self, record):
+        """Return whether a configuration move would be physically redundant."""
+        spectrometer = record["spectrometer"]
+        detector = record["detector"]
+        try:
+            current_grating = self._current_grating_definition(
+                self.configuration_hardware_context()
+            )
+            current_roi = self._current_roi_definition()
+            return (
+                int(current_grating["index"])
+                == int(spectrometer["grating_index"])
+                and int(current_grating["grooves_per_mm"])
+                == int(spectrometer["grating_grooves_per_mm"])
+                and abs(
+                    float(self.physical_center_wl)
+                    - float(spectrometer["target_center_wavelength_nm"])
+                )
+                < 5e-4
+                and current_roi["roi_mode"] == detector["roi_mode"]
+                and int(current_roi["roi_start"]) == int(detector["roi_start"])
+                and int(current_roi["roi_end"]) == int(detector["roi_end"])
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
+
+    def _prepare_configuration_for_loading(
+        self,
+        record,
+        *,
+        axis_mode="calibrated",
+        completion_future=None,
+        skip_move=False,
+    ):
+        detector = record["detector"]
+        spectrometer = record["spectrometer"]
+        display = record.get("display", {})
+        calibration = record["calibration"]
+
+        roi_mode = detector["roi_mode"]
+        if roi_mode == "2d":
             self.radio_2d.setChecked(True)
-        elif "Full" in cfg["mode"]:
+        elif roi_mode == "1d_full":
             self.radio_1d_full.setChecked(True)
         else:
             self.radio_1d_roi.setChecked(True)
 
         self.spin_vstart.blockSignals(True)
         self.spin_vend.blockSignals(True)
-        self.spin_vstart.setValue(cfg["roi_start"])
-        self.spin_vend.setValue(cfg["roi_end"])
+        self.spin_vstart.setValue(detector["roi_start"])
+        self.spin_vend.setValue(detector["roi_end"])
         self.spin_vstart.blockSignals(False)
         self.spin_vend.blockSignals(False)
         self.apply_roi_settings()
 
         self.radio_spec_mode_raman.blockSignals(True)
         self.radio_spec_mode_wl.blockSignals(True)
-        if cfg["display_mode"] == "Raman shift":
+        excitation_wavelength = display.get("excitation_wavelength_nm")
+        if excitation_wavelength is None:
+            excitation_wavelength = calibration.get("excitation_wavelength_nm")
+        if excitation_wavelength is not None:
+            self.spin_exc_wl.setValue(float(excitation_wavelength))
+
+        display_mode = display.get("mode", calibration["unit"])
+        if display_mode == "Raman shift":
             self.radio_spec_mode_raman.setChecked(True)
             self.lbl_centre.setText("Centre (cm⁻¹):")
         else:
@@ -129,13 +371,25 @@ class FileIOMixin:
         self.radio_spec_mode_raman.blockSignals(False)
         self.radio_spec_mode_wl.blockSignals(False)
 
-        cb_idx = self.combo_grating.findText(cfg["grating"])
-        if cb_idx >= 0:
-            self.combo_grating.setCurrentIndex(cb_idx)
+        cb_idx = next(
+            (
+                index for index, item in enumerate(self.config.get("grating", []))
+                if int(item.get("index", index + 1)) == int(spectrometer["grating_index"])
+            ),
+            -1,
+        )
+        if cb_idx < 0:
+            raise ConfigurationError("The configuration's grating slot is not available.")
+        self.combo_grating.setCurrentIndex(cb_idx)
 
-        # cfg["center"] is always in nm; convert to Raman shift if needed for the spin box
-        center_nm = cfg["center"]
-        if cfg["display_mode"] == "Raman shift":
+        # Ocean Optics has no movable centre.  Use its connected native centre for the
+        # hidden display widget; the saved centre is metadata, not a position to apply.
+        # Movable backends retain the original saved-target path.
+        if self._is_oceanoptics_backend():
+            center_nm = float(self.physical_center_wl)
+        else:
+            center_nm = float(spectrometer["target_center_wavelength_nm"])
+        if display_mode == "Raman shift":
             ex_wl = self.spin_exc_wl.value()
             if ex_wl > 0 and center_nm > 0:
                 center_for_spinbox = 1e7 / ex_wl - 1e7 / center_nm
@@ -146,15 +400,80 @@ class FileIOMixin:
         self.spin_centre_wl.setValue(center_for_spinbox)
 
         self._loading_config = True
-        self._pending_calib_coeffs = (cfg["c0"], cfg["c1"], cfg["c2"])
-        self._pending_calib_filename = os.path.basename(file_path)
-        self._pending_calib_unit = cfg.get("calibration_unit", "Wavelength")
-        self._pending_calib_laser_wl = (cfg.get("exc_wl")
-                                        if cfg.get("calibration_unit") == "Raman shift"
-                                        else None)
-        self._pending_axis_source = "loaded_calibration"
+        coefficients = calibration["coefficients"]
+        self._pending_calib_coeffs = (
+            coefficients["c0"], coefficients["c1"], coefficients["c2"]
+        )
+        self._pending_configuration_label = format_configuration_label(record)
+        self._pending_calib_unit = calibration["unit"]
+        self._pending_calib_laser_wl = calibration.get("excitation_wavelength_nm")
+        self._pending_axis_source = "loaded_configuration"
+        self._pending_configuration_id = record["configuration_id"]
+        self._pending_configuration_slot_id = record["slot_id"]
+        self._pending_configuration_axis_mode = axis_mode
+        self._pending_configuration_future = completion_future
 
-        self.on_apply_spectrometer()
+        if skip_move:
+            self._finalize_pending_configuration()
+        else:
+            self.on_apply_spectrometer()
+
+    def _finalize_pending_configuration(self):
+        """Apply the staged axis state after a move, or immediately for a no-op move."""
+        configuration_id = self._pending_configuration_id
+        slot_id = self._pending_configuration_slot_id
+        completion_future = self._pending_configuration_future
+        try:
+            if self._pending_configuration_axis_mode == "pixel":
+                self._apply_pixel_configuration(
+                    self._pending_configuration_label, configuration_id, slot_id
+                )
+            else:
+                self.apply_calibration(
+                    self._pending_calib_coeffs,
+                    self._pending_configuration_label,
+                    calib_unit=self._pending_calib_unit,
+                    calib_laser_wl=self._pending_calib_laser_wl,
+                    axis_source=self._pending_axis_source,
+                    configuration_id=configuration_id,
+                    slot_id=slot_id,
+                )
+            try:
+                self.configuration_catalog.mark_used(configuration_id)
+            except Exception as exc:
+                print(f"Failed to update configuration usage metadata: {exc}")
+        except Exception as exc:
+            self._clear_pending_configuration()
+            self._loading_config = False
+            if completion_future is not None and not completion_future.done():
+                completion_future.set_exception(exc)
+                return
+            raise
+
+        self._clear_pending_configuration()
+        self._loading_config = False
+        if completion_future is not None and not completion_future.done():
+            completion_future.set_result(True)
+
+    def _fail_pending_configuration(self, message):
+        completion_future = getattr(self, "_pending_configuration_future", None)
+        self._clear_pending_configuration()
+        self._loading_config = False
+        if completion_future is not None and not completion_future.done():
+            completion_future.set_exception(RuntimeError(message))
+            return True
+        return False
+
+    def _clear_pending_configuration(self):
+        self._pending_calib_coeffs = None
+        self._pending_configuration_label = None
+        self._pending_calib_unit = None
+        self._pending_calib_laser_wl = None
+        self._pending_axis_source = None
+        self._pending_configuration_id = None
+        self._pending_configuration_slot_id = None
+        self._pending_configuration_axis_mode = "calibrated"
+        self._pending_configuration_future = None
 
     def on_acq_bg_clicked(self):
         if not self._try_acquire_gate():
@@ -178,10 +497,15 @@ class FileIOMixin:
 
         acq_time = self.spin_acq_time.value()
         accum = self.spin_accumulate.value()
-        date_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         mode_str = "1D Spectrum (Custom ROI)" if self.radio_1d_roi.isChecked() else "1D Spectrum (Full Range Binning)"
-        roi_str = f"_ROI_from_{self.spin_vstart.value()}_to_{self.spin_vend.value()}" if self.radio_1d_roi.isChecked() else "_full"
-        default_filename = f"background_{date_str}{roi_str}.txt"
+        default_filename = _background_default_filename(
+            acq_time,
+            accum,
+            self.spin_vstart.value(),
+            self.spin_vend.value(),
+            self.radio_1d_roi.isChecked(),
+            datetime.now(),
+        )
         initial_path = os.path.join(self._last_save_dir, default_filename) if self._last_save_dir else default_filename
 
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Background Data", initial_path, "Text/JSON Files (*.txt *.json)")
@@ -272,7 +596,9 @@ class FileIOMixin:
 
             if is_1d:
                 x_data = self.get_x_axis(len(self.latest_1d_data))
-                if self.chk_flip_x.isChecked() and self.calib_coeffs is not None:
+                if self.chk_flip_x.isChecked() and public_axis_kind(self) != "pixel":
+                    # Must match DisplayMixin.update_display()'s flip condition, or the
+                    # saved x column would desync from native wavelength/calibrated y data.
                     x_data = x_data[::-1]
                 raw_data = None
                 bg_data = None

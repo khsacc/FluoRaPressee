@@ -1,7 +1,7 @@
 """Small local UI-state cache shared by the live GUI and Analysis Mode.
 
 Plain JSON read/modify/write against local_cache.json in the working directory,
-with no PyQt5 dependency, so it can be used from any entry point.
+with no Qt dependency, so it can be used from any entry point.
 """
 
 import json

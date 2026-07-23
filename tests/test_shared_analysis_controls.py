@@ -4,7 +4,8 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PyQt5.QtWidgets import QApplication
+    import numpy as np
+    from PyQt6.QtWidgets import QApplication
     from src.analysis_ui import AnalysisWindow
     from src.fitting_config_widget import FittingConfigWidget
 except ImportError:
@@ -21,7 +22,7 @@ class SharedAnalysisControlsTests(unittest.TestCase):
 
     def setUp(self):
         if AnalysisWindow is None:
-            self.skipTest("PyQt5 is not importable in this environment")
+            self.skipTest("PyQt6 is not importable in this environment")
 
     def test_fitting_widget_owns_all_exposed_controls_and_defaults(self):
         live_config = FittingConfigWidget(fitting_enabled=False)
@@ -36,7 +37,7 @@ class SharedAnalysisControlsTests(unittest.TestCase):
         self.assertEqual(
             [analysis_config.combo_fit_func.itemText(i)
              for i in range(analysis_config.combo_fit_func.count())],
-            ["Pseudo Voigt", "Moffat", "Gauss", "Lorentz"],
+            ["Pseudo Voigt", "Moffat", "Gauss", "Lorentz", "Diamond Raman Edge"],
         )
         self.assertEqual(analysis_config.combo_fit_peak_count.currentData(), 2)
         self.assertEqual(analysis_config.combo_baseline_model.currentData(), "Constant")
@@ -78,6 +79,22 @@ class SharedAnalysisControlsTests(unittest.TestCase):
         self.assertGreater(right_panel.verticalScrollBar().maximum(), 0)
         self.assertEqual(right_panel.horizontalScrollBar().maximum(), 0)
 
+        window.close()
+
+    def test_loaded_spectrum_limits_plot_to_its_x_domain(self):
+        window = AnalysisWindow()
+        window.file_io.load_spectrum_1d = lambda _path: (
+            np.array([100.0, 150.0, 200.0]),
+            np.array([1.0, 2.0, 1.0]),
+            None,
+            None,
+            None,
+        )
+
+        window.load_file("spectrum.txt")
+
+        limits = window.plot_widget.getViewBox().state["limits"]
+        self.assertEqual(limits["xLimits"], [100.0, 200.0])
         window.close()
 
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime
-import os
 
 from src.instrument_status import json_value
 
@@ -71,6 +70,12 @@ def background_mismatch_fields(window, hardware_metadata=None):
         _compare(fields, "camera.read_mode", camera.get("read_mode"), bg_camera.get("read_mode"), skip_missing=True)
         _compare(fields, "camera.output_rows", camera.get("output_rows"), bg_camera.get("output_rows"), skip_missing=True)
         _compare(fields, "camera.software_vertical_sum", camera.get("software_vertical_sum"), bg_camera.get("software_vertical_sum"), skip_missing=True)
+        # Ocean Optics only (Step 1/7, work/work_OceanOptics.md): the *effective* (requested
+        # and hardware-supported) correction flags, not raw config values - see
+        # CameraThreadOceanOptics.get_cached_hardware_metadata(). skip_missing=True keeps
+        # Andor/Princeton backgrounds (which never have these keys) unaffected.
+        _compare(fields, "camera.hardware_dark_corrected", camera.get("hardware_dark_corrected"), bg_camera.get("hardware_dark_corrected"), skip_missing=True)
+        _compare(fields, "camera.nonlinearity_corrected", camera.get("nonlinearity_corrected"), bg_camera.get("nonlinearity_corrected"), skip_missing=True)
         _compare_float(fields, "camera.temperature.setpoint_c", _path(camera, "temperature", "setpoint_c"), _path(bg_camera, "temperature", "setpoint_c"), 0.1, skip_missing=True)
         _compare(fields, "spectrometer.serial_number", spec.get("serial_number"), bg_spec.get("serial_number"), skip_missing=True)
         _compare(fields, "spectrometer.grating.index", _path(spec, "grating", "index"), _path(bg_spec, "grating", "index"), skip_missing=True)
@@ -118,22 +123,73 @@ def _spectrometer_state(window):
     return state
 
 
+def _native_wavelengths(window):
+    """Direct, hardware-derived check (never a separately-maintained flag) for whether the
+    connected camera thread has a factory wavelength calibration to fall back on when no
+    FluoraPressée calibration is loaded - currently only CameraThreadOceanOptics. Used by both
+    _axis_state() below and public_axis_kind()."""
+    native_wavelengths = getattr(getattr(window, "thread", None), "native_wavelengths", None)
+    if native_wavelengths is not None and len(native_wavelengths) > 0:
+        return native_wavelengths
+    return None
+
+
+def public_axis_kind(window):
+    """Simplified 3-value axis classification shared by the API layer
+    (AcquireResponse.x_axis.source / configuration.axis_mode, see src/ui_mixins/api_mixin.py)
+    and by display/save logic that needs to know whether the x-axis is a meaningful physical
+    axis (flip_x must flip x together with y) or an arbitrary pixel index (flip_x need only
+    flip y - see AcquisitionMixin.get_x_axis(), DisplayMixin.update_display()/on_mouse_moved(),
+    FileIOMixin._save_data_to_path()). This is intentionally a different, smaller vocabulary
+    than _axis_state()'s "source" (which also distinguishes *how* a calibration was obtained,
+    e.g. "emission_standard_polynomial" vs "loaded_configuration", for saved-file provenance)."""
+    if getattr(window, "calib_coeffs", None) is not None:
+        return "calibrated"
+    if _native_wavelengths(window) is not None:
+        return "native_wavelength"
+    return "pixel"
+
+
+def public_axis_unit(window, axis_kind=None):
+    """`unit` paired with public_axis_kind(): always None for a bare pixel axis regardless
+    of the Raman toggle (there is nothing to report a unit for), otherwise "cm-1"/"nm"
+    depending on display mode. Pass `axis_kind` if already computed to avoid recomputing it."""
+    if axis_kind is None:
+        axis_kind = public_axis_kind(window)
+    if axis_kind == "pixel":
+        return None
+    return "cm-1" if window.radio_spec_mode_raman.isChecked() else "nm"
+
+
 def _axis_state(window):
     coeffs = getattr(window, "calib_coeffs", None)
     source = getattr(window, "axis_source", None)
     if coeffs is None:
-        source = "hardware_shamrock" if source == "hardware_shamrock" else "pixel"
+        if source == "hardware_shamrock":
+            pass
+        elif _native_wavelengths(window) is not None:
+            source = "oceanoptics_native"
+        else:
+            source = "pixel"
         coefficients = None
-        filename = None
     else:
-        source = source if source in ("neon_polynomial", "loaded_calibration") else "loaded_calibration"
+        source = source if source in (
+            "neon_polynomial", "emission_standard_polynomial",
+            "loaded_configuration", "api_inline_calibration"
+        ) else "loaded_configuration"
         coefficients = {"c0": coeffs[0], "c1": coeffs[1], "c2": coeffs[2]}
-        raw_name = getattr(window, "calib_file_name", None)
-        filename = None if raw_name in (None, "", "None") else os.path.basename(str(raw_name))
     return {
         "source": source,
+        "configuration_id": (
+            getattr(window, "active_configuration_id", None) if coefficients else None
+        ),
+        "configuration_slot_id": (
+            getattr(window, "active_configuration_slot_id", None) if coefficients else None
+        ),
+        "configuration_label": (
+            getattr(window, "configuration_label", None) if coefficients else None
+        ),
         "calibration_coefficients": coefficients,
-        "calibration_file_name": filename,
         "calibration_unit": getattr(window, "calib_unit", None) if coefficients else None,
     }
 

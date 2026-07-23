@@ -1,13 +1,23 @@
+import json
 import secrets
 import socket
 import threading
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError as FutureTimeoutError
 from datetime import datetime
 
 import numpy as np
 import uvicorn
-from PyQt5.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
+from src.api.info_helpers import (
+    build_config_response,
+    build_device_response,
+    normalize_camera_metadata,
+    normalize_spectrometer_metadata,
+)
+from src.configuration_catalog import format_configuration_label
+from src.instrument_status import legacy_camera_snapshot, unavailable_device
+from src.measurement_metadata import capture_hardware_state, public_axis_kind, public_axis_unit
 from src.pressureCalc import PressureCalculator
 
 
@@ -15,6 +25,16 @@ class BackgroundMismatchError(Exception):
     """Raised by api_acquire() when dark_mode="reuse_loaded" doesn't match the
     loaded background's acquisition settings and the caller didn't opt in via
     ignore_mismatch=True.
+    """
+    pass
+
+
+class ExposureApplyError(Exception):
+    """Raised by _api_start_acquire() when the camera thread reports (via its optional
+    get_exposure_error(seq)) that a requested exposure_time_s failed to reach hardware -
+    e.g. outside an Ocean Optics device's supported integration time range. Without this
+    check, acquisition would silently proceed with the previous exposure time while the
+    response reported the requested (never-applied) one - see work/work_OceanOptics.md.
     """
     pass
 
@@ -33,17 +53,214 @@ class ApiMixin:
     # thread, see src/api/gui_bridge.py).
     # ------------------------------------------------------------------
 
-    def _api_start_acquire(self, exposure_s=None, accumulations=None):
+    def _api_camera_backend(self):
+        module = type(self.thread).__module__
+        if module.endswith("camera_princeton"):
+            return "princeton_picam"
+        if module.endswith("camera_oceanoptics"):
+            return "oceanoptics_seabreeze"
+        return "andor_sdk2"
+
+    def _api_spectrometer_backend(self):
+        module = type(self.spec_ctrl).__module__
+        if module.endswith("spectrometer_princeton"):
+            return "princeton_acton"
+        if module.endswith("spectrometer_oceanoptics"):
+            return "oceanoptics_seabreeze"
+        return "andor_shamrock"
+
+    def _api_build_camera_info(self, status=None):
+        """Build a camera response on the GUI thread from cached state."""
+        capture = capture_hardware_state(self, self.spin_accumulate.value())
+        metadata = normalize_camera_metadata(capture["camera"])
+        running = bool(self.thread.isRunning())
+        debug = bool(getattr(self.thread, "debug", self.debug))
+        # CameraThreadOceanOptics holds its connection as `self.spec`, not `self.cam`
+        # (Andor/Princeton) - checking both covers every backend without needing to
+        # branch on _api_camera_backend() here too.
+        hardware_connected = bool(
+            not debug
+            and running
+            and (
+                getattr(self.thread, "cam", None) is not None
+                or getattr(self.thread, "spec", None) is not None
+            )
+        )
+        return build_device_response(
+            backend=self._api_camera_backend(),
+            debug=debug,
+            operational=running and (debug or hardware_connected),
+            hardware_connected=hardware_connected,
+            busy=self._instrument_status_busy(),
+            metadata=metadata,
+            status=status,
+        )
+
+    def _api_build_spectrometer_info(self, status=None):
+        """Build a spectrometer response on the GUI thread from cached state."""
+        capture = capture_hardware_state(self, self.spin_accumulate.value())
+        configured_identity = self.config.get("hardware_identity", {}).get("spectrometer", {})
+        metadata = normalize_spectrometer_metadata(
+            capture["spectrometer"], configured_identity
+        )
+        debug = bool(getattr(self.spec_ctrl, "debug", self.debug))
+        if self._api_spectrometer_backend() == "oceanoptics_seabreeze":
+            # Ocean Optics has no separate spectrometer hardware to query -
+            # SpectrometerControllerOceanOptics is a no-op that always reports
+            # is_initialized=True regardless of whether the single physical device (owned
+            # by the camera thread) is actually connected. Report the real connection
+            # state from there instead, so a disconnected/failed camera is never shown as
+            # a connected spectrometer.
+            hardware_connected = bool(
+                not debug
+                and self.thread.isRunning()
+                and getattr(self.thread, "spec", None) is not None
+            )
+        else:
+            hardware_connected = bool(getattr(self.spec_ctrl, "is_initialized", False))
+        return build_device_response(
+            backend=self._api_spectrometer_backend(),
+            debug=debug,
+            operational=debug or hardware_connected,
+            hardware_connected=hardware_connected,
+            busy=self._instrument_status_busy(),
+            metadata=metadata,
+            status=status,
+        )
+
+    def _api_begin_hardware_refresh(self):
+        """Acquire the same exclusion gate used by measurement/calibration."""
+        if self._instrument_status_busy() or not self._try_acquire_gate():
+            raise RuntimeError("instrument busy")
+
+    def _api_end_hardware_refresh(self):
+        self._release_acquisition_gate()
+
+    def _api_start_camera_status_refresh(self):
+        self._api_begin_hardware_refresh()
+        future = Future()
+        self._api_camera_status_future = future
+        try:
+            if not self.thread.isRunning():
+                future.set_result(unavailable_device(
+                    self._api_camera_backend(), "Camera is not connected."
+                ))
+            elif not hasattr(self.thread, "request_status"):
+                future.set_result(unavailable_device(
+                    self._api_camera_backend(), "Camera status reporting is unavailable."
+                ))
+            else:
+                self.thread.request_status()
+        except Exception:
+            self._api_camera_status_future = None
+            self._api_end_hardware_refresh()
+            raise
+        return future
+
+    def _api_on_camera_status_ready(self, snapshot):
+        """Resolve an API live-status request from the camera thread signal."""
+        future = getattr(self, "_api_camera_status_future", None)
+        if future is None or future.done():
+            return
+        if isinstance(snapshot, dict) and "Error" in snapshot and "sections" not in snapshot:
+            rows = snapshot.get("Error") or []
+            message = rows[0][1] if rows and len(rows[0]) > 1 else "Camera status query failed."
+            normalized = unavailable_device(self._api_camera_backend(), message)
+        else:
+            normalized = legacy_camera_snapshot(snapshot, self._api_camera_backend())
+        future.set_result(normalized)
+
+    def api_get_camera_info(self, refresh=False, timeout=10.0):
+        """Worker-thread entry point for GET /hardware/camera."""
+        if not refresh:
+            return self.gui_bridge.call(self._api_build_camera_info)
+
+        future = self.gui_bridge.call(self._api_start_camera_status_refresh)
+        try:
+            snapshot = future.result(timeout=timeout)
+            return self.gui_bridge.call(
+                lambda: self._api_build_camera_info(status=snapshot)
+            )
+        finally:
+            self.gui_bridge.call(lambda: self._api_finish_camera_status_refresh(future))
+
+    def _api_finish_camera_status_refresh(self, future):
+        if getattr(self, "_api_camera_status_future", None) is future:
+            self._api_camera_status_future = None
+        self._api_end_hardware_refresh()
+
+    def api_get_spectrometer_info(self, refresh=False, timeout=30.0):
+        """Worker-thread entry point for GET /hardware/spectrometer."""
+        if not refresh:
+            return self.gui_bridge.call(self._api_build_spectrometer_info)
+
+        self.gui_bridge.call(self._api_begin_hardware_refresh)
+        result_future = Future()
+
+        def collect_status():
+            try:
+                result_future.set_result(self.spec_ctrl.get_status_snapshot())
+            except Exception as exc:
+                result_future.set_exception(exc)
+
+        worker = threading.Thread(
+            target=collect_status,
+            name="FluoraPressee-SpectrometerStatus",
+            daemon=True,
+        )
+        worker.start()
+
+        release_in_finally = True
+        try:
+            snapshot = result_future.result(timeout=timeout)
+            return self.gui_bridge.call(
+                lambda: self._api_build_spectrometer_info(status=snapshot)
+            )
+        except FutureTimeoutError:
+            # The hardware worker may still hold its controller lock. Keep the
+            # acquisition gate until it really exits, even though HTTP returns 504.
+            release_in_finally = False
+            result_future.add_done_callback(
+                lambda _future: self._api_release_refresh_after_timeout()
+            )
+            raise
+        finally:
+            if release_in_finally:
+                self.gui_bridge.call(self._api_end_hardware_refresh)
+
+    def _api_release_refresh_after_timeout(self):
+        try:
+            self.gui_bridge.call(self._api_end_hardware_refresh)
+        except Exception as exc:
+            print(f"Failed to release API hardware-status gate after timeout: {exc}")
+
+    def api_get_config(self):
+        """GUI-thread helper for GET /config."""
+        try:
+            with open("spectrometerConfig.json", "r", encoding="utf-8") as handle:
+                stored = json.load(handle)
+        except Exception:
+            stored = self.config
+        return build_config_response(
+            self.config,
+            getattr(self, "_startup_config", self.config),
+            stored_config=stored,
+        )
+
+    def _api_start_acquire(
+        self, exposure_s=None, accumulations=None, *, gate_already_held=False
+    ):
         """Kick off a single-shot acquisition and return immediately.
 
         Does not wait for the frame to arrive - that happens asynchronously via
         the existing data_ready signal path; the returned Future is resolved
         later by _process_completed_data().
         """
-        if not self._try_acquire_gate():
+        if not gate_already_held and not self._try_acquire_gate():
             raise RuntimeError("acquisition busy")
+        if gate_already_held and not self._acquisition_gate.locked():
+            raise RuntimeError("configuration operation lost the acquisition gate")
 
-        actual_exposure = exposure_s if exposure_s is not None else self.spin_acq_time.value()
         actual_accum = accumulations if accumulations is not None else self.spin_accumulate.value()
 
         if exposure_s is not None:
@@ -56,13 +273,34 @@ class ApiMixin:
             seq = self.thread.update_exposure(exposure_s)
             if not self.thread.wait_for_exposure_applied(seq, timeout=wait_timeout):
                 print("Warning: timed out waiting for the new exposure to reach hardware before API acquisition")
+            # Not every camera thread implements this (only CameraThreadOceanOptics does,
+            # since its integration_time_micros() can reject an out-of-range value outright
+            # rather than clamping it) - absence means "assume applied", matching the
+            # pre-existing behaviour for Andor/Princeton.
+            get_exposure_error = getattr(self.thread, "get_exposure_error", None)
+            exposure_error = get_exposure_error(seq) if get_exposure_error is not None else None
+            if exposure_error is not None:
+                self._release_acquisition_gate()
+                raise ExposureApplyError(f"Failed to set exposure: {exposure_error}")
+            # Reflects what the hardware actually accepted (or, on failure, was left
+            # unchanged at) rather than blindly trusting the requested value - see
+            # work/work_OceanOptics.md review round 5.
+            actual_exposure = self.thread.current_exposure
+        else:
+            actual_exposure = self.spin_acq_time.value()
 
         if accumulations is not None:
             self._active_target_accum = accumulations
 
         future = Future()
         self._api_pending_future = future
-        self.take_single_spectrum()
+        try:
+            self.take_single_spectrum()
+        except Exception:
+            self._active_target_accum = None
+            self._api_pending_future = None
+            self._release_acquisition_gate()
+            raise
 
         return future, actual_exposure, actual_accum
 
@@ -114,8 +352,196 @@ class ApiMixin:
     # API worker-thread entry point.
     # ------------------------------------------------------------------
 
-    def api_acquire(self, exposure_s=None, accumulations=None, dark_mode="none",
-                     dark_data=None, ignore_mismatch=False, timeout=30.0):
+    def _api_start_configuration_apply(self, record, axis_mode):
+        """Acquire the operation gate and stage/move a configuration on the GUI thread."""
+        if self._instrument_status_busy() or not self._try_acquire_gate():
+            raise RuntimeError("instrument busy")
+        completion_future = Future()
+        try:
+            self._prepare_configuration_for_loading(
+                record,
+                axis_mode=axis_mode,
+                completion_future=completion_future,
+                # Only Ocean Optics bypasses centre comparison/movement by device
+                # identity.  For every other backend preserve the existing exact
+                # grating+centre+ROI no-op test.
+                skip_move=(
+                    self._is_oceanoptics_backend()
+                    or self._configuration_matches_current_state(record)
+                ),
+            )
+        except Exception:
+            self._clear_pending_configuration()
+            self._loading_config = False
+            self._release_acquisition_gate()
+            raise
+        return completion_future
+
+    def _api_release_gate_after_future(self):
+        try:
+            self.gui_bridge.call(self._release_acquisition_gate)
+        except Exception as exc:
+            print(f"Failed to release configuration operation gate: {exc}")
+
+    def _api_validate_configuration(self, configuration_id):
+        record = self.configuration_catalog.get_configuration(configuration_id)
+        hardware_context = self.gui_bridge.call(self.configuration_hardware_context)
+        self.configuration_catalog.assert_compatible(record, hardware_context)
+        return record
+
+    def _api_wait_for_configuration(self, record, axis_mode, timeout=120.0):
+        # If this call raises, _api_start_configuration_apply either never
+        # acquired the gate (busy), or acquired and released it while rolling
+        # back a staging failure. Do not release an unknown owner's gate here.
+        future = self.gui_bridge.call(
+            lambda: self._api_start_configuration_apply(record, axis_mode)
+        )
+        try:
+            future.result(timeout=timeout)
+        except FutureTimeoutError:
+            # Movement may still hold a controller lock. Release the operation
+            # gate only after the move callback has actually completed.
+            future.add_done_callback(
+                lambda _future: self._api_release_gate_after_future()
+            )
+            raise
+        except Exception:
+            # Receiving a Future proves that this configuration operation
+            # acquired the gate. A completed move failure will not release it
+            # in the GUI callback, so release this operation's ownership here.
+            self.gui_bridge.call(self._release_acquisition_gate)
+            raise
+        return future
+
+    def _api_configuration_state(self):
+        hardware = self.configuration_hardware_context()
+        try:
+            grating = self._current_grating_definition(hardware)
+        except Exception:
+            grating = {"index": None, "grooves_per_mm": None}
+        roi = self._current_roi_definition()
+        calibrated = self.calib_coeffs is not None
+        # public_axis_kind()/public_axis_unit() are the single source of truth for both
+        # "configuration.axis_mode" here and AcquireResponse.x_axis (added below) - see
+        # work/work_OceanOptics.md Step 8. Without this, Ocean Optics' native-wavelength
+        # acquisitions would report x_axis.source="native_wavelength" while axis_mode stayed
+        # "pixel" in the very same response.
+        axis_kind = public_axis_kind(self)
+        axis_unit = public_axis_unit(self, axis_kind)
+        # "configuration.unit" intentionally keeps the "Wavelength"/"Raman shift"/"pixel"
+        # vocabulary (matching self.calib_unit and POST /calibration's request/response,
+        # see manuals/API.md) rather than axis_unit's "nm"/"cm-1"/None - the two fields serve
+        # different callers. It must still track axis_kind rather than only
+        # `calibrated`, though: a native-wavelength axis (Ocean Optics, no FluoraPressée
+        # calibration loaded) is a real Wavelength/Raman-shift axis, not a pixel index.
+        if calibrated:
+            display_unit = self.calib_unit
+        elif axis_kind == "native_wavelength":
+            display_unit = "Raman shift" if self.radio_spec_mode_raman.isChecked() else "Wavelength"
+        else:
+            display_unit = "pixel"
+        positioned_id = getattr(self, "positioned_configuration_id", None)
+        positioned_slot_id = getattr(
+            self, "positioned_configuration_slot_id", None
+        )
+        if positioned_id is not None:
+            try:
+                positioned_record = self.configuration_catalog.get_configuration(
+                    positioned_id
+                )
+                if not self._configuration_matches_current_state(positioned_record):
+                    positioned_id = None
+                    positioned_slot_id = None
+            except Exception:
+                positioned_id = None
+                positioned_slot_id = None
+        return {
+            "configuration": {
+                "configuration_id": positioned_id,
+                "slot_id": positioned_slot_id,
+                "axis_mode": axis_kind,
+                "calibration_applied": calibrated,
+                "unit": display_unit,
+            },
+            "hardware_state": {
+                "grating_index": grating["index"],
+                "grooves_per_mm": grating["grooves_per_mm"],
+                "actual_center_wavelength_nm": float(
+                    hardware["actual_center_wavelength_nm"]
+                    if hardware["actual_center_wavelength_nm"] is not None
+                    else self.physical_center_wl
+                ),
+                "roi_mode": roi["roi_mode"],
+                "roi_start": roi["roi_start"],
+                "roi_end": roi["roi_end"],
+            },
+            # Only declared on AcquireResponse (src/api/schemas.py); pydantic's default
+            # extra="ignore" silently drops this key for StatusResponse/
+            # ApplyConfigurationResponse, which also consume this same dict via **state.
+            "x_axis": {
+                "source": axis_kind,
+                "unit": axis_unit,
+                "calibrated": axis_kind == "calibrated",
+            },
+        }
+
+    def api_list_configurations(
+        self, *, active_only=True, include_incompatible=False, limit=100, offset=0
+    ):
+        hardware_context = self.gui_bridge.call(self.configuration_hardware_context)
+        return self.configuration_catalog.list_selectable(
+            hardware_context,
+            active_only=active_only,
+            include_incompatible=include_incompatible,
+            limit=limit,
+            offset=offset,
+        )
+
+    def api_get_configuration(self, configuration_id):
+        record = self.configuration_catalog.get_configuration(configuration_id)
+        hardware_context = self.gui_bridge.call(self.configuration_hardware_context)
+        reasons = self.configuration_catalog.compatibility_reasons(
+            record, hardware_context
+        )
+        return {
+            "catalog_revision": self.configuration_catalog.catalog_revision(),
+            "configuration": record,
+            "compatible": not reasons,
+            "incompatibility_reasons": reasons,
+        }
+
+    def api_resolve_configurations(self, slot_ids):
+        hardware_context = self.gui_bridge.call(self.configuration_hardware_context)
+        return self.configuration_catalog.resolve_slots(slot_ids, hardware_context)
+
+    def api_apply_configuration(self, configuration_id, axis_mode="calibrated"):
+        record = self._api_validate_configuration(configuration_id)
+        self._api_wait_for_configuration(record, axis_mode)
+        try:
+            state = self.gui_bridge.call(self._api_configuration_state)
+        finally:
+            # _api_wait_for_configuration returned successfully, so this call
+            # owns the gate and is responsible for releasing it.
+            self.gui_bridge.call(self._release_acquisition_gate)
+        return {
+            "applied": True,
+            "configuration_id": record["configuration_id"],
+            "slot_id": record["slot_id"],
+            "display_label": format_configuration_label(record),
+            **state,
+        }
+
+    def api_acquire(
+        self,
+        exposure_s=None,
+        accumulations=None,
+        dark_mode="none",
+        dark_data=None,
+        ignore_mismatch=False,
+        configuration_id=None,
+        axis_mode="calibrated",
+        timeout=30.0,
+    ):
         """Synchronous single-shot acquisition for API callers.
 
         Must be called from a non-GUI thread. Background subtraction is
@@ -126,18 +552,41 @@ class ApiMixin:
         if dark_mode == "provided" and dark_data is None:
             raise ValueError('dark_mode="provided" requires dark_data')
 
-        future, actual_exposure, actual_accum = self.gui_bridge.call(
-            lambda: self._api_start_acquire(exposure_s, accumulations)
+        configuration_applied = False
+        if configuration_id is not None:
+            record = self._api_validate_configuration(configuration_id)
+            self._api_wait_for_configuration(record, axis_mode)
+            configuration_applied = True
+
+        try:
+            future, actual_exposure, actual_accum = self.gui_bridge.call(
+                lambda: self._api_start_acquire(
+                    exposure_s,
+                    accumulations,
+                    gate_already_held=configuration_applied,
+                )
+            )
+        except Exception:
+            if configuration_applied:
+                self.gui_bridge.call(self._release_acquisition_gate)
+            raise
+        acquisition_timeout = max(
+            float(timeout), float(actual_exposure) * int(actual_accum) + 15.0
         )
-        result = future.result(timeout=timeout)
+        result = future.result(timeout=acquisition_timeout)
         raw = result["raw"]
         mode = result["mode"]
 
         x, temp_text, bg_data, bg_mismatch = self.gui_bridge.call(
             lambda: self._api_finalize_acquire(
-                len(raw) if mode == "1d" else None, mode, dark_mode, actual_exposure, actual_accum
+                len(raw) if mode == "1d" else None,
+                mode,
+                dark_mode,
+                actual_exposure,
+                actual_accum,
             )
         )
+        configuration_state = self.gui_bridge.call(self._api_configuration_state)
 
         background_mismatch_warning = False
 
@@ -176,6 +625,7 @@ class ApiMixin:
             "accumulations": actual_accum,
             "detector_temperature_c": _parse_temp_c(temp_text),
             "timestamp": datetime.now().isoformat(),
+            **configuration_state,
         }
         if background_mismatch_warning:
             response["background_mismatch_warning"] = True
@@ -202,7 +652,7 @@ class ApiMixin:
         return {"success": True, "x_fit": x_fit, "y_fit": y_fit_curve, "fit": res}
 
     def api_pressure(self, peak, peak_err, sensor, pressure_scale, zero_pressure_peak,
-                      temperature_correction=None):
+                      temperature_correction=None, fit_function=""):
         """Calculate pressure using PressureCalculator's internal keys.
 
         `sensor`, `pressure_scale`, and `temperature_correction["scale"]` are
@@ -214,6 +664,10 @@ class ApiMixin:
         PressureCalculator.calculate(); this method only gathers request values
         and formats the API response.
         """
+        PressureCalculator.validate_fit_pressure_pair(
+            fit_function=fit_function, sensor=sensor, p_scale=pressure_scale
+        )
+
         zero_peak_at_t0 = None
         current_t = 298.15
         t0 = 298.15
@@ -268,19 +722,19 @@ class ApiMixin:
     # ------------------------------------------------------------------
 
     def api_apply_calibration(self, c0, c1, c2, unit, laser_wavelength_nm=None, label="api"):
-        """Must run on the GUI thread (updates self.lbl_loaded_calib etc. via
+        """Must run on the GUI thread (updates the loaded-configuration label via
         FileIOMixin.apply_calibration()).
         """
         self.apply_calibration(
             (c0, c1, c2), label, calib_unit=unit,
             calib_laser_wl=laser_wavelength_nm,
-            axis_source="loaded_calibration",
+            axis_source="api_inline_calibration",
         )
         return {
             "applied": True,
             "unit": self.calib_unit,
             "c0": c0, "c1": c1, "c2": c2,
-            "label": self.calib_file_name,
+            "label": self.configuration_label,
         }
 
     def api_get_status(self):
@@ -292,6 +746,7 @@ class ApiMixin:
         else:
             roi_mode = "1d_roi"
 
+        configuration_state = self._api_configuration_state()
         return {
             "busy": self._acquisition_gate.locked(),
             "camera_connected": hasattr(self, 'thread') and self.thread.isRunning(),
@@ -299,7 +754,7 @@ class ApiMixin:
             "calibration": {
                 "applied": self.calib_coeffs is not None,
                 "unit": self.calib_unit,
-                "label": self.calib_file_name,
+                "label": self.configuration_label,
             },
             "roi": {
                 "mode": roi_mode,
@@ -310,6 +765,7 @@ class ApiMixin:
                 "loaded": self.loaded_bg_data is not None,
                 "metadata": self.loaded_bg_metadata,
             },
+            **configuration_state,
         }
 
     # ------------------------------------------------------------------
@@ -379,9 +835,10 @@ class ApiMixin:
             "This immediately invalidates the current API key. Any paired client still using the "
             "old key will get 401 Unauthorized until it's updated with the new one shown next.\n\n"
             "Continue?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         new_key = self.regenerate_api_key()

@@ -39,6 +39,10 @@ class DataAnalyzer:
     }
     AUTO_BASELINE_MODE = "Auto Polynomial"
     AUTO_BASELINE_BIC_THRESHOLD = 6.0
+    DIAMOND_EDGE_FUNCTION = "Diamond Raman Edge"
+    EDGE_SMOOTH_WIDTH = 2.0  # cm^-1; only used before numerical differentiation
+    EDGE_LOCAL_HALF_WIDTH = 6.0  # cm^-1 around the strongest negative derivative
+    EDGE_MAX_SMOOTH_WINDOW = 51
 
     def __init__(self):
         """DataAnalyzer を初期化する"""
@@ -293,6 +297,150 @@ class DataAnalyzer:
     # ==========================================
     # --- Fitting ---
     # ==========================================
+    def fit_diamond_raman_edge(self, x_data: np.ndarray, y_data: np.ndarray,
+                               fit_start: Optional[float] = None,
+                               fit_end: Optional[float] = None) -> Tuple:
+        """Fit the stressed-diamond high-frequency Raman edge.
+
+        The spectrum is interpolated onto an evenly spaced grid, smoothed only
+        for differentiation, and ``-dI/dnu`` is fitted locally with a
+        pseudo-Voigt profile plus a linear derivative baseline.  The fitted
+        profile centre is the Raman-edge position used by the pressure scales.
+        """
+        x = np.asarray(x_data, dtype=np.float64)
+        y = np.asarray(y_data, dtype=np.float64)
+        valid = np.isfinite(x) & np.isfinite(y)
+        if fit_start is not None and fit_end is not None:
+            start_val, end_val = sorted((float(fit_start), float(fit_end)))
+            valid &= (x >= start_val) & (x <= end_val)
+        x = x[valid]
+        y = y[valid]
+        if len(x) < self.MIN_FIT_POINTS:
+            return None, None, None
+
+        order = np.argsort(x)
+        x = x[order]
+        y = y[order]
+        x, unique_indices = np.unique(x, return_index=True)
+        y = y[unique_indices]
+        if len(x) < self.MIN_FIT_POINTS or float(np.ptp(x)) <= 0:
+            return None, None, None
+
+        try:
+            x_uniform = np.linspace(float(x[0]), float(x[-1]), len(x))
+            y_uniform = np.interp(x_uniform, x, y)
+            dx = float(x_uniform[1] - x_uniform[0])
+
+            window = int(round(self.EDGE_SMOOTH_WIDTH / dx))
+            window = max(5, min(window, self.EDGE_MAX_SMOOTH_WINDOW, len(x_uniform) - 1))
+            if window % 2 == 0:
+                window -= 1
+            if window < 5:
+                return None, None, None
+            y_smooth = savgol_filter(y_uniform, window_length=window, polyorder=min(3, window - 1))
+            derivative = -np.gradient(y_smooth, x_uniform)
+
+            # Savitzky-Golay and numerical differentiation are least reliable at
+            # the ROI boundaries.  Excluding their half-window prevents a hard
+            # user-selected range edge from being mistaken for the diamond edge.
+            derivative_for_search = derivative.copy()
+            margin = min(max(window // 2, 2), len(derivative_for_search) // 4)
+            derivative_for_search[:margin] = -np.inf
+            derivative_for_search[-margin:] = -np.inf
+            edge_guess_index = int(np.argmax(derivative_for_search))
+            edge_guess = float(x_uniform[edge_guess_index])
+            local_mask = np.abs(x_uniform - edge_guess) <= self.EDGE_LOCAL_HALF_WIDTH
+            minimum_local_points = 12
+            if int(np.count_nonzero(local_mask)) < minimum_local_points:
+                lo = max(0, edge_guess_index - minimum_local_points // 2)
+                hi = min(len(x_uniform), lo + minimum_local_points)
+                lo = max(0, hi - minimum_local_points)
+                local_mask = np.zeros(len(x_uniform), dtype=bool)
+                local_mask[lo:hi] = True
+
+            x_local = x_uniform[local_mask]
+            d_local = derivative[local_mask]
+            if len(x_local) < self.MIN_FIT_POINTS or float(np.ptp(x_local)) <= 0:
+                return None, None, None
+
+            x_mid = float(np.mean(x_local))
+            x_span = float(np.ptp(x_local))
+
+            def edge_model(x_values, amplitude, centre, fwhm, eta, offset, slope):
+                profile = self.pseudo_voigt(
+                    x_values, amplitude, centre, fwhm, eta, offset=0.0
+                )
+                return profile + offset + slope * ((x_values - x_mid) / x_span)
+
+            endpoint_count = max(1, min(3, len(d_local) // 4))
+            offset_guess = float(np.median(np.r_[d_local[:endpoint_count], d_local[-endpoint_count:]]))
+            amplitude_guess = max(float(np.max(d_local) - offset_guess), np.finfo(float).eps)
+            fwhm_guess = min(max(2.0, dx * 2.0), x_span)
+            p0 = [amplitude_guess, edge_guess, fwhm_guess,
+                  self.PSEUDO_VOIGT_ETA_INIT, offset_guess, 0.0]
+            bounds = (
+                [0.0, float(x_local[0]), max(dx * 0.5, self.FWHM_MIN),
+                 self.PSEUDO_VOIGT_ETA_MIN, -np.inf, -np.inf],
+                [np.inf, float(x_local[-1]), max(x_span * 2.0, dx),
+                 self.PSEUDO_VOIGT_ETA_MAX, np.inf, np.inf],
+            )
+            popt, pcov = self._fit_strict(edge_model, x_local, d_local, p0, bounds)
+            if not np.all(np.isfinite(popt)) or not np.all(np.isfinite(pcov)):
+                return None, None, None
+            perr = np.sqrt(np.maximum(np.diag(pcov), 0.0))
+            derivative_fit = edge_model(x_local, *popt)
+            residuals = d_local - derivative_fit
+            ss_res = float(np.sum(residuals**2))
+            ss_tot = float(np.sum((d_local - np.mean(d_local))**2))
+            r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+            edge_record = {
+                "index": 1,
+                "position": float(popt[1]),
+                "position_err": float(perr[1]),
+                "width": float(popt[2]),
+                "width_err": float(perr[2]),
+                "amplitude": float(popt[0]),
+                "amplitude_err": float(perr[0]),
+                "intensity": float(popt[0]),
+            }
+            derivative_baseline = popt[4] + popt[5] * ((x_local - x_mid) / x_span)
+            res = {
+                "analysis_type": "diamond_raman_edge",
+                "is_double": False,
+                "is_multi": False,
+                "peak_count": 1,
+                "peak_sort_order": "x_desc",
+                "peaks": [edge_record],
+                "edge_position": edge_record["position"],
+                "edge_position_err": edge_record["position_err"],
+                "edge_width": edge_record["width"],
+                "edge_width_err": edge_record["width_err"],
+                "x_derivative": x_local,
+                "y_derivative": d_local,
+                "y_derivative_fit": derivative_fit,
+                "y_derivative_baseline": derivative_baseline,
+                # The regular plot overlays the smoothed source spectrum; the
+                # fitted edge centre is shown separately by the UI marker.
+                "y_baseline": np.full_like(x_uniform, np.nan),
+                "baseline": {
+                    "requested": "Derivative Linear",
+                    "selected": "Derivative Linear",
+                    "degree": 1,
+                    "basis": "linear",
+                    "coefficients": [float(popt[4]), float(popt[5])],
+                    "coefficient_errors": [float(perr[4]), float(perr[5])],
+                    "x_min": float(x_local[0]),
+                    "x_max": float(x_local[-1]),
+                },
+                "R2": r_squared,
+            }
+            self._add_legacy_peak_keys(res, [edge_record])
+            return x_uniform, y_smooth, res
+        except (OptimizeWarning, RuntimeError, ValueError, FloatingPointError) as exc:
+            print(f"Diamond Raman edge fitting failed: {exc}")
+            return None, None, None
+
     def fit_spectrum(self, x_data: np.ndarray, y_data: np.ndarray, func_type: str = "Pseudo Voigt",
                      fit_start: Optional[float] = None, fit_end: Optional[float] = None,
                      peak_count: int = 1, peak_sort_order: str = "x_desc",
@@ -314,6 +462,11 @@ class DataAnalyzer:
             (x_fit, y_fit_curve, res) のタプル。フィッティング失敗時は (None, None, None)
         """
         
+        if func_type == self.DIAMOND_EDGE_FUNCTION:
+            if int(peak_count) != 1:
+                raise ValueError("Diamond Raman Edge fitting requires peak_count=1")
+            return self.fit_diamond_raman_edge(x_data, y_data, fit_start, fit_end)
+
         # Build a mask restricting the data to the requested fit range
         if fit_start is not None and fit_end is not None:
             start_val = min(fit_start, fit_end)

@@ -1,6 +1,6 @@
 import math
 import numpy as np
-from PyQt5.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from src.accumulation import AccumulationCombiner
 from src.measurement_metadata import capture_hardware_state
@@ -77,6 +77,22 @@ class AcquisitionMixin:
                         wl = np.where(denom != 0, 1e7 / denom, np.nan)
                     return np.where(wl > 0, wl, np.nan)
                 return poly
+
+        native_wavelengths = getattr(self.thread, "native_wavelengths", None)
+        if native_wavelengths is not None and len(native_wavelengths) == num_pixels:
+            # Ocean Optics: no FluoraPressée calibration loaded, but the device reports its
+            # own factory-calibrated wavelength axis (nm) - use it instead of a bare pixel
+            # index. See public_axis_kind() in measurement_metadata.py for the flip_x/display
+            # implications of this being a real physical axis rather than an arbitrary index.
+            if not self.radio_spec_mode_raman.isChecked():
+                return native_wavelengths
+            laser_wl = self.spin_exc_wl.value()
+            if laser_wl > 0:
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    rs = 1e7 / laser_wl - 1e7 / native_wavelengths
+                return np.where(np.isfinite(rs), rs, np.nan)
+            return native_wavelengths
+
         return x
 
     def on_exposure_changed(self):
@@ -182,6 +198,7 @@ class AcquisitionMixin:
                        self.btn_read_temp, self.label_current_temp):
             widget.setVisible(has_control)
 
+        self._temp_capability_known = True
         self._temp_control_available = has_control
         if not has_control:
             self._temp_auto_poll_enabled = False
@@ -306,13 +323,96 @@ class AcquisitionMixin:
         self.spin_vend.setMaximum(self.thread.det_height)
 
         self.radio_2d.setText(f"2D Image View ({self.thread.det_width}x{self.thread.det_height})")
+
+        self._sync_fixed_spectrometer_center()
+        self._apply_hardware_capability_ui()
+        # update_plot_labels() (SpectrometerControlMixin) is otherwise only wired to
+        # calibration-state changes (apply/clear) and the Raman/Wavelength toggle - none of
+        # which fire when a camera with its own native wavelength axis (Ocean Optics) simply
+        # finishes connecting. Without this call the axis label/warning banner stay at their
+        # pre-connection "Pixel" state until the operator happens to touch calibration or
+        # spec mode (confirmed by manually driving SpectrometerGUI end-to-end in --debug mode;
+        # see work/work_OceanOptics.md review round 5).
+        self.update_plot_labels()
+
         self.apply_roi_settings()
+
+    def _sync_fixed_spectrometer_center(self):
+        """For hardware with no movable centre wavelength (Ocean Optics), seed spec_ctrl's
+        fixed value from the camera's native wavelength calibration - see
+        work/work_OceanOptics.md Step 4. spec_ctrl.get_wavelength() only had a placeholder
+        (0.0) at GUI startup (ui.py's init sequence calls it before CameraThread exists), so
+        this must run once the camera is actually connected. Native wavelength array validity
+        (finite/non-empty/monotonic) is already guaranteed by CameraThreadOceanOptics before
+        init_finished is ever emitted (Step 1), so only the median needs computing here."""
+        native_wavelengths = getattr(self.thread, "native_wavelengths", None)
+        if native_wavelengths is None or len(native_wavelengths) == 0:
+            return
+        fixed_center_nm = float(np.median(native_wavelengths))
+        set_reference_center = getattr(self.spec_ctrl, "set_reference_center", None)
+        if set_reference_center is not None:
+            set_reference_center(fixed_center_nm)
+        self.physical_center_wl = fixed_center_nm
+        # Also mirror it onto the (hidden, for Ocean Optics) spinbox itself, matching the
+        # blockSignals/setValue pattern SpectrometerControlMixin uses whenever the physical
+        # centre changes - otherwise it stays at its initial placeholder (0.0) forever, and
+        # FileIOMixin._save_data_to_path()'s legacy "center_wl" header field (which reads
+        # spin_centre_wl.value() directly) would contradict the correct value recorded in
+        # hardware_metadata (see work/work_OceanOptics.md review round 5).
+        self.spin_centre_wl.blockSignals(True)
+        self.spin_centre_wl.setValue(fixed_center_nm)
+        self.spin_centre_wl.blockSignals(False)
+
+    def _apply_hardware_capability_ui(self):
+        """Hide controls the connected hardware cannot actually perform, rather than leaving
+        them enabled-but-nonfunctional. Two independent sources (see
+        work/work_OceanOptics.md Step 5, 方針4): grating/centre movability is reported by
+        spec_ctrl (device-reported capability, matching the existing temperature/EM-gain
+        capability-signal pattern) - not a static config flag - while 2D/vertical-ROI support
+        is derived directly from the already-known detector height, since a 1-row detector
+        cannot physically support either regardless of vendor."""
+        capabilities = getattr(
+            self.spec_ctrl, "get_capabilities",
+            lambda: {"supports_grating": True, "supports_movable_center": True},
+        )()
+        supports_grating = capabilities.get("supports_grating", True)
+        supports_movable_center = capabilities.get("supports_movable_center", True)
+
+        self.combo_grating.setVisible(supports_grating)
+        self.lbl_grating.setVisible(supports_grating)
+        self.spin_centre_wl.setVisible(supports_movable_center)
+        self.lbl_centre.setVisible(supports_movable_center)
+        self.btn_apply_spec.setVisible(supports_movable_center)
+
+        is_fixed_1d_detector = self.thread.det_height <= 1
+        for widget in (
+            self.radio_2d, self.radio_1d_roi,
+            self.spin_vstart, self.spin_vend,
+            self.lbl_roi_start, self.lbl_roi_end,
+        ):
+            widget.setVisible(not is_fixed_1d_detector)
+        if is_fixed_1d_detector:
+            self.radio_1d_full.setChecked(True)
 
     def on_camera_identity_ready(self, model, serial_number):
         """CameraThread reports the connected camera's model/serial once after connecting;
         cross-check it against spectrometerConfig.json's recorded identity (see ConfigMixin)."""
         self._camera_identity = {"model": model or None, "serial_number": serial_number or None}
         self.check_and_record_hardware_identity("camera", model, serial_number)
+
+        if self.config.get("model") == "OceanOptics":
+            # Ocean Optics is a single physical device serving both roles (see
+            # work/work_OceanOptics.md 方針2): spec_ctrl never queries hardware for its own
+            # identity, so record the camera-reported identity under "spectrometer" too,
+            # keeping ConfigurationCatalog's independent camera/spectrometer serial checks
+            # meaningful instead of always-empty.
+            self.check_and_record_hardware_identity("spectrometer", model, serial_number)
+            self._spectrometer_identity = {
+                "model": model or None,
+                "serial_number": serial_number or None,
+            }
+
+        self._update_window_title()
 
     def on_hardware_error(self, message):
         self.status_label.setText(f"Camera error: {message}")

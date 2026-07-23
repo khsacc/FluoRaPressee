@@ -5,12 +5,12 @@ import unittest
 import numpy as np
 
 # Offscreen unless the environment already overrides it, so these tests never pop a
-# real window when PyQt5 is importable (they still fully skip when it isn't, e.g. the
-# broken PyQt5 install some environments run pytest with -- see test_analysis_ui_units.py).
+# real window when PyQt6 is importable (they still fully skip when it isn't, e.g. the
+# broken PyQt6 install some environments run pytest with -- see test_analysis_ui_units.py).
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PyQt5.QtWidgets import QApplication, QFileDialog, QMessageBox
+    from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
     from src.analysis_ui import AnalysisWindow
     from src.file_io import DataFileIO
 except ImportError:
@@ -35,7 +35,7 @@ class PixelPeaksNeverReachPressureWindowTests(unittest.TestCase):
 
     def setUp(self):
         if AnalysisWindow is None:
-            self.skipTest("PyQt5 is not importable in this environment")
+            self.skipTest("PyQt6 is not importable in this environment")
         # Must keep a live reference -- QApplication([]) with nothing holding onto the
         # result can be garbage-collected immediately, which then aborts the process
         # (not a catchable Python exception) on the next QWidget construction.

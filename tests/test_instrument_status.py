@@ -5,6 +5,8 @@ from collections import namedtuple
 from src.andor_camera_status import collect_andor_camera_status
 from src.andor_spectrometer_status import collect_shamrock_status
 from src.instrument_status import legacy_camera_snapshot, make_report
+from src.camera_oceanoptics import CameraThreadOceanOptics
+from src.spectrometer_oceanoptics import SpectrometerControllerOceanOptics
 
 
 DeviceInfo = namedtuple("DeviceInfo", "controller_model head_model serial_number")
@@ -62,6 +64,68 @@ class InstrumentStatusTests(unittest.TestCase):
     def test_legacy_princeton_snapshot_is_normalized(self):
         snapshot = legacy_camera_snapshot({"Identification": [("Model", "PI")]} )
         self.assertEqual(snapshot["sections"]["Identification"][0]["value"], "PI")
+
+    def test_oceanoptics_camera_snapshot_uses_cache_and_is_serializable(self):
+        camera = CameraThreadOceanOptics(debug=True)
+        camera.native_wavelengths = camera._debug_native_wavelengths()
+        camera.det_width = len(camera.native_wavelengths)
+        camera._metadata_identity = {
+            "model": "USB2000PLUS",
+            "serial_number": "USB2+TEST",
+        }
+        camera._integration_time_limits_us = (1000, 655350000)
+        camera._supports_dark_correction = True
+        camera._supports_nonlinearity_correction = True
+
+        snapshot = camera.get_status_snapshot()
+        json.dumps(snapshot)
+
+        self.assertTrue(snapshot["available"])
+        identification = {
+            row["key"]: row for row in snapshot["sections"]["Identification"]
+        }
+        self.assertEqual(identification["controller_model"]["value"], "USB2000PLUS")
+        wavelength = {
+            row["key"]: row
+            for row in snapshot["sections"]["Wavelength calibration"]
+        }
+        self.assertEqual(
+            wavelength["native_wavelength_range"]["value"]["count"], 2048
+        )
+
+    def test_oceanoptics_request_status_emits_dialog_contract_signal(self):
+        camera = CameraThreadOceanOptics(debug=True)
+        camera.native_wavelengths = camera._debug_native_wavelengths()
+        snapshots = []
+        camera.status_ready.connect(snapshots.append)
+
+        camera.request_status()
+
+        self.assertEqual(len(snapshots), 1)
+        self.assertTrue(snapshots[0]["available"])
+
+    def test_oceanoptics_spectrograph_snapshot_reports_integrated_device(self):
+        controller = SpectrometerControllerOceanOptics(
+            config={
+                "serial_number": "USB2+TEST",
+                "hardware_identity": {
+                    "spectrometer": {
+                        "model": "USB2000PLUS",
+                        "serial_number": "USB2+TEST",
+                    }
+                },
+            }
+        )
+        controller.set_reference_center(686.485)
+
+        snapshot = controller.get_status_snapshot()
+        json.dumps(snapshot)
+
+        self.assertTrue(snapshot["available"])
+        identification = {
+            row["key"]: row for row in snapshot["sections"]["Identification"]
+        }
+        self.assertEqual(identification["serial_number"]["value"], "USB2+TEST")
 
 
 if __name__ == "__main__":

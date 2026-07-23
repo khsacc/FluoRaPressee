@@ -5,7 +5,7 @@ This program is designed to
 - instantly fit the data
 - calculate pressure by using an established fluorescence/Raman pressure sensors
 
-The name FluoRaPressée combines **Flu**orescence, **Ra**man, and the French adjective **« pressée »** ('pressed', and also 'in hurry'), a playful nod to rapid spectroscopic measurements and analyses under pressure.
+The name FluoRaPressée combines **Flu**orescence, **Ra**man, and the French adjective **« pressée »** ('in a hurry'; literary 'pressed'), a playful nod to rapid spectroscopic measurements and analyses under pressure.
 
 Author: Hiroki Kobayashi (Geochemical Research Center, The University of Tokyo). https://orcid.org/0000-0002-3682-7558 E-mail as of 2026: hiroki (at) eqchem.s.u-tokyo.ac.jp
 
@@ -31,7 +31,7 @@ This software was developed in the Geochemical Research Center (GcRC), Graduate 
   * Seamless switching between Wavelength (nm) and Raman shift (cm⁻¹) modes (supports excitation wavelength setting).
 * **Background Correction & Calibration**
   * Acquire, save, and subtract background spectra in real-time.
-  * X-axis wavelength calibration tool (supports loading previous calibration files).
+  * X-axis wavelength calibration tool with a versioned, hardware-compatible configuration catalog.
 * **Real-time Peak Fitting**
   * Single and double peak fitting using Gauss, Lorentz, and Pseudo-Voigt functions.
   * Automatic and manual fitting range configurations.
@@ -42,7 +42,7 @@ This software was developed in the Geochemical Research Center (GcRC), Graduate 
 ## 🛠 Requirements
 
 * **OS**: Windows 10 / 11 (Depends on Andor SDK compatibility)
-* **Python**: Python 3.8 or higher
+* **Python**: Python 3.9 through 3.13
 * **Hardware**:
   * Andor Camera (Detector)
   * Andor Spectrometer
@@ -50,25 +50,49 @@ This software was developed in the Geochemical Research Center (GcRC), Graduate 
   * Andor SDK must be installed on the system.
 
 ### Dependencies
-* PyQt5
+* PyQt6
 * pyqtgraph
 * numpy
 * scipy
 
 ## 📥 Installation
 
-1. Clone the repository, then double-click `setup.bat` (or run it from Command Prompt / PowerShell).
+1. Clone the repository. Andor and Princeton Instruments users should double-click `setup.bat`
+   (or run it from Command Prompt / PowerShell). Ocean Optics users should instead run
+   `setup_oceanoptics.bat` as Administrator; see below.
    This creates a `.venv` virtual environment in the project folder and installs all required
-   packages (`PyQt5`, `pyqtgraph`, `numpy`, `scipy`, `pylablib`, `pyserial`) into it.
+   packages (`PyQt6`, `pyqtgraph`, `numpy`, `scipy`, `pylablib`, `pyserial`) into it.
 2. Ensure the Andor SDK is properly installed on the system.
+
+### Ocean Optics support (optional)
+
+FluoraPressée can also drive Ocean Optics USB2000/USB4000 spectrometers via
+[python-seabreeze](https://github.com/ap--/python-seabreeze). This is optional and not installed
+by the base `setup.bat`/`setup.sh`.
+
+1. On Windows, right-click `setup_oceanoptics.bat` and choose **Run as administrator**. Do not run
+   `setup.bat` first. On macOS/Linux, run `./setup_oceanoptics.sh` instead of `./setup.sh`.
+   The Ocean Optics setup script creates `.venv`, installs all standard dependencies and
+   `seabreeze`, and runs `seabreeze_os_setup` for the required OS-level configuration.
+2. Set `"model": "OceanOptics"` in `spectrometerConfig.json` (the setup wizard on first launch
+   also offers this as a supplier choice).
+
+Ocean Optics is a fixed spectrometer, not a movable grating + detector like Andor/Princeton
+Instruments, so the following do not apply and are hidden in the GUI when connected:
+* 2D image mode and custom vertical ROI (the detector is a single row).
+* Grating selection and centre-wavelength "Apply" (the device has neither).
+
+Before a FluoraPressée neon calibration is applied, the X-axis shows the device's own
+factory-calibrated wavelength (a warning banner above the plot makes this explicit) rather than a
+plain pixel index; this is not the same as "uncalibrated".
 
 ## 🚀 Usage
 
 ### Launching the Application
-Double-click `run.bat` (or run it from Command Prompt / PowerShell) to launch the app using the
-virtual environment created by `setup.bat`.
+Double-click `FluoraPressee_run.bat` (or run it from Command Prompt / PowerShell) to launch the app using the
+virtual environment created by the applicable setup script.
 
-*Note: If you want to test the UI without connecting to the hardware, use `run_debug.bat` instead,
+*Note: If you want to test the UI without connecting to the hardware, use `FluoRaPressee_run_debug.bat` instead,
 which launches the app in debug mode.*
 
 On macOS/Linux (UI development only, no hardware support), use `./setup.sh` and `./run_debug.sh`
@@ -100,7 +124,12 @@ instead.
 * analysis.py: Handles peak fitting logic for spectrum data.
 * calibration_ui.py: Dedicated GUI dialogue for pixel-to-wavelength calibration.
 * pressureCalc.py: Module for pressure calculation logic from Ruby fluorescence.
-* spectrometerConfig.json: Configuration file for gratings and ROI settings (generated automatically on first run).
+* spectrometerConfig.json: Startup hardware/configuration file (generated automatically on first run).
+* Per-measurement spectrometer configurations: immutable JSON records indexed by SQLite below the
+  user's `FluoraPressee/configurations` application-data directory. Each active slot is distinguished
+  by hardware, grating, centre position, and ROI; exposure and sample/material are not part of it.
+  Hardware compatibility uses an exact serial number when available and an exact model fallback
+  otherwise. Legacy free-form calibration JSON files are not imported into this catalog.
 
 # Acknowledgement
 

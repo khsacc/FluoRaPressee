@@ -16,16 +16,19 @@ from __future__ import annotations
 
 import copy
 
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget, QWidget, QLabel,
     QComboBox, QLineEdit, QCheckBox, QPushButton, QStackedWidget,
     QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QDialogButtonBox, QMessageBox, QAbstractItemView,
 )
-from PyQt5.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal
 
 from src.ui_widgets import CustomSpinBox
-from src.config_wizard import _PathField, SUPPLIER_ANDOR, SUPPLIER_PI, DEFAULT_TEMPERATURE
+from src.config_wizard import (
+    _PathField, SUPPLIER_ANDOR, SUPPLIER_PI, SUPPLIER_OCEANOPTICS,
+    DEFAULT_TEMPERATURE,
+)
 
 
 # ── Tab: Hardware / Connection ────────────────────────────────────────────────
@@ -38,9 +41,9 @@ class _HardwareTab(QWidget):
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Camera / spectrometer model:"))
         self._combo_model = QComboBox()
-        self._combo_model.addItems([SUPPLIER_ANDOR, SUPPLIER_PI])
+        self._combo_model.addItems([SUPPLIER_ANDOR, SUPPLIER_PI, SUPPLIER_OCEANOPTICS])
         self._combo_model.currentTextChanged.connect(
-            lambda text: self._stack.setCurrentIndex(0 if text == SUPPLIER_ANDOR else 1)
+            lambda text: self._stack.setCurrentIndex(self._model_index(text))
         )
         model_row.addWidget(self._combo_model)
         model_row.addStretch()
@@ -49,6 +52,7 @@ class _HardwareTab(QWidget):
         self._stack = QStackedWidget()
         self._stack.addWidget(self._build_andor())  # index 0
         self._stack.addWidget(self._build_pi())      # index 1
+        self._stack.addWidget(self._build_oceanoptics())  # index 2
         layout.addWidget(self._stack)
         layout.addStretch()
 
@@ -101,6 +105,35 @@ class _HardwareTab(QWidget):
         v.addWidget(sdk_grp)
         return w
 
+    def _build_oceanoptics(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        grp = QGroupBox("Ocean Optics (seabreeze)")
+        gl = QVBoxLayout(grp)
+        gl.addWidget(QLabel(
+            "Serial number  (leave blank to auto-select the first available device):"
+        ))
+        self._oo_serial = QLineEdit()
+        self._oo_serial.setPlaceholderText("e.g. USB2+F02651")
+        gl.addWidget(self._oo_serial)
+        gl.addSpacing(6)
+        gl.addWidget(QLabel(
+            "seabreeze backend  (leave as Auto unless a specific backend is required):"
+        ))
+        self._oo_backend = QComboBox()
+        self._oo_backend.addItems(["", "cseabreeze", "pyseabreeze"])
+        gl.addWidget(self._oo_backend)
+        v.addWidget(grp)
+        return w
+
+    @staticmethod
+    def _model_index(model: str) -> int:
+        return {
+            SUPPLIER_ANDOR: 0,
+            SUPPLIER_PI: 1,
+            SUPPLIER_OCEANOPTICS: 2,
+        }.get(model, 0)
+
     def _populate_com_ports(self):
         self._pi_com.clear()
         try:
@@ -114,26 +147,34 @@ class _HardwareTab(QWidget):
     def load(self, config: dict):
         model = config.get("model", SUPPLIER_ANDOR)
         self._combo_model.setCurrentText(model)
-        self._stack.setCurrentIndex(0 if model == SUPPLIER_ANDOR else 1)
+        self._stack.setCurrentIndex(self._model_index(model))
         self._andor_dll.set_value(config.get("dll_path", ""))
         self._pi_com.setCurrentText(config.get("com_port", "COM3"))
         self._pi_picam.set_value(config.get("PIcam_dll_path", ""))
         self._pi_serial.setText(config.get("camera_serial_number", ""))
+        self._oo_serial.setText(config.get("serial_number") or "")
+        self._oo_backend.setCurrentText(config.get("seabreeze_backend") or "")
 
     def collect(self) -> dict:
         model = self._combo_model.currentText()
         result = {"model": model}
         if model == SUPPLIER_ANDOR:
             result["dll_path"] = self._andor_dll.value()
-        else:
+        elif model == SUPPLIER_PI:
             result["com_port"] = self._pi_com.currentText().strip()
             result["PIcam_dll_path"] = self._pi_picam.value()
             result["camera_serial_number"] = self._pi_serial.text().strip()
+        else:
+            result["serial_number"] = self._oo_serial.text().strip() or None
+            result["seabreeze_backend"] = self._oo_backend.currentText() or None
         return result
 
     def validation_warning(self) -> str | None:
         """Non-blocking: the active model's path field, if invalid."""
-        field = self._andor_dll if self._combo_model.currentText() == SUPPLIER_ANDOR else self._pi_picam
+        model = self._combo_model.currentText()
+        if model == SUPPLIER_OCEANOPTICS:
+            return None
+        field = self._andor_dll if model == SUPPLIER_ANDOR else self._pi_picam
         return field.validation_error()
 
 
@@ -153,8 +194,8 @@ class _GratingTab(QWidget):
 
         self._table = QTableWidget(0, len(self._COLUMNS))
         self._table.setHorizontalHeaderLabels(self._COLUMNS)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         layout.addWidget(self._table)
 
         btn_row = QHBoxLayout()
@@ -188,7 +229,7 @@ class _GratingTab(QWidget):
             roi = g.get("defaultROI", {})
             self._add_row(g.get("index", i + 1), g.get("grooves", 600), roi.get("from", 100), roi.get("to", 140))
 
-    def validation_errors(self) -> list[str]:
+    def validation_errors(self, allow_fixed_spectrometer=False) -> list[str]:
         errors = []
         if self._table.rowCount() == 0:
             errors.append("At least one grating slot is required.")
@@ -208,7 +249,7 @@ class _GratingTab(QWidget):
                 errors.append(f"Row {row + 1}: index {index} is used by more than one row.")
             else:
                 seen_indices.add(index)
-            if grooves <= 0:
+            if grooves <= 0 and not allow_fixed_spectrometer:
                 errors.append(f"Row {row + 1}: grooves must be positive.")
             if roi_from >= roi_to:
                 errors.append(f"Row {row + 1}: ROI 'from' must be less than 'to'.")
@@ -231,15 +272,18 @@ class _GratingTab(QWidget):
 # ── Tab: Display / Defaults ───────────────────────────────────────────────────
 
 class _DisplayTab(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, temperature_control_available=None, parent=None):
         super().__init__(parent)
+        self._temperature_control_available = temperature_control_available
+        self._had_default_temperature = False
         layout = QVBoxLayout(self)
 
         self._flip_x = QCheckBox("Flip spectrum horizontally  (flip_x)")
         layout.addWidget(self._flip_x)
         layout.addSpacing(8)
 
-        layout.addWidget(QLabel("Default cooler target temperature (°C):"))
+        self._temp_label = QLabel("Default cooler target temperature (°C):")
+        layout.addWidget(self._temp_label)
         self._default_temp = CustomSpinBox()
         self._default_temp.setRange(-100, 20)
         layout.addWidget(self._default_temp)
@@ -247,13 +291,33 @@ class _DisplayTab(QWidget):
 
     def load(self, config: dict):
         self._flip_x.setChecked(config.get("flip_x", False))
+        self._had_default_temperature = "default_temperature" in config
         self._default_temp.setValue(config.get("default_temperature", DEFAULT_TEMPERATURE))
+        self._update_temperature_visibility()
+
+    def set_temperature_control_available(self, available):
+        self._temperature_control_available = available
+        self._update_temperature_visibility()
+
+    def temperature_control_available(self):
+        return self._temperature_control_available
+
+    def _update_temperature_visibility(self):
+        visible = self._temperature_control_available is True or (
+            self._temperature_control_available is None
+            and self._had_default_temperature
+        )
+        self._temp_label.setVisible(visible)
+        self._default_temp.setVisible(visible)
 
     def collect(self) -> dict:
-        return {
-            "flip_x": self._flip_x.isChecked(),
-            "default_temperature": self._default_temp.value(),
-        }
+        result = {"flip_x": self._flip_x.isChecked()}
+        if self._temperature_control_available is True or (
+            self._temperature_control_available is None
+            and self._had_default_temperature
+        ):
+            result["default_temperature"] = self._default_temp.value()
+        return result
 
 
 # ── Main dialog ────────────────────────────────────────────────────────────────
@@ -266,39 +330,68 @@ class HardwareConfigDialog(QDialog):
     tabs actually had a key change relative to the last-applied state.
     """
 
-    HARDWARE_KEYS = ("model", "com_port", "dll_path", "PIcam_dll_path", "camera_serial_number")
+    HARDWARE_KEYS = (
+        "model", "com_port", "dll_path", "PIcam_dll_path",
+        "camera_serial_number", "serial_number", "seabreeze_backend",
+    )
 
     applied = pyqtSignal(dict, set)
 
-    def __init__(self, config: dict, parent=None):
+    def __init__(self, config: dict, temperature_control_available=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Hardware Configuration")
         self.resize(520, 440)
 
         self._base_config = copy.deepcopy(config)
+        self._original_model = config.get("model", SUPPLIER_ANDOR)
+        self._runtime_temperature_capability = temperature_control_available
 
         self._tab_hardware = _HardwareTab()
         self._tab_grating = _GratingTab()
-        self._tab_display = _DisplayTab()
+        self._tab_display = _DisplayTab(temperature_control_available)
         for tab in (self._tab_hardware, self._tab_grating, self._tab_display):
             tab.load(self._base_config)
+        self._tab_hardware._combo_model.currentTextChanged.connect(
+            self._on_model_changed
+        )
+        self._on_model_changed(self._tab_hardware._combo_model.currentText())
 
         tabs = QTabWidget()
         tabs.addTab(self._tab_hardware, "Hardware / Connection")
         tabs.addTab(self._tab_grating, "Grating")
         tabs.addTab(self._tab_display, "Display / Defaults")
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Apply | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Apply
+            | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self._on_ok)
         buttons.rejected.connect(self.reject)
-        buttons.button(QDialogButtonBox.Apply).clicked.connect(self._apply)
+        buttons.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self._apply)
 
         layout = QVBoxLayout(self)
         layout.addWidget(tabs)
         layout.addWidget(buttons)
 
+    def _on_model_changed(self, model: str):
+        if model == SUPPLIER_OCEANOPTICS:
+            available = False
+        elif model == SUPPLIER_ANDOR:
+            available = True
+        elif model == self._original_model:
+            available = self._runtime_temperature_capability
+        else:
+            available = None
+        self._tab_display.set_temperature_control_available(available)
+
     def _collect_and_validate(self) -> dict | None:
-        grating_errors = self._tab_grating.validation_errors()
+        is_oceanoptics = (
+            self._tab_hardware._combo_model.currentText() == SUPPLIER_OCEANOPTICS
+        )
+        grating_errors = self._tab_grating.validation_errors(
+            allow_fixed_spectrometer=is_oceanoptics
+        )
         if grating_errors:
             QMessageBox.warning(self, "Invalid input", "\n".join(grating_errors))
             return None
@@ -310,15 +403,22 @@ class HardwareConfigDialog(QDialog):
                 f"{hw_warning}\n\n"
                 "Save anyway? (the app will fall back to debug mode for unresolved\n"
                 "hardware the next time it starts).",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if reply == QMessageBox.No:
+            if reply == QMessageBox.StandardButton.No:
                 return None
 
         new_config = copy.deepcopy(self._base_config)
         new_config.update(self._tab_hardware.collect())
         new_config["grating"] = self._tab_grating.collect()
-        new_config.update(self._tab_display.collect())
+        display_values = self._tab_display.collect()
+        if (
+            "default_temperature" not in display_values
+            and self._tab_display.temperature_control_available() is False
+        ):
+            new_config.pop("default_temperature", None)
+        new_config.update(display_values)
         return new_config
 
     def _diff_changed_tabs(self, new_config: dict) -> set:

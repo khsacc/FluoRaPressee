@@ -1,16 +1,26 @@
 import json
 
-from PyQt5.QtWidgets import QMessageBox
+from PyQt6.QtWidgets import QMessageBox
 
 from src.menu.hardware_config_dialog import HardwareConfigDialog
 from src.menu.instrument_status_dialog import InstrumentStatusDialog
+from src.menu.configuration_manager_dialog import ConfigurationManagerDialog
 from src.local_cache import load_local_cache, save_local_cache
 
 class ConfigMixin:
     def on_open_hardware_config_clicked(self):
-        dialog = HardwareConfigDialog(self.config, parent=self)
+        temperature_control_available = (
+            self._temp_control_available
+            if getattr(self, "_temp_capability_known", False)
+            else None
+        )
+        dialog = HardwareConfigDialog(
+            self.config,
+            temperature_control_available=temperature_control_available,
+            parent=self,
+        )
         dialog.applied.connect(self._on_hardware_config_applied)
-        dialog.exec_()
+        dialog.exec()
 
     def on_open_camera_status_clicked(self):
         if self.instrument_status_window is None:
@@ -23,6 +33,18 @@ class ConfigMixin:
         self.instrument_status_window.show()
         self.instrument_status_window.raise_()
         self.instrument_status_window.activateWindow()
+
+    def on_open_configuration_manager_clicked(self):
+        dialog = ConfigurationManagerDialog(
+            self.configuration_catalog,
+            active_configuration_id=self.active_configuration_id,
+            positioned_configuration_id=self.positioned_configuration_id,
+            ui_lock_check=lambda: bool(getattr(self, "_ui_lock_reasons", set())),
+            parent=self,
+        )
+        dialog.exec()
+        if dialog.active_configuration_was_deleted:
+            self.clear_active_configuration()
 
     def on_open_analysis_mode_clicked(self):
         # Lazy import: Analysis Mode's widgets aren't needed until this menu action is
@@ -127,10 +149,10 @@ class ConfigMixin:
             "calibration/grating/ROI settings may not apply here.\n\n"
             "If this hardware was intentionally connected (e.g. a permanent replacement), "
             "update the recorded identity to match it now?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.StandardButton.Yes:
             recorded["model"] = model or recorded_model
             recorded["serial_number"] = serial_number or recorded_serial
             self.save_config_to_file()

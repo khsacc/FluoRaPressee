@@ -13,12 +13,12 @@ keeps using the main window.
 """
 from __future__ import annotations
 
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QPushButton, QTableWidget, QTableWidgetItem,
     QHeaderView, QDialogButtonBox,
 )
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QFont, QBrush, QColor
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont, QBrush, QColor
 
 _POLL_INTERVAL_MS = 500
 
@@ -46,14 +46,14 @@ class CameraStatusDialog(QDialog):
 
         self._table = QTableWidget(0, 2)
         self._table.setHorizontalHeaderLabels(["Parameter", "Value"])
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._table.verticalHeader().setVisible(False)
-        self._table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         layout.addWidget(self._table)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.close)
-        buttons.button(QDialogButtonBox.Close).clicked.connect(self.close)
+        buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.close)
         layout.addWidget(buttons)
 
         self._poll_timer = QTimer(self)
@@ -114,7 +114,7 @@ class CameraStatusDialog(QDialog):
         font.setBold(True)
         item.setFont(font)
         item.setBackground(QBrush(QColor("#e0e0e0")))
-        item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
         self._table.setItem(row, 0, item)
         self._table.setSpan(row, 0, 1, 2)
 

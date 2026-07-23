@@ -32,6 +32,11 @@ def configure_status_prototypes(dll):
         ),
         "ShamrockGetWavelength": ([ctypes.c_int, p_float], ctypes.c_int),
         "ShamrockGetWavelengthLimits": ([ctypes.c_int, ctypes.c_int, p_float, p_float], ctypes.c_int),
+        "ShamrockSetNumberPixels": ([ctypes.c_int, ctypes.c_int], ctypes.c_int),
+        "ShamrockSetPixelWidth": ([ctypes.c_int, ctypes.c_float], ctypes.c_int),
+        "ShamrockGetCalibration": (
+            [ctypes.c_int, p_float, ctypes.c_int], ctypes.c_int
+        ),
         "ShamrockAtZeroOrder": ([ctypes.c_int, p_int], ctypes.c_int),
         "ShamrockAutoSlitIsPresent": ([ctypes.c_int, ctypes.c_int, p_int], ctypes.c_int),
         "ShamrockGetAutoSlitWidth": ([ctypes.c_int, ctypes.c_int, p_float], ctypes.c_int),
