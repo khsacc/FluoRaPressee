@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
                              QScrollArea, QRadioButton, QMessageBox, QSlider,
                              QListWidget, QListWidgetItem, QButtonGroup, QMenu,
                              QCompleter)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, Qt
 import pyqtgraph as pg
 
 from src.calibration import CalibrationCore
@@ -32,7 +32,7 @@ class CalibrationWindow(QDialog):
     def __init__(self, camera_thread=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Wavelength Calibration")
-        self.resize(1100, 750)
+        self.resize(1650, 750)
         
         self.setStyleSheet("""
             QWidget { color: #000000; }
@@ -191,6 +191,12 @@ class CalibrationWindow(QDialog):
         self.btn_use_displayed.clicked.connect(self.use_displayed_data)
         self.btn_use_displayed.setStyleSheet("padding: 5px;")
 
+        self.btn_full_screen = QPushButton("Full screen")
+        self.btn_full_screen.setAutoDefault(False)
+        self.btn_full_screen.setDefault(False)
+        self.btn_full_screen.setToolTip("Toggle full-screen display (F11)")
+        self.btn_full_screen.clicked.connect(self.toggle_full_screen)
+
         acq_time_layout = QHBoxLayout()
         acq_time_layout.addWidget(QLabel("Acquisition time (s):"))
         self.spin_acq_time = CustomDoubleSpinBox()
@@ -311,6 +317,7 @@ class CalibrationWindow(QDialog):
         
         controls_layout.addWidget(self.btn_acquire)
         controls_layout.addWidget(self.btn_use_displayed)
+        controls_layout.addWidget(self.btn_full_screen)
         controls_layout.addLayout(acq_time_layout)
         controls_layout.addLayout(unit_layout) 
         controls_layout.addLayout(find_peaks_layout)
@@ -1344,7 +1351,33 @@ class CalibrationWindow(QDialog):
         except TypeError:
             pass  # already disconnected
 
+    def toggle_full_screen(self):
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+        self._update_full_screen_button()
+
+    def _update_full_screen_button(self):
+        if hasattr(self, "btn_full_screen"):
+            self.btn_full_screen.setText(
+                "Exit full screen" if self.isFullScreen() else "Full screen"
+            )
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            self._update_full_screen_button()
+
     def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_F11:
+            self.toggle_full_screen()
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Escape and self.isFullScreen():
+            self.toggle_full_screen()
+            event.accept()
+            return
         if event.key() == Qt.Key.Key_Escape and self.selected_peak_row is not None:
             self.clear_peak_selection()
             event.accept()

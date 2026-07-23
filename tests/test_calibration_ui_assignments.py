@@ -44,6 +44,31 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
                 return
         self.fail(f"Missing standard {standard_id}")
 
+    def test_default_window_width_is_one_and_a_half_times_previous_width(self):
+        self.assertEqual(self.window.width(), 1650)
+        self.assertEqual(self.window.height(), 750)
+
+    def test_full_screen_button_f11_and_escape(self):
+        self.window.show()
+        _APP.processEvents()
+
+        self.window.btn_full_screen.click()
+        _APP.processEvents()
+        self.assertTrue(self.window.isFullScreen())
+        self.assertEqual(self.window.btn_full_screen.text(), "Exit full screen")
+
+        QTest.keyClick(self.window, Qt.Key.Key_Escape)
+        _APP.processEvents()
+        self.assertFalse(self.window.isFullScreen())
+        self.assertEqual(self.window.btn_full_screen.text(), "Full screen")
+
+        QTest.keyClick(self.window, Qt.Key.Key_F11)
+        _APP.processEvents()
+        self.assertTrue(self.window.isFullScreen())
+        QTest.keyClick(self.window, Qt.Key.Key_F11)
+        _APP.processEvents()
+        self.assertFalse(self.window.isFullScreen())
+
     def test_switching_standard_keeps_locked_assignment(self):
         neon = self.window.reference_standards["Ne-I"].lines[17]
         self.window.assign_reference_line(0, neon)
