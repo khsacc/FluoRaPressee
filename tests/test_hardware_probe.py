@@ -107,6 +107,9 @@ class OceanOpticsProbeTests(unittest.TestCase):
             {"model": "USB4000", "serial_number": "FLMS12345"},
         )
         self.assertEqual(result["config"]["serial_number"], "FLMS12345")
+        self.assertFalse(
+            result["detected_hardware"]["camera"]["temperature_control_available"]
+        )
 
     def test_no_devices_reports_error_without_crashing(self):
         _install_fake_seabreeze([])

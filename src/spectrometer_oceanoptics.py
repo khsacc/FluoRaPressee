@@ -1,6 +1,6 @@
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from src.instrument_status import unavailable_device
+from src.instrument_status import device_snapshot, item
 
 # Tolerance (nm) used by set_wavelength() to decide whether a requested centre wavelength
 # matches the device's actual fixed position - see work/work_OceanOptics.md 方針2/Step 2 for
@@ -82,9 +82,41 @@ class SpectrometerControllerOceanOptics:
         return {"supports_grating": False, "supports_movable_center": False}
 
     def get_status_snapshot(self):
-        return unavailable_device(
+        configured_identity = self.config.get("hardware_identity", {}).get(
+            "spectrometer", {}
+        )
+        return device_snapshot(
             "oceanoptics",
-            "Integrated with the camera; there is no separate spectrometer connection.",
+            {
+                "Identification": [
+                    item(
+                        "controller_model",
+                        "Model",
+                        configured_identity.get("model"),
+                    ),
+                    item(
+                        "serial_number",
+                        "Serial number",
+                        configured_identity.get("serial_number")
+                        or self.config.get("serial_number"),
+                    ),
+                    item(
+                        "architecture",
+                        "Architecture",
+                        "Integrated detector and fixed spectrometer",
+                    ),
+                ],
+                "Optical configuration": [
+                    item(
+                        "centre_wavelength",
+                        "Native wavelength-axis centre",
+                        self._current_wavelength_nm,
+                        "nm",
+                    ),
+                    item("grating", "Grating", "Fixed (not movable)"),
+                    item("movable_centre", "Movable centre wavelength", False),
+                ],
+            },
         )
 
     def close(self):

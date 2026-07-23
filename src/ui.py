@@ -386,6 +386,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # visibility (requires the whole window to be shown), not just this group's
         # own setVisible() state.
         self._temp_control_available = False
+        self._temp_capability_known = False
         # Whether the 5s poll timer is allowed to keep/resume running. Only
         # on_temperature_capability_ready and on_temperature_set_finished may set this
         # True; a manual "Read current temperature" click while stopped must never
@@ -792,7 +793,9 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.init_dialog.setModal(True)
         self.init_dialog.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.CustomizeWindowHint | Qt.WindowType.WindowTitleHint)
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("Initialising camera and cooler...\nPlease wait until the operation is completed."))
+        layout.addWidget(QLabel(
+            "Initialising camera...\nPlease wait until the operation is completed."
+        ))
         self.init_dialog.setLayout(layout)
         self.init_dialog.show()
 
@@ -837,9 +840,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         button.setStyleSheet(colored_button_style(enabled_style, BUTTON_STYLE_DISABLED))
 
     def closeEvent(self, event):
+        confirmation = self._close_confirmation_message()
         reply = QMessageBox.question(
             self, "Confirm Exit",
-            "Closing this window will terminate the cooler of the camera. Are you sure you want to close FluoraPressée?",
+            confirmation,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -863,3 +867,14 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
             event.accept()
         else:
             event.ignore()
+
+    def _close_confirmation_message(self):
+        if (
+            getattr(self, "_temp_capability_known", False)
+            and getattr(self, "_temp_control_available", False)
+        ):
+            return (
+                "Closing this window will terminate the cooler of the camera. "
+                "Are you sure you want to close FluoraPressée?"
+            )
+        return "Are you sure you want to close FluoraPressée?"

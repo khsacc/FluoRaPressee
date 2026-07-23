@@ -8,7 +8,16 @@ from src.local_cache import load_local_cache, save_local_cache
 
 class ConfigMixin:
     def on_open_hardware_config_clicked(self):
-        dialog = HardwareConfigDialog(self.config, parent=self)
+        temperature_control_available = (
+            self._temp_control_available
+            if getattr(self, "_temp_capability_known", False)
+            else None
+        )
+        dialog = HardwareConfigDialog(
+            self.config,
+            temperature_control_available=temperature_control_available,
+            parent=self,
+        )
         dialog.applied.connect(self._on_hardware_config_applied)
         dialog.exec()
 

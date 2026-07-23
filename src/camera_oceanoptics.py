@@ -2,6 +2,7 @@ import time
 import numpy as np
 from threading import Lock, Condition
 from PyQt6.QtCore import QThread, pyqtSignal
+from src.instrument_status import device_snapshot, item, unavailable_device
 from src.oceanoptics_diagnostics import no_devices_error
 
 # Ocean Optics devices report a factory wavelength calibration but have no grating/centre
@@ -43,6 +44,7 @@ class CameraThreadOceanOptics(QThread):
     temperature_set_finished = pyqtSignal(float)
     acquisition_failed = pyqtSignal(str)  # emitted when acquisition is auto-stopped after repeated errors, or the thread crashes while measuring
     hardware_error = pyqtSignal(str)  # emitted when a settings write (exposure) fails on hardware
+    status_ready = pyqtSignal(dict)
 
     def __init__(self, config=None, debug=False):
         super().__init__()
@@ -427,6 +429,88 @@ class CameraThreadOceanOptics(QThread):
                 "nonlinearity_corrected": nonlinearity_corrected,
                 "native_wavelength_range": native_wavelength_range,
             }
+
+    def get_status_snapshot(self):
+        """Return a read-only status snapshot without reopening or querying the USB device."""
+        metadata = self.get_cached_hardware_metadata()
+        if self.native_wavelengths is None:
+            return unavailable_device(
+                "oceanoptics_seabreeze",
+                "The Ocean Optics device has not finished initialization.",
+            )
+
+        identity = metadata["identity"]
+        wavelength_range = metadata["native_wavelength_range"]
+        limits = self._integration_time_limits_us
+        limit_seconds = (
+            {"minimum": limits[0] / 1e6, "maximum": limits[1] / 1e6}
+            if limits is not None
+            else None
+        )
+        with self._lock:
+            acquisition_state = "acquiring" if self.is_measuring else "idle"
+
+        return device_snapshot(
+            "oceanoptics_seabreeze",
+            {
+                "Identification": [
+                    item("controller_model", "Model", identity.get("model")),
+                    item("serial_number", "Serial number", identity.get("serial_number")),
+                    item("interface", "Interface", "USB / SeaBreeze"),
+                ],
+                "Acquisition": [
+                    item("camera_status", "Acquisition status", acquisition_state),
+                    item("exposure", "Integration time", metadata["exposure_s"], "s"),
+                    item(
+                        "integration_time_limits",
+                        "Integration time limits",
+                        limit_seconds,
+                        "s",
+                    ),
+                ],
+                "Detector": [
+                    item(
+                        "detector_size",
+                        "Detector size",
+                        metadata["detector_size_px"],
+                        "px",
+                    ),
+                    item("spectrum_pixels", "Spectrum pixels", self.det_width, "px"),
+                ],
+                "Wavelength calibration": [
+                    item(
+                        "native_wavelength_range",
+                        "Factory wavelength range",
+                        wavelength_range,
+                        "nm",
+                    ),
+                ],
+                "Spectrum processing": [
+                    item(
+                        "dark_count_correction",
+                        "Dark-count correction",
+                        metadata["hardware_dark_corrected"],
+                    ),
+                    item(
+                        "nonlinearity_correction",
+                        "Nonlinearity correction",
+                        metadata["nonlinearity_corrected"],
+                    ),
+                ],
+                "Capabilities": [
+                    item(
+                        "temperature_control",
+                        "Temperature control",
+                        state="unsupported",
+                    ),
+                    item("em_gain", "EM gain", state="unsupported"),
+                ],
+            },
+        )
+
+    def request_status(self):
+        """Fulfil InstrumentStatusDialog's async contract from the cached snapshot."""
+        self.status_ready.emit(self.get_status_snapshot())
 
     def update_exposure(self, exp_time):
         """Request an exposure change (thread-safe) and return a token identifying this

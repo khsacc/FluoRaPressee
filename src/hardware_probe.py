@@ -86,6 +86,7 @@ def _probe_andor_camera(result, config):
                 "width": float(pixel_width_m) * 1e6,
                 "height": float(pixel_height_m) * 1e6,
             },
+            "temperature_control_available": True,
         }
         temperature_range = _optional(camera, "get_temperature_range")
         if temperature_range is not None:
@@ -193,7 +194,9 @@ def _probe_pi_camera(result, config):
                 "height": _float_or_none(pixel_height),
             }
         setpoint = _attribute_value(camera, "Sensor Temperature Set Point")
-        if setpoint is not None:
+        has_temperature_control = _pi_temperature_control_available(camera)
+        camera_state["temperature_control_available"] = has_temperature_control
+        if has_temperature_control and setpoint is not None:
             result["config"]["default_temperature"] = int(round(float(setpoint)))
             camera_state["temperature_setpoint_c"] = float(setpoint)
         result["detected_hardware"]["camera"] = camera_state
@@ -270,7 +273,10 @@ def _probe_oceanoptics(result, config):
     _merge_identity(result, "camera", identity)
     _merge_identity(result, "spectrometer", identity)
     result["config"]["serial_number"] = identity["serial_number"]
-    result["detected_hardware"]["camera"] = dict(identity)
+    result["detected_hardware"]["camera"] = {
+        **identity,
+        "temperature_control_available": False,
+    }
     result["detected_hardware"]["spectrometer"] = dict(identity)
 
 
@@ -313,6 +319,36 @@ def _attribute_value(camera, name):
         return camera.get_attribute_value(name)
     except Exception:
         return None
+
+
+def _pi_temperature_control_available(camera):
+    """Mirror CameraThreadPI's usable temperature-control capability check."""
+    try:
+        setpoint = camera.get_attribute(
+            "Sensor Temperature Set Point", error_on_missing=False
+        )
+        reading = camera.get_attribute(
+            "Sensor Temperature Reading", error_on_missing=False
+        )
+        if setpoint is None or reading is None:
+            return False
+        setpoint_current = camera.get_attribute_value(
+            "Sensor Temperature Set Point"
+        )
+        reading_current = camera.get_attribute_value(
+            "Sensor Temperature Reading"
+        )
+        return bool(
+            setpoint.exists
+            and setpoint.relevant
+            and setpoint.writable
+            and setpoint_current is not None
+            and reading.exists
+            and reading.relevant
+            and reading_current is not None
+        )
+    except Exception:
+        return False
 
 
 def _field(value, name, index):

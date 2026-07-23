@@ -11,7 +11,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     from PyQt6.QtWidgets import QApplication
-    from src.config_wizard import SUPPLIER_OCEANOPTICS, SUPPLIER_PI, _PagePaths
+    from src.config_wizard import (
+        ConfigWizard, SUPPLIER_OCEANOPTICS, SUPPLIER_PI, _PagePaths,
+    )
 except ImportError:
     _PagePaths = None
 
@@ -95,6 +97,15 @@ class OceanOpticsProbeResultReflectionTests(unittest.TestCase):
 
         self.assertEqual(self.page._pi_serial.currentData(), "0412060001")
         self.assertEqual(self.page._oo_serial.currentText(), "")
+
+    def test_oceanoptics_finish_does_not_write_cooler_temperature(self):
+        wizard = ConfigWizard()
+        wizard._p_supplier._rb_oceanoptics.setChecked(True)
+        wizard._p_grating.show_supplier(SUPPLIER_OCEANOPTICS)
+
+        wizard._finish()
+
+        self.assertNotIn("default_temperature", wizard.result_config())
 
 
 if __name__ == "__main__":

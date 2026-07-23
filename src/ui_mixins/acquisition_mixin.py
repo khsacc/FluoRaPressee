@@ -198,6 +198,7 @@ class AcquisitionMixin:
                        self.btn_read_temp, self.label_current_temp):
             widget.setVisible(has_control)
 
+        self._temp_capability_known = True
         self._temp_control_available = has_control
         if not has_control:
             self._temp_auto_poll_enabled = False

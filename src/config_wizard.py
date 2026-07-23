@@ -639,6 +639,7 @@ class _PageGrating(QWidget):
         self._detect_thread = None
         self._detect_started = False
         self._detected_gratings = []
+        self._temperature_control_available = None
 
         self._flip_x = QCheckBox("Flip spectrum horizontally  (flip_x)")
         layout.addWidget(self._flip_x)
@@ -674,6 +675,19 @@ class _PageGrating(QWidget):
         self._grating_not_applicable_label.setVisible(is_oceanoptics)
         self._temp_label.setVisible(not is_oceanoptics)
         self._default_temp.setVisible(not is_oceanoptics)
+        if is_oceanoptics:
+            self._temperature_control_available = False
+        elif is_andor:
+            # The current Andor SDK2 backend requires and initializes its cooler.
+            self._temperature_control_available = True
+        else:
+            self._temperature_control_available = None
+        self._update_temperature_visibility()
+
+    def _update_temperature_visibility(self):
+        visible = self._temperature_control_available is True
+        self._temp_label.setVisible(visible)
+        self._default_temp.setVisible(visible)
 
     def start_detection(self, com_port: str):
         """Try ?GRATINGS against com_port once and pre-fill the field on success.
@@ -706,7 +720,8 @@ class _PageGrating(QWidget):
             )
             self._detect_status.setStyleSheet("color: gray; font-size: small;")
 
-    def apply_probe_result(self, config: dict):
+    def apply_probe_result(self, result: dict):
+        config = result.get("config", {})
         gratings = config.get("grating") or []
         if gratings:
             self._detected_gratings = [dict(grating) for grating in gratings]
@@ -720,6 +735,12 @@ class _PageGrating(QWidget):
             self._default_temp.setValue(int(config["default_temperature"]))
         if config.get("default_fan_mode") in ("full", "low", "off"):
             self._fan_mode.setCurrentText(config["default_fan_mode"])
+        detected_camera = result.get("detected_hardware", {}).get("camera", {})
+        if "temperature_control_available" in detected_camera:
+            self._temperature_control_available = bool(
+                detected_camera["temperature_control_available"]
+            )
+            self._update_temperature_visibility()
 
     def reset_detected_parameters(self):
         self._detected_gratings = []
@@ -728,6 +749,7 @@ class _PageGrating(QWidget):
         self._detect_status.clear()
         self._default_temp.setValue(DEFAULT_TEMPERATURE)
         self._fan_mode.setCurrentText(DEFAULT_FAN_MODE)
+        self._temperature_control_available = None
 
     def grating_list(self) -> list[dict]:
         result = []
@@ -758,6 +780,9 @@ class _PageGrating(QWidget):
 
     def default_temperature(self) -> int:
         return self._default_temp.value()
+
+    def has_temperature_control(self):
+        return self._temperature_control_available
 
     def fan_mode(self) -> str:
         return self._fan_mode.currentText()
@@ -888,7 +913,7 @@ class ConfigWizard(QDialog):
         self._p_paths.show_probe_result(result)
         patch = result.get("config", {})
         _merge_dict(self._detected_config, patch)
-        self._p_grating.apply_probe_result(patch)
+        self._p_grating.apply_probe_result(result)
 
     def closeEvent(self, event):
         if self._probe_thread is not None and self._probe_thread.isRunning():
@@ -920,12 +945,15 @@ class ConfigWizard(QDialog):
             **self._p_paths.values(supplier),
             "grating": gratings,
             "flip_x": self._p_grating.flip_x(),
-            "default_temperature": self._p_grating.default_temperature(),
             "hardware_identity": {
                 "spectrometer": {"model": None, "serial_number": None},
                 "camera": {"model": None, "serial_number": None},
             },
         }
+        if self._p_grating.has_temperature_control() is True:
+            self._result["default_temperature"] = (
+                self._p_grating.default_temperature()
+            )
         if self._detected_supplier == supplier:
             _merge_dict(
                 self._result["hardware_identity"],
