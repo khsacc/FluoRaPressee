@@ -375,6 +375,9 @@ class AnalysisWindow(QMainWindow):
             self.pressure_window.setToolTip("")
 
         min_x, max_x = float(np.min(x)), float(np.max(x))
+        view_box = self.plot_widget.getViewBox()
+        view_box.setLimits(xMin=min_x, xMax=max_x)
+        view_box.setDefaultPadding(0)
         self.spin_fit_start.blockSignals(True)
         self.spin_fit_end.blockSignals(True)
         self.spin_fit_start.setValue(min_x)

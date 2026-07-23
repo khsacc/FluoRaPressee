@@ -4,6 +4,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
+    import numpy as np
     from PyQt6.QtWidgets import QApplication
     from src.analysis_ui import AnalysisWindow
     from src.fitting_config_widget import FittingConfigWidget
@@ -78,6 +79,22 @@ class SharedAnalysisControlsTests(unittest.TestCase):
         self.assertGreater(right_panel.verticalScrollBar().maximum(), 0)
         self.assertEqual(right_panel.horizontalScrollBar().maximum(), 0)
 
+        window.close()
+
+    def test_loaded_spectrum_limits_plot_to_its_x_domain(self):
+        window = AnalysisWindow()
+        window.file_io.load_spectrum_1d = lambda _path: (
+            np.array([100.0, 150.0, 200.0]),
+            np.array([1.0, 2.0, 1.0]),
+            None,
+            None,
+            None,
+        )
+
+        window.load_file("spectrum.txt")
+
+        limits = window.plot_widget.getViewBox().state["limits"]
+        self.assertEqual(limits["xLimits"], [100.0, 200.0])
         window.close()
 
 
