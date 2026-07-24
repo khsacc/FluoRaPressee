@@ -504,6 +504,17 @@ class ConfigurationCatalog:
                 "Wavelength calibration must not include excitation_wavelength_nm"
             )
 
+        reference_kind = calibration.get("reference_kind")
+        if reference_kind is not None and reference_kind not in (
+            "emission_lines", "emission_lines_with_excitation", "raman_standard"
+        ):
+            raise ConfigurationValidationError(
+                f"Unsupported calibration reference_kind: {reference_kind!r}"
+            )
+        standards = calibration.get("standards")
+        if standards is not None and not isinstance(standards, list):
+            raise ConfigurationValidationError("calibration.standards must be a list")
+
         if not isinstance(compatibility, dict):
             raise ConfigurationValidationError("compatibility must be an object")
         for device in ("spectrometer", "camera"):
@@ -587,6 +598,17 @@ class ConfigurationCatalog:
             record["slot_id"] = slot_id
             record["calibration_profile_id"] = calibration_profile_id
             record["created_at"] = created_at
+            # Written to disk (not just defaulted on read by _normalize_record)
+            # so a caller that omits them -- direct register_configuration()
+            # use, not just the calibration dialog -- still produces a
+            # self-describing record on disk.
+            record["calibration"].setdefault(
+                "reference_kind",
+                "emission_lines_with_excitation"
+                if record["calibration"].get("unit") == "Raman shift"
+                else "emission_lines",
+            )
+            record["calibration"].setdefault("standards", [])
 
             relative_path = Path(
                 "records",
@@ -748,13 +770,6 @@ class ConfigurationCatalog:
         if version < 2:
             record["schema_version"] = CONFIGURATION_SCHEMA_VERSION
             record["calibration_profile_id"] = db_calibration_profile_id
-            calibration = record.get("calibration", {})
-            calibration.setdefault(
-                "reference_kind",
-                "emission_lines_with_excitation"
-                if calibration.get("unit") == "Raman shift"
-                else "emission_lines",
-            )
         elif (
             db_calibration_profile_id is not None
             and record.get("calibration_profile_id") != db_calibration_profile_id
@@ -763,6 +778,18 @@ class ConfigurationCatalog:
                 f"Configuration {record.get('configuration_id')} calibration_profile_id "
                 "does not match the catalog index; the record or database may be corrupt."
             )
+        # Applies regardless of schema_version: any record written before
+        # reference_kind/standards existed (v1, or v2 saved before this field
+        # was ever produced) is missing them just the same, and both are
+        # informational -- there is no version's shape they'd conflict with.
+        calibration = record.get("calibration", {})
+        calibration.setdefault(
+            "reference_kind",
+            "emission_lines_with_excitation"
+            if calibration.get("unit") == "Raman shift"
+            else "emission_lines",
+        )
+        calibration.setdefault("standards", [])
         return record
 
     def get_configuration(self, configuration_id: str) -> dict[str, Any]:

@@ -1419,6 +1419,44 @@ class CalibrationWindow(QDialog):
             )
             self.btn_save_apply.setEnabled(True)
 
+    def _used_reference_standards(self):
+        """Distinct catalogue standards behind the peaks that fed calibrate()'s
+        fit (same check+assignment condition as calibrate() itself), so a
+        manually-typed value (no line_id) or an unused/unchecked row never
+        gets credited as a standard actually used."""
+        used = {}
+        for row, row_data in enumerate(self.row_widgets):
+            if not row_data["check"].isChecked():
+                continue
+            assignment = self.assignments.get(row)
+            line_id = assignment.get("line_id") if assignment else None
+            if not line_id:
+                continue
+            line = self.reference_lines_by_id.get(line_id)
+            if line is None:
+                continue
+            standard = self.reference_standards.get(line.standard_id)
+            if standard is None:
+                continue
+            used[standard.standard_id] = {
+                "standard_id": standard.standard_id,
+                "display_name": standard.display_name,
+                "quantity": standard.quantity,
+            }
+        return list(used.values())
+
+    @staticmethod
+    def _reference_kind_for(calibration_unit, used_standards):
+        """Returns "raman_standard" when a Raman-shift-native material
+        (measured directly, laser-independent in cm^-1) fed the fit;
+        otherwise the pre-existing emission-lamp-line categories are
+        unchanged."""
+        if calibration_unit != "Raman shift":
+            return "emission_lines"
+        if any(s["quantity"] == "raman_shift_cm1" for s in used_standards):
+            return "raman_standard"
+        return "emission_lines_with_excitation"
+
     def _restore_main_window_settings(self):
         main_window = self.parent()
         if not main_window or not self.camera_thread:
@@ -1494,6 +1532,8 @@ class CalibrationWindow(QDialog):
         is_raman_unit = self.radio_unit_raman.isChecked()
         calibration_unit = "Wavelength" if not is_raman_unit else "Raman shift"
         raw_domain_coeffs = self._to_raw_pixel_domain(self.calib_coeffs)
+        used_standards = self._used_reference_standards()
+        reference_kind = self._reference_kind_for(calibration_unit, used_standards)
         try:
             calib_laser_wl = (
                 main_window.spin_exc_wl.value() if is_raman_unit else None
@@ -1502,6 +1542,8 @@ class CalibrationWindow(QDialog):
                 raw_domain_coeffs,
                 calibration_unit=calibration_unit,
                 excitation_wavelength_nm=calib_laser_wl,
+                reference_kind=reference_kind,
+                standards=used_standards,
             )
             label = format_configuration_label(record)
             main_window.apply_calibration(

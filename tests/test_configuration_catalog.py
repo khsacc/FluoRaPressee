@@ -754,6 +754,55 @@ class ConfigurationCatalogTests(unittest.TestCase):
         with self.assertRaises(ConfigurationValidationError):
             self.catalog.register_configuration(bad)
 
+    def test_reference_kind_and_standards_are_stored_when_supplied(self):
+        raw = draft(unit="Raman shift", excitation_wavelength_nm=532.0)
+        raw["calibration"]["reference_kind"] = "raman_standard"
+        raw["calibration"]["standards"] = [
+            {"standard_id": "ASTM-Naphthalene", "display_name": "Naphthalene (ASTM)",
+             "quantity": "raman_shift_cm1"},
+        ]
+        record = self.catalog.register_configuration(raw)
+        loaded = self.catalog.get_configuration(record["configuration_id"])
+
+        self.assertEqual(loaded["calibration"]["reference_kind"], "raman_standard")
+        self.assertEqual(
+            loaded["calibration"]["standards"][0]["standard_id"], "ASTM-Naphthalene"
+        )
+
+    def test_reference_kind_and_standards_default_when_omitted(self):
+        wavelength = self.catalog.register_configuration(draft(unit="Wavelength"))
+        raman = self.catalog.register_configuration(
+            draft(unit="Raman shift", excitation_wavelength_nm=532.0, center=700.0)
+        )
+
+        self.assertEqual(
+            self.catalog.get_configuration(wavelength["configuration_id"])
+            ["calibration"]["reference_kind"],
+            "emission_lines",
+        )
+        self.assertEqual(
+            self.catalog.get_configuration(raman["configuration_id"])
+            ["calibration"]["reference_kind"],
+            "emission_lines_with_excitation",
+        )
+        self.assertEqual(
+            self.catalog.get_configuration(raman["configuration_id"])
+            ["calibration"]["standards"],
+            [],
+        )
+
+    def test_unsupported_reference_kind_is_rejected(self):
+        bad = draft(unit="Wavelength")
+        bad["calibration"]["reference_kind"] = "made_up_kind"
+        with self.assertRaises(ConfigurationValidationError):
+            self.catalog.register_configuration(bad)
+
+    def test_standards_must_be_a_list(self):
+        bad = draft(unit="Wavelength")
+        bad["calibration"]["standards"] = "Ne-I"
+        with self.assertRaises(ConfigurationValidationError):
+            self.catalog.register_configuration(bad)
+
     def test_fresh_v3_database_accepts_first_registration(self):
         # Regression test: the calibration_profiles table and
         # configurations.calibration_profile_id column must exist in the

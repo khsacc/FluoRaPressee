@@ -255,8 +255,19 @@ A second follow-up review found three more issues, all fixed:
 
 - A named laser-profile registry (`profile_id` beyond the bare excitation-wavelength key).
   Excitation identity is compared purely as a 0.001 nm-resolution number.
-- The `raman_standard` reference kind (e.g. a naphthalene calibration standard) and any
-  catalogue/UI for it. The schema tolerates the value; nothing produces it yet.
 - The rich `calibration.reference.assignments`/`fit_quality` provenance block — would need
   new plumbing through `calibration_ui.py` that nothing currently needs.
 - `validated_pixel_range` monotonicity/duplicate-pixel checks at save time.
+
+**Update (2026-07-24):** the `raman_standard` reference kind above is no longer out of scope.
+`calibration_ui.py`'s `save_and_apply()` now derives `calibration.reference_kind` and
+`calibration.standards` (the catalogue standard(s) actually behind the checked/assigned peaks
+that fed `calibrate()`, mirroring its own check+assignment condition) instead of leaving them
+as a tolerated-but-unproduced schema slot. `raman_standard` fires whenever any used standard's
+`quantity` is `raman_shift_cm1` (a Raman-active material measured directly, e.g. the ASTM/NMIJ
+catalogues), as opposed to `emission_lines_with_excitation` (Ne/Ar/Hg lamp lines converted via
+the excitation wavelength). Both fields are also defaulted (from `unit` alone, `standards: []`)
+for pre-existing records that predate this — in `ConfigurationCatalog.register_configuration()`
+for a draft missing them outright, and in `_normalize_record()` for a record already on disk —
+so every record served by `get_configuration()` carries both keys regardless of when it was
+written. See `docs-site/docs/data-formats/configuration.md` for the on-disk shape.

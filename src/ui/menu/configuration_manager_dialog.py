@@ -39,6 +39,26 @@ from PyQt6.QtWidgets import (
 from src.core.configuration_catalog import ConfigurationError, format_configuration_label
 
 
+_REFERENCE_KIND_LABELS = {
+    "emission_lines": "Emission-line standard",
+    "emission_lines_with_excitation": "Emission-line standard (converted via excitation)",
+    "raman_standard": "Raman-shift standard",
+}
+
+
+def _reference_kind_text(calibration: dict[str, Any]) -> str:
+    label = _REFERENCE_KIND_LABELS.get(
+        calibration.get("reference_kind"), calibration.get("reference_kind") or "—"
+    )
+    standard_names = [
+        standard.get("display_name") or standard.get("standard_id")
+        for standard in calibration.get("standards") or []
+    ]
+    if standard_names:
+        label += f" ({', '.join(standard_names)})"
+    return label
+
+
 def _format_record_details(record: dict[str, Any]) -> str:
     """Render every field of a stored configuration record for human inspection."""
     compatibility = record["compatibility"]
@@ -76,6 +96,7 @@ def _format_record_details(record: dict[str, Any]) -> str:
             f"   Excitation: {calibration['excitation_wavelength_nm']} nm"
             if calibration.get("excitation_wavelength_nm") is not None else ""
         ),
+        f"  Reference: {_reference_kind_text(calibration)}",
         f"  Coefficients: c0={coefficients['c0']!r}  c1={coefficients['c1']!r}  "
         f"c2={coefficients['c2']!r}",
     ]
@@ -90,7 +111,7 @@ class ConfigurationManagerDialog(QDialog):
 
     APPLIED_ROW_COLOR = QColor("#FCE8E8")
     _COLUMNS = (
-        "", "Hardware", "Grating", "Centre (nm)", "ROI",
+        "", "Hardware", "Grating", "Centre", "ROI",
         "Axis", "Status", "Created", "Last used",
     )
 
@@ -221,6 +242,15 @@ class ConfigurationManagerDialog(QDialog):
         return f"{spectrometer}  +  {camera}"
 
     @staticmethod
+    def _center_text(summary):
+        center_nm = summary["center_wavelength_nm"]
+        excitation = summary.get("excitation_wavelength_nm")
+        if summary.get("axis_kind") == "raman_shift" and excitation:
+            shift_cm1 = (1e7 / excitation) - (1e7 / center_nm)
+            return f"{shift_cm1:.2f} cm⁻¹"
+        return f"{center_nm:.3f} nm"
+
+    @staticmethod
     def _axis_text(summary):
         if summary.get("migration_error"):
             return "Unavailable"
@@ -279,7 +309,7 @@ class ConfigurationManagerDialog(QDialog):
             values = [
                 self._hardware_text(summary["compatibility"]),
                 f"{grating['grooves_per_mm']} g/mm (slot {grating['index']})",
-                f"{summary['center_wavelength_nm']:.3f}",
+                self._center_text(summary),
                 self._roi_text(summary["roi"]),
                 self._axis_text(summary),
                 summary.get("status", "active" if summary.get("active") else "archived").capitalize(),

@@ -281,7 +281,8 @@ class FileIOMixin:
         return {"roi_mode": mode, "roi_start": int(start), "roi_end": int(end)}
 
     def register_current_configuration(
-        self, coeffs, calibration_unit="Wavelength", excitation_wavelength_nm=None
+        self, coeffs, calibration_unit="Wavelength", excitation_wavelength_nm=None,
+        reference_kind=None, standards=None,
     ):
         """Create a new active record for the current grating/centre/ROI slot."""
         hardware = self.configuration_hardware_context()
@@ -321,6 +322,16 @@ class FileIOMixin:
                     if calibration_unit == "Raman shift"
                     else None
                 ),
+                # Which standard(s) the operator actually assigned peaks
+                # against, and whether a Raman-shift calibration came from
+                # emission-lamp lines (converted via the excitation
+                # wavelength) or a Raman-shift-native standard measured
+                # directly -- see CalibrationWindow._reference_kind_for.
+                "reference_kind": reference_kind or (
+                    "emission_lines_with_excitation"
+                    if calibration_unit == "Raman shift" else "emission_lines"
+                ),
+                "standards": standards or [],
                 "coefficients": {
                     "c0": float(c0), "c1": float(c1), "c2": float(c2),
                 },
