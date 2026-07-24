@@ -13,7 +13,7 @@ description: HTTPエラーコード一覧とAPIの既知の制限事項
 | 400 | リクエストの内容が不正（`dark.data` の長さ不一致、2Dモードでのフィット要求など） |
 | 401 | `X-API-Key` が無い、または一致しない |
 | 404 | 指定configurationまたはslotが存在しない |
-| 409 | 他の操作が進行中、またはconfigurationが装置と非互換 |
+| 409 | 他の操作が進行中、configurationが装置と非互換、またはbareな`slot_id`に対応する calibration profileが2つ以上あり曖昧（`code: "ambiguous_configuration_profile"`、[Configuration関連エンドポイント](configurations.md)参照） |
 | 422 | リクエストボディのバリデーションエラー（Pydantic）、または `dark.mode="reuse_loaded"` の設定ミスマッチ |
 | 500 | 予期しないサーバーエラー |
 | 504 | configuration適用、取得またはライブ状態照会がタイムアウトした |

@@ -494,6 +494,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.lbl_exc_wl = QLabel("Excitation wavelength (nm):")
         self.spin_exc_wl = CustomDoubleSpinBox()
         self.spin_exc_wl.setRange(0.01, 2000)
+        self.spin_exc_wl.setDecimals(3)
         self.spin_exc_wl.setValue(532.0)
         self.spin_exc_wl.setEnabled(False)
         

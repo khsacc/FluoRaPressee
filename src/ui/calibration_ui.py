@@ -17,6 +17,7 @@ from src.core.calibration_reference import (
     find_match_candidates,
     load_reference_standards,
     match_from_seed_axis,
+    resolve_standard_for_laser,
 )
 from src.core.configuration_catalog import format_configuration_label
 from src.ui.theme import colored_button_style
@@ -88,13 +89,27 @@ class CalibrationWindow(QDialog):
         standards_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "calibrationStandards"
         )
-        self.reference_standards = load_reference_standards(standards_dir)
+        # Raman-shift-native standards (e.g. cyclohexane, polystyrene) store a
+        # laser-independent shift; resolve it to a wavelength for the laser in
+        # use once here. This dialog is modal, so the excitation wavelength on
+        # the main window cannot change underneath it while it's open.
+        raw_standards = load_reference_standards(standards_dir)
+        self.reference_standards = {
+            standard_id: resolve_standard_for_laser(standard, self._laser_wavelength())
+            for standard_id, standard in raw_standards.items()
+        }
         self.reference_lines_by_id = {
             line.line_id: line
             for standard in self.reference_standards.values()
             for line in standard.lines
         }
-        
+        # Emission standards (Ne/Ar/Hg) are always selectable; raman_shift_cm1
+        # standards only become selectable while the Raman shift unit is
+        # active (see _rebuild_standards_list). This set is the persistent
+        # "checked" record so a standard hidden by a unit switch is not
+        # silently forgotten if the user switches back.
+        self._checked_standard_ids = {"Ne-I"}
+
         self.init_ui()
         
         main_window = self.parent()
@@ -251,28 +266,12 @@ class CalibrationWindow(QDialog):
         find_peaks_layout.addLayout(slider_layout)
 
         reference_layout = QVBoxLayout()
-        reference_layout.addWidget(QLabel("Emission standards (multiple selection):"))
+        reference_layout.addWidget(QLabel("Emission / Raman shift standards (multiple selection):"))
         self.list_standards = QListWidget()
         self.list_standards.setMaximumHeight(76)
-        standard_order = {"Ne-I": 0, "Ar-I": 1, "Hg-I": 2}
-        sorted_standards = sorted(
-            self.reference_standards.items(),
-            key=lambda item: (
-                standard_order.get(item[0], len(standard_order)),
-                item[1].display_name,
-            ),
-        )
-        for standard_id, standard in sorted_standards:
-            item = QListWidgetItem(standard.display_name)
-            item.setData(Qt.ItemDataRole.UserRole, standard_id)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(
-                Qt.CheckState.Checked
-                if standard_id == "Ne-I" else Qt.CheckState.Unchecked
-            )
-            self.list_standards.addItem(item)
         self.list_standards.itemChanged.connect(self.on_active_standards_changed)
         reference_layout.addWidget(self.list_standards)
+        self._rebuild_standards_list()
 
         match_layout = QHBoxLayout()
         self.btn_auto_match = QPushButton("Find assignments")
@@ -343,8 +342,56 @@ class CalibrationWindow(QDialog):
         main_layout.addLayout(controls_layout, stretch=1)
 
     def update_ui_units(self):
+        self._rebuild_standards_list()
         self.update_table_header()
         self.update_table_value_widgets()
+
+    def _rebuild_standards_list(self):
+        """Rebuild the standards checklist for the currently selected unit.
+
+        raman_shift_cm1 standards (e.g. cyclohexane, polystyrene) only make
+        sense as literature values while calibrating in Raman shift, since
+        their equivalent wavelength depends on the excitation line rather
+        than being a fixed lamp emission line, so they are hidden from the
+        list while the Wavelength unit is selected. Their checked state is
+        still remembered via self._checked_standard_ids so switching the
+        unit back and forth doesn't lose the selection.
+        """
+        for index in range(self.list_standards.count()):
+            item = self.list_standards.item(index)
+            standard_id = item.data(Qt.ItemDataRole.UserRole)
+            if item.checkState() == Qt.CheckState.Checked:
+                self._checked_standard_ids.add(standard_id)
+            else:
+                self._checked_standard_ids.discard(standard_id)
+
+        is_raman_unit = self.radio_unit_raman.isChecked()
+        standard_order = {"Ne-I": 0, "Ar-I": 1, "Hg-I": 2}
+        visible_standards = [
+            (standard_id, standard)
+            for standard_id, standard in self.reference_standards.items()
+            if is_raman_unit or standard.quantity != "raman_shift_cm1"
+        ]
+        sorted_standards = sorted(
+            visible_standards,
+            key=lambda item: (
+                standard_order.get(item[0], len(standard_order)),
+                item[1].display_name,
+            ),
+        )
+        self.list_standards.blockSignals(True)
+        self.list_standards.clear()
+        for standard_id, standard in sorted_standards:
+            item = QListWidgetItem(standard.display_name)
+            item.setData(Qt.ItemDataRole.UserRole, standard_id)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if standard_id in self._checked_standard_ids
+                else Qt.CheckState.Unchecked
+            )
+            self.list_standards.addItem(item)
+        self.list_standards.blockSignals(False)
 
     def update_table_header(self):
         unit_str = "nm" if self.radio_unit_wl.isChecked() else "cm⁻¹"

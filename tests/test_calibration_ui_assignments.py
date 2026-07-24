@@ -53,6 +53,56 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
         ]
         self.assertEqual(standard_ids, ["Ne-I", "Ar-I", "Hg-I"])
 
+    def _standard_ids(self):
+        return {
+            self.window.list_standards.item(index).data(Qt.ItemDataRole.UserRole)
+            for index in range(self.window.list_standards.count())
+        }
+
+    def test_raman_shift_standards_hidden_until_raman_shift_unit_selected(self):
+        self.assertTrue(self.window.radio_unit_wl.isChecked())
+        self.assertNotIn("ASTM-Cyclohexane", self._standard_ids())
+        self.assertNotIn("Polystyrene-NMIJ", self._standard_ids())
+
+        self.window.radio_unit_raman.setChecked(True)
+
+        self.assertIn("ASTM-Cyclohexane", self._standard_ids())
+        self.assertIn("Polystyrene-NMIJ", self._standard_ids())
+        # Ne/Ar/Hg remain selectable in both units.
+        self.assertIn("Ne-I", self._standard_ids())
+
+        self.window.radio_unit_wl.setChecked(True)
+
+        self.assertNotIn("ASTM-Cyclohexane", self._standard_ids())
+        self.assertNotIn("Polystyrene-NMIJ", self._standard_ids())
+
+    def test_raman_shift_standard_selection_survives_a_unit_round_trip(self):
+        self.window.radio_unit_raman.setChecked(True)
+        self._set_standard("Polystyrene-NMIJ", True)
+
+        self.window.radio_unit_wl.setChecked(True)
+        self.window.radio_unit_raman.setChecked(True)
+
+        item = next(
+            self.window.list_standards.item(index)
+            for index in range(self.window.list_standards.count())
+            if self.window.list_standards.item(index).data(
+                Qt.ItemDataRole.UserRole
+            ) == "Polystyrene-NMIJ"
+        )
+        self.assertEqual(item.checkState(), Qt.CheckState.Checked)
+
+    def test_raman_shift_line_assignment_survives_switch_back_to_wavelength_unit(self):
+        self.window.radio_unit_raman.setChecked(True)
+        polystyrene = self.window.reference_standards["Polystyrene-NMIJ"].lines[0]
+        self.window.assign_reference_line(0, polystyrene)
+
+        self.window.radio_unit_wl.setChecked(True)
+
+        self.assertEqual(
+            self.window.assignments[0]["line_id"], polystyrene.line_id
+        )
+
     def test_automatic_matching_always_expects_increasing_wavelength(self):
         # self.current_spectrum's pixel index already has Flip X applied (see
         # on_data_ready/use_displayed_data), so increasing-pixel-index ->
