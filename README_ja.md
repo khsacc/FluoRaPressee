@@ -38,7 +38,7 @@
 3. ``spectrometerConfig.json``が存在しない状態でアプリを初めて起動すると、セットアップウィザードが自動的に開きます。
    装置メーカー・接続設定・回折格子構成などを入力すると、``spectrometerConfig.json``がプロジェクトルートに
    生成されます。ウィザードの各ステップおよび``spectrometerConfig.json``自体の詳しい仕様は
-   [オンラインマニュアルの「ハードウェア設定」](https://khsacc.github.io/FluoRaPressee/docs/hardware-config)
+   [オンラインマニュアルの「ハードウェア設定」](https://khsacc.github.io/FluoRaPressee/hardware-config)
    を参照してください。
 
 ##  使い方 
@@ -134,13 +134,13 @@ NODENV_VERSION=22.22.0 npm start
 起動している間、GUI側の測定・設定系操作はロックされ（プロットの表示設定等は引き続き操作可）、
 **Stop API Server** を押すとローカルでの操作権が戻ります。
 
-エンドポイント一覧・リクエスト/レスポンスの詳細は [オンラインマニュアルのAPIリファレンス](https://khsacc.github.io/FluoRaPressee/docs/api) を参照してください。
+エンドポイント一覧・リクエスト/レスポンスの詳細は [オンラインマニュアルのAPIリファレンス](https://khsacc.github.io/FluoRaPressee/api) を参照してください。
 
 ## 保存されるファイルの形式
 
 測定データ、バックグラウンド、フィッティング結果、連続測定のログ、Configuration（較正込みの装置設定）
 など、アプリが保存する各ファイルの形式については
-[オンラインマニュアルの「保存データの形式」](https://khsacc.github.io/FluoRaPressee/docs/data-formats)
+[オンラインマニュアルの「保存データの形式」](https://khsacc.github.io/FluoRaPressee/data-formats)
 を参照してください。
 
 ## 実機試験

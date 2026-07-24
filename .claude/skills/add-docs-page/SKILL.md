@@ -113,8 +113,8 @@ Mirror `docs/data-formats/` (the simplest existing example):
 - **Linking back from the root README**: per root `CLAUDE.md`, `README_ja.md` is the actively
   maintained doc (`README.md`'s feature list is HTML-commented out and unrendered — don't bother
   mirroring there). If the new page is worth surfacing from the root README, add a link using the
-  published URL pattern `https://khsacc.github.io/FluoRaPressee/docs/<path>` — see
-  `README_ja.md`'s links to `docs/hardware-config`, `docs/api`, `docs/data-formats` for the pattern.
+  published URL pattern `https://khsacc.github.io/FluoRaPressee/<path>` — see
+  `README_ja.md`'s links to `hardware-config`, `api`, `data-formats` for the pattern.
   Not required for every page — only when the README currently has inline detail that the new page
   supersedes (as happened when the setup-wizard details moved into `hardware-config.md`) or otherwise
   clearly warrants a pointer.

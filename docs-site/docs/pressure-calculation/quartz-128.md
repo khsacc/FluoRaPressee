@@ -26,7 +26,9 @@ description: 石英128 cm-1モードによる圧力スケールと温度補正
   アプリはこれを $P$ について代数的に解いて計算します。
 
   $$
-  P\,(\text{MPa}) = \frac{\Delta\omega_{128} - \text{baseline}(T_c)}{\text{slope}(T_c)},\qquad
+  P\,(\text{MPa}) = \frac{\Delta\omega_{128} - \text{baseline}(T_c)}{\text{slope}(T_c)}
+  $$
+  $$
   \text{baseline}(T_c) = A T_c^{4} + B T_c^{3} + C T_c^{2} + D T_c + G,\quad
   \text{slope}(T_c) = E + F T_c
   $$
