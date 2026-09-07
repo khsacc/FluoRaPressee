@@ -2,11 +2,43 @@ import os
 from datetime import datetime
 import numpy as np
 import pyqtgraph as pg
+from PyQt6.QtCore import Qt
 
 from src.core.measurement_metadata import public_axis_kind
 
 
 class DisplayMixin:
+    def update_plot_background(self):
+        """Switch the live spectrum plot between readable dark and light palettes."""
+        is_white = self.radio_plot_bg_white.isChecked()
+        background = "#FFFFFF" if is_white else "#000000"
+        foreground = "#202020" if is_white else "#F2F2F2"
+
+        self.plot_widget.setBackground(background)
+        plot_item = self.plot_widget.getPlotItem()
+        plot_item.setTitle("1D Spectrum", color=foreground)
+        for axis_name in ("left", "bottom"):
+            axis = plot_item.getAxis(axis_name)
+            axis.setPen(pg.mkPen(foreground))
+            axis.setTextPen(pg.mkPen(foreground))
+
+        spectrum_color = "#202020" if is_white else "#FFFFFF"
+        self.plot_line.setPen(pg.mkPen(spectrum_color, width=1))
+        self.plot_scatter.setSymbolBrush(spectrum_color)
+        self.fit_baseline_curve.setPen(
+            pg.mkPen("#757575" if is_white else "#9E9E9E", width=1, style=Qt.PenStyle.DashLine)
+        )
+        self.fit_curve.setPen(pg.mkPen("#D32F2F" if is_white else "#FFFF00", width=2))
+        self.fit_curve_sub1.setPen(
+            pg.mkPen("#1976D2" if is_white else "#FFFF00", width=1, style=Qt.PenStyle.DashLine)
+        )
+        self.fit_curve_sub2.setPen(
+            pg.mkPen("#7B1FA2" if is_white else "#FFFF00", width=1, style=Qt.PenStyle.DashLine)
+        )
+        self.edge_marker.setPen(
+            pg.mkPen("#00838F" if is_white else "#00E5FF", width=2, style=Qt.PenStyle.DashLine)
+        )
+
     def _configure_spectrum_plot_range(self, min_x, max_x):
         view_box = self.plot_widget.getViewBox()
         view_box.setLimits(xMin=min_x, xMax=max_x)

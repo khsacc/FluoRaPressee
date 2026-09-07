@@ -304,6 +304,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         plot_layout.addLayout(self.plot_content_layout)
         
         plot_controls_layout = QHBoxLayout()
+        self.radio_plot_bg_black = QRadioButton("Black")
+        self.radio_plot_bg_white = QRadioButton("White")
+        self.radio_plot_bg_black.setChecked(True)
+        self._plot_background_group = QButtonGroup(self)
+        self._plot_background_group.addButton(self.radio_plot_bg_black)
+        self._plot_background_group.addButton(self.radio_plot_bg_white)
         self.radio_plot_line = QRadioButton("Line")
         self.radio_plot_scatter = QRadioButton("Scatter")
         self.radio_plot_line.setChecked(True)
@@ -317,10 +323,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         plot_controls_layout.addWidget(QLabel("Plot style:"))
         plot_controls_layout.addWidget(self.radio_plot_line)
         plot_controls_layout.addWidget(self.radio_plot_scatter)
+        plot_controls_layout.addSpacing(16)
+        plot_controls_layout.addWidget(QLabel("Plot background:"))
+        plot_controls_layout.addWidget(self.radio_plot_bg_black)
+        plot_controls_layout.addWidget(self.radio_plot_bg_white)
         plot_controls_layout.addStretch()
         plot_controls_layout.addWidget(self.chk_rescale_x)
         plot_controls_layout.addWidget(self.chk_rescale_y)
         plot_layout.addLayout(plot_controls_layout)
+        self.update_plot_background()
 
         self.plot_widget.scene().sigMouseMoved.connect(self.on_mouse_moved)
         self.image_view.getView().scene().sigMouseMoved.connect(self.on_mouse_moved)
@@ -644,8 +655,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # The whole API panel deliberately stays outside set_ui_enabled_during_seq's
         # widget set: the operator must be able to switch the mode back to Off even
         # while a remote request holds the UI lock.
-        api_group = QGroupBox("API Server")
-        api_grid = QGridLayout()
+        self.api_toggle_btn = QPushButton("▶ API Server")
+        self.api_toggle_btn.setCheckable(True)
+        self.api_toggle_btn.setStyleSheet(
+            "text-align: left; font-weight: bold; border: none; padding: 5px;"
+        )
+
+        self.api_content = QWidget()
+        self.api_content.setVisible(False)
+        api_grid = QGridLayout(self.api_content)
 
         api_grid.addWidget(QLabel("Mode:"), 0, 0)
         self.combo_api_mode = CustomComboBox()
@@ -713,8 +731,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.lbl_api_status.setStyleSheet("color: #666; font-size: 11px;")
         api_grid.addWidget(self.lbl_api_status, 6, 0, 1, 2)
 
-        api_group.setLayout(api_grid)
-        controls_layout.addWidget(api_group)
+        controls_layout.addWidget(self.api_toggle_btn)
+        controls_layout.addWidget(self.api_content)
 
         controls_layout.addStretch()
         scroll_area.setWidget(controls_widget)
@@ -729,6 +747,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.radio_spec_mode_raman.toggled.connect(self.on_spec_mode_changed)
         
         self.seq_toggle_btn.toggled.connect(self.toggle_sequential)
+        self.api_toggle_btn.toggled.connect(self.toggle_api_server)
         self.btn_choose_dir.clicked.connect(self.on_choose_seq_dir)
         self.btn_stop_seq.clicked.connect(self.stop_sequential)
         
@@ -757,6 +776,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.radio_plot_line.toggled.connect(self.on_fit_settings_changed)
         self.radio_plot_scatter.toggled.connect(self.on_fit_settings_changed)
+        self.radio_plot_bg_white.toggled.connect(self.update_plot_background)
 
         self.btn_read_temp.clicked.connect(self.request_temperature_read)
 

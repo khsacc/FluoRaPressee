@@ -109,6 +109,10 @@ def _parse_temp_c(text):
 
 
 class ApiMixin:
+    def toggle_api_server(self, checked):
+        self.api_content.setVisible(checked)
+        self.api_toggle_btn.setText("▼ API Server" if checked else "▶ API Server")
+
     # ------------------------------------------------------------------
     # GUI-thread helpers. Must be invoked via self.gui_bridge.call(...) from
     # a non-GUI thread (GuiBridge itself refuses to be called from the GUI
