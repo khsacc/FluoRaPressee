@@ -78,8 +78,12 @@ class DisplayMixin:
         else:
             self.sync_fit_range_to_spectrum()
 
-            if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
-                self.update_display(is_new_data=False)
+        # The plot-style radio signals are blocked above so that changing the
+        # fitting mode causes only one deliberate redraw.  Without this redraw
+        # on the OFF path, the controls said "Line" while the existing scatter
+        # item remained populated until the next acquisition.
+        if getattr(self, 'raw_1d_data', None) is not None and hasattr(self.thread, 'is_measuring') and not self.thread.is_measuring:
+            self.update_display(is_new_data=False)
 
     def sync_fit_range_to_spectrum(self, force=False):
         """Recompute Range Start/Range End from the currently displayed spectrum's x-axis.
@@ -116,22 +120,40 @@ class DisplayMixin:
             self.pressure_window.set_fit_peak_count(self.combo_fit_peak_count.currentData(), reset_selection=True)
         self.on_fit_settings_changed()
 
-    def update_display(self, is_new_data=False, mode="1d"):
+    def _prepare_1d_display_data(self, source_data):
+        """Apply display-only transforms without changing the acquired source data."""
+        disp_data = source_data.astype(np.float64).copy()
+
+        if self.radio_bg_on.isChecked() and self.loaded_bg_data is not None:
+            if len(disp_data) == len(self.loaded_bg_data):
+                # Live accumulation previews deliberately subtract the complete
+                # saved background too. Although this can make early previews
+                # negative, it keeps the operation simple and visible to users.
+                disp_data = disp_data - self.loaded_bg_data
+
+        if self.chk_flip_x.isChecked():
+            disp_data = disp_data[::-1]
+        return disp_data
+
+    def update_display(
+        self, is_new_data=False, mode="1d", *, display_data=None,
+        update_analysis=True,
+    ):
         if mode == "1d":
-            if getattr(self, 'raw_1d_data', None) is None: return
+            source_data = (
+                display_data
+                if display_data is not None
+                else getattr(self, 'raw_1d_data', None)
+            )
+            if source_data is None: return
 
             self.update_plot_labels()
 
-            disp_data = self.raw_1d_data.astype(np.float64).copy()
+            disp_data = self._prepare_1d_display_data(source_data)
 
-            if self.radio_bg_on.isChecked() and self.loaded_bg_data is not None:
-                if len(disp_data) == len(self.loaded_bg_data):
-                    disp_data = disp_data - self.loaded_bg_data
-
-            if self.chk_flip_x.isChecked():
-                disp_data = disp_data[::-1]
-
-            self.latest_1d_data = disp_data
+            self._displayed_1d_data = disp_data
+            if update_analysis:
+                self.latest_1d_data = disp_data
             self.stacked_widget.setCurrentIndex(0)
 
             x_data = self.get_x_axis(len(disp_data))
@@ -163,6 +185,20 @@ class DisplayMixin:
                 self.plot_widget.getViewBox().enableAutoRange(axis=pg.ViewBox.YAxis)
             else:
                 self.plot_widget.getViewBox().disableAutoRange(axis=pg.ViewBox.YAxis)
+
+            if not update_analysis:
+                # A partial accumulation is visual feedback only. Do not replace
+                # the last completed fit/pressure result with provisional values.
+                self.fit_curve.clear()
+                self.fit_baseline_curve.clear()
+                self.fit_curve_sub1.clear()
+                self.fit_curve_sub2.clear()
+                self.edge_marker.hide()
+                if self.radio_fit_on.isChecked():
+                    self.fitting_text.setHtml(
+                        "<span>Fitting paused until accumulation completes.</span>"
+                    )
+                return
 
             do_fit = self.radio_fit_on.isChecked()
             is_save_frame = False
@@ -296,12 +332,19 @@ class DisplayMixin:
                      self.fitting_text.setHtml("")
 
         elif mode == "2d":
-            if getattr(self, 'raw_2d_data', None) is None: return
-            disp_data = self.raw_2d_data.copy()
+            source_data = (
+                display_data
+                if display_data is not None
+                else getattr(self, 'raw_2d_data', None)
+            )
+            if source_data is None: return
+            disp_data = source_data.copy()
             if self.chk_flip_x.isChecked():
                 disp_data = disp_data[:, ::-1]
 
-            self.latest_2d_data = disp_data
+            self._displayed_2d_data = disp_data
+            if update_analysis:
+                self.latest_2d_data = disp_data
             self.stacked_widget.setCurrentIndex(1)
             self.image_view.setImage(disp_data.T)
 
@@ -359,8 +402,12 @@ class DisplayMixin:
 
                     x_pixel = int(np.round(x_val))
                     axis_kind = public_axis_kind(self)
-                    if axis_kind != "pixel" and self.latest_1d_data is not None:
-                        x_arr = self.get_x_axis(len(self.latest_1d_data))
+                    displayed_data = getattr(
+                        self, "_displayed_1d_data",
+                        getattr(self, "latest_1d_data", None),
+                    )
+                    if axis_kind != "pixel" and displayed_data is not None:
+                        x_arr = self.get_x_axis(len(displayed_data))
                         if self.chk_flip_x.isChecked():
                             x_arr = x_arr[::-1]
                         disp_idx = np.argmin(np.abs(x_arr - x_val))
@@ -368,8 +415,8 @@ class DisplayMixin:
                         disp_idx = x_pixel
 
                     data_val_str = ""
-                    if self.latest_1d_data is not None and 0 <= disp_idx < len(self.latest_1d_data):
-                        counts = self.latest_1d_data[disp_idx]
+                    if displayed_data is not None and 0 <= disp_idx < len(displayed_data):
+                        counts = displayed_data[disp_idx]
                         data_val_str = f", Counts: {counts:.1f}"
 
                     unit = "Wavelength" if not self.radio_spec_mode_raman.isChecked() else "Raman shift"
@@ -388,10 +435,14 @@ class DisplayMixin:
                     x_pixel = int(np.round(mouse_point.x()))
                     y_pixel = int(np.round(mouse_point.y()))
                     data_val_str = ""
-                    if self.latest_2d_data is not None:
-                        h, w = self.latest_2d_data.shape
+                    displayed_data = getattr(
+                        self, "_displayed_2d_data",
+                        getattr(self, "latest_2d_data", None),
+                    )
+                    if displayed_data is not None:
+                        h, w = displayed_data.shape
                         if 0 <= x_pixel < w and 0 <= y_pixel < h:
-                            intensity = self.latest_2d_data[y_pixel, x_pixel]
+                            intensity = displayed_data[y_pixel, x_pixel]
                             data_val_str = f", Intensity: {intensity:.1f}"
                     self.coord_label.setText(f"2D Image Cursor - X: {x_pixel}, Y: {y_pixel}{data_val_str}")
         except: pass

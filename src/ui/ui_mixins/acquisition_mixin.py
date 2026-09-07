@@ -726,7 +726,9 @@ class AcquisitionMixin:
             )
             if self._accum_use_rejection:
                 self.accum_frames = [data.astype(np.float64).copy()]
-                self.accumulated_data = None
+                # Keep an O(1) running sum for live preview. The buffered raw
+                # frames remain the source of truth for final spike rejection.
+                self.accumulated_data = data.astype(np.float64).copy()
             else:
                 if (self.chk_cosmic_ray_removal.isChecked() and mode == "1d"
                         and not (AccumulationCombiner.MIN_FRAMES_FOR_REJECTION <= target_accum <= MAX_BUFFERED_FRAMES)):
@@ -737,12 +739,22 @@ class AcquisitionMixin:
         else:
             if self._accum_use_rejection:
                 self.accum_frames.append(data.astype(np.float64).copy())
-            else:
-                self.accumulated_data += data.astype(np.float64)
+            self.accumulated_data += data.astype(np.float64)
 
         self.current_accum_count += 1
         self.lbl_accum_status.setText(f"Acquired: {self.current_accum_count} / {target_accum}")
         self.lbl_accum_status.setVisible(target_accum > 1)
+
+        if self.current_accum_count < target_accum:
+            # Preview only: update the plot from the running sum without
+            # committing raw_* data, completing API/sequential work, saving, or
+            # running fitting/pressure calculations.
+            self.update_display(
+                is_new_data=False,
+                mode=mode,
+                display_data=self.accumulated_data,
+                update_analysis=False,
+            )
 
         if self.current_accum_count >= target_accum:
             if self.is_single_shot:
@@ -763,6 +775,7 @@ class AcquisitionMixin:
                     self.accum_frames, reject_spikes=True, threshold_k=threshold_k
                 )
                 self.accum_frames = None
+                self.accumulated_data = None
                 if n_spikes > 0:
                     print(f"[Cosmic ray removal] {n_spikes} spike value(s) rejected "
                           f"over {target_accum} accumulated frames (threshold={threshold_k}σ).")

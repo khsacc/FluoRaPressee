@@ -795,6 +795,8 @@ class CalibrationWindow(QDialog):
         return 1e7 / denominator if denominator != 0 else np.nan
 
     def on_use_toggled(self, state, row):
+        if not getattr(self, "_applying_match_candidate", False):
+            self._clear_match_candidates()
         if state == Qt.CheckState.Checked:
             self.create_value_widget_for_row(row)
         else:
@@ -1169,6 +1171,10 @@ class CalibrationWindow(QDialog):
         self.update_reference_overlay()
 
     def find_assignment_candidates(self):
+        # A new search supersedes any unapplied candidate list. Assignments that
+        # were already applied remain intact and their Use state stays editable.
+        self._clear_match_candidates()
+
         lines = self.active_reference_lines()
         known_ids = {line.line_id for line in lines}
         for assignment in self.assignments.values():
@@ -1184,11 +1190,29 @@ class CalibrationWindow(QDialog):
             QMessageBox.warning(self, "Automatic matching", "Select at least one emission standard.")
             return
 
-        # Limit only the hypothesis generator, not the displayed/assignable peaks.
-        # Strong peaks plus every locked peak are retained, avoiding combinatorial
-        # growth for noisy spectra with many weak detections.
         all_rows = list(range(len(self.row_widgets)))
-        if len(all_rows) > 12:
+        checked_rows = [
+            row for row in all_rows
+            if self.row_widgets[row]["check"].isChecked()
+        ]
+        if len(checked_rows) == 1:
+            QMessageBox.warning(
+                self,
+                "Automatic matching",
+                "Automatic matching requires at least two Use peaks. "
+                "Check another peak, or clear all checks to use all detected peaks.",
+            )
+            return
+
+        if checked_rows:
+            # An explicit Use selection is authoritative: search exactly those
+            # peaks, regardless of their relative intensity.
+            self.match_peak_rows = checked_rows
+        elif len(all_rows) > 12:
+            # With no explicit selection, limit only the hypothesis generator,
+            # not the displayed/assignable peaks. Strong peaks plus every locked
+            # peak are retained, avoiding combinatorial growth for noisy spectra
+            # with many weak detections.
             strengths = []
             for row in all_rows:
                 pixel = self.row_widgets[row]["px"]
@@ -1238,7 +1262,6 @@ class CalibrationWindow(QDialog):
                 if not duplicate:
                     self.match_candidates.insert(0, seeded)
                     self.match_candidates = self.match_candidates[:5]
-        self.combo_match_candidate.clear()
         for index, candidate in enumerate(self.match_candidates):
             center_text = (
                 f", centre Δ {candidate.center_error_nm:.2f} nm"
@@ -1259,30 +1282,40 @@ class CalibrationWindow(QDialog):
                 "No unambiguous pattern was found. Assign one peak manually and retry."
             )
 
+    def _clear_match_candidates(self):
+        self.match_candidates = []
+        self.match_peak_rows = []
+        self.combo_match_candidate.clear()
+        self.btn_apply_candidate.setEnabled(False)
+
     def apply_selected_candidate(self):
         index = self.combo_match_candidate.currentIndex()
         if not 0 <= index < len(self.match_candidates):
             return
         candidate = self.match_candidates[index]
-        for local_peak, line_id in candidate.assignments:
-            row = self.match_peak_rows[local_peak]
-            existing = self.assignments.get(row)
-            if existing and existing.get("locked"):
-                continue
-            line = self.reference_lines_by_id.get(line_id)
-            if line is not None:
-                self.assignments[row] = {
-                    "line_id": line.line_id,
-                    "wavelength_nm": line.wavelength_nm,
-                    "value": self._display_reference_value(line.wavelength_nm),
-                    "species": line.species,
-                    "locked": True,
-                }
-                if not self.row_widgets[row]["check"].isChecked():
-                    self.row_widgets[row]["check"].setChecked(True)
-                else:
-                    self.create_value_widget_for_row(row)
-                self._update_assignment_row(row)
+        self._applying_match_candidate = True
+        try:
+            for local_peak, line_id in candidate.assignments:
+                row = self.match_peak_rows[local_peak]
+                existing = self.assignments.get(row)
+                if existing and existing.get("locked"):
+                    continue
+                line = self.reference_lines_by_id.get(line_id)
+                if line is not None:
+                    self.assignments[row] = {
+                        "line_id": line.line_id,
+                        "wavelength_nm": line.wavelength_nm,
+                        "value": self._display_reference_value(line.wavelength_nm),
+                        "species": line.species,
+                        "locked": True,
+                    }
+                    if not self.row_widgets[row]["check"].isChecked():
+                        self.row_widgets[row]["check"].setChecked(True)
+                    else:
+                        self.create_value_widget_for_row(row)
+                    self._update_assignment_row(row)
+        finally:
+            self._applying_match_candidate = False
         self._refresh_calibration_preview()
         self.update_reference_overlay()
         self.lbl_assignment_help.setText(

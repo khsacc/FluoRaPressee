@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (QMainWindow, QPushButton, QVBoxLayout,
                              QScrollArea, QFileDialog, QButtonGroup, QGridLayout,
                              QDialog, QTextEdit, QCheckBox, QMessageBox)
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QKeySequence
 import pyqtgraph as pg
 
 # ---- Imports from the split-out modules ----
@@ -105,6 +106,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.raw_2d_data = None
         self.latest_1d_data = None
         self.latest_2d_data = None
+        # Includes provisional accumulation frames for cursor readout only;
+        # latest_* remains reserved for completed, saveable measurements.
+        self._displayed_1d_data = None
+        self._displayed_2d_data = None
         
         self.calib_coeffs = None
         self.calib_unit = 'Wavelength'   # 'Wavelength' (pixel→nm) or 'Raman shift' (pixel→cm⁻¹)
@@ -350,6 +355,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         meas_layout = QVBoxLayout()
         
         self.btn_single = QPushButton("Take single spectrum")
+        self.btn_single.setShortcut(QKeySequence("F5"))
         self._set_button_style(self.btn_single, self.BUTTON_STYLE_BLUE)
         
         self.btn_commence = QPushButton("Commence Measurement")
@@ -360,6 +366,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self._set_button_style(self.btn_terminate, self.BUTTON_STYLE_RED)
         
         self.btn_save_data = QPushButton("Save data")
+        self.btn_save_data.setShortcut(QKeySequence("Ctrl+S"))
         self._set_button_style(self.btn_save_data, self.BUTTON_STYLE_ORANGE)
         
         self.chk_save_fitting = QCheckBox("Save fitting results")
@@ -532,6 +539,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         bg_radio_layout.addWidget(self.radio_bg_off)
 
         self.btn_acq_bg = QPushButton("Acquire and save background")
+        self.btn_acq_bg.setShortcut(QKeySequence("Ctrl+B"))
         self.btn_load_bg = QPushButton("Load background")
         self.lbl_loaded_bg = QLabel("Loaded: None")
         self.lbl_loaded_bg.setStyleSheet("color: #666; font-size: 11px;")
