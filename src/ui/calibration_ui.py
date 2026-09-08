@@ -1237,10 +1237,11 @@ class CalibrationWindow(QDialog):
         # orientation regardless of the checkbox; the expected direction here
         # must not be flipped again.
         expected_slope_sign = 1
+        center_wavelength_nm = self._center_wavelength_nm()
         self.match_candidates = find_match_candidates(
             pixels,
             lines,
-            center_wavelength_nm=self._center_wavelength_nm(),
+            center_wavelength_nm=center_wavelength_nm,
             detector_midpoint_px=(len(self.current_spectrum) - 1) / 2.0,
             locked_assignments=locked,
             max_candidates=5,
@@ -1260,7 +1261,28 @@ class CalibrationWindow(QDialog):
                     for candidate in self.match_candidates
                 )
                 if not duplicate:
-                    self.match_candidates.insert(0, seeded)
+                    if len(pixels) == 2 and center_wavelength_nm is not None:
+                        # Keep the two-peak candidate list in the same
+                        # centre-outwards order as find_match_candidates(). A
+                        # seed-axis candidate remains eligible, but does not
+                        # bypass that ordering merely because it was generated
+                        # by a different path.
+                        line_by_id = {line.line_id: line for line in lines}
+
+                        def center_proximity(candidate):
+                            distances = [
+                                abs(
+                                    line_by_id[line_id].wavelength_nm
+                                    - center_wavelength_nm
+                                )
+                                for _, line_id in candidate.assignments
+                            ]
+                            return max(distances), sum(distances)
+
+                        self.match_candidates.append(seeded)
+                        self.match_candidates.sort(key=center_proximity)
+                    else:
+                        self.match_candidates.insert(0, seeded)
                     self.match_candidates = self.match_candidates[:5]
         for index, candidate in enumerate(self.match_candidates):
             center_text = (

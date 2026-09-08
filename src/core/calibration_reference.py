@@ -291,7 +291,9 @@ def find_match_candidates(
 
     Two peak/line pairs generate an affine hypothesis.  Every hypothesis is
     scored by the number of one-to-one matches and residuals.  A hardware
-    centre wavelength, when available, is only a soft ranking term.
+    centre wavelength, when available, is only a ranking term.  With exactly
+    two measured peaks, where every line pair otherwise fits perfectly,
+    candidates are searched from the lines nearest that centre outwards.
 
     ``locked_assignments`` maps measured-peak indices to line IDs and acts as a
     constraint; candidates never replace those user-confirmed relationships.
@@ -321,6 +323,13 @@ def find_match_candidates(
         float(detector_midpoint_px)
         if detector_midpoint_px is not None
         else float((np.min(pixels) + np.max(pixels)) / 2.0)
+    )
+    two_peak_center = (
+        float(center_wavelength_nm)
+        if len(pixels) == 2
+        and center_wavelength_nm is not None
+        and math.isfinite(center_wavelength_nm)
+        else None
     )
 
     peak_pairs: list[tuple[int, int]] = []
@@ -394,7 +403,26 @@ def find_match_candidates(
     # uniformly rather than biasing it toward any particular dispersion.
     max_hypotheses = 8000
     if len(hypotheses) > max_hypotheses:
-        if center_wavelength_nm is not None and math.isfinite(center_wavelength_nm):
+        if two_peak_center is not None:
+            # Two measured peaks fit every reference-line pair exactly, so there
+            # is no third point with which to infer the wavelength span. Search
+            # outwards from the commanded centre instead: first minimize the
+            # radius needed to contain both assigned lines, then their combined
+            # distance from the centre.
+            hypotheses.sort(
+                key=lambda hypothesis: (
+                    float(np.max(np.abs(
+                        hypothesis[0] + hypothesis[1] * pixels
+                        - two_peak_center
+                    ))),
+                    float(np.sum(np.abs(
+                        hypothesis[0] + hypothesis[1] * pixels
+                        - two_peak_center
+                    ))),
+                )
+            )
+            hypotheses = hypotheses[:max_hypotheses]
+        elif center_wavelength_nm is not None and math.isfinite(center_wavelength_nm):
             hypotheses.sort(
                 key=lambda hypothesis: abs(
                     hypothesis[0] + hypothesis[1] * midpoint
@@ -443,6 +471,16 @@ def find_match_candidates(
         assignment_key = tuple(
             (peak, lines[line].line_id) for peak, line, _ in matches
         )
+        center_proximity = None
+        if two_peak_center is not None:
+            line_distances = [
+                abs(float(lines[line].wavelength_nm) - two_peak_center)
+                for _, line, _ in matches
+            ]
+            center_proximity = (
+                max(line_distances),
+                sum(line_distances),
+            )
         score = len(matches) * 100.0 - 20.0 * affine_rms / tolerance - center_penalty
         previous = raw_candidates.get(assignment_key)
         if previous is None or score > previous["score"]:
@@ -450,15 +488,26 @@ def find_match_candidates(
                 "matches": matches,
                 "score": score,
                 "center_error": center_error,
+                "center_proximity": center_proximity,
             }
 
-    raw_ranked = sorted(
-        raw_candidates.items(),
-        key=lambda item: (
-            -len(item[1]["matches"]),
-            -item[1]["score"],
-        ),
-    )[:250]
+    if two_peak_center is not None:
+        raw_ranked = sorted(
+            raw_candidates.items(),
+            key=lambda item: (
+                item[1]["center_proximity"][0],
+                item[1]["center_proximity"][1],
+                -item[1]["score"],
+            ),
+        )[:250]
+    else:
+        raw_ranked = sorted(
+            raw_candidates.items(),
+            key=lambda item: (
+                -len(item[1]["matches"]),
+                -item[1]["score"],
+            ),
+        )[:250]
     candidates = []
     for assignment_key, raw in raw_ranked:
         matches = raw["matches"]
@@ -490,6 +539,25 @@ def find_match_candidates(
             center_error_nm=raw["center_error"],
             score=score,
         ))
+
+    if two_peak_center is not None:
+        line_wavelength_by_id = {
+            line.line_id: float(line.wavelength_nm) for line in lines
+        }
+
+        def two_peak_order(candidate):
+            distances = [
+                abs(line_wavelength_by_id[line_id] - two_peak_center)
+                for _, line_id in candidate.assignments
+            ]
+            return (
+                max(distances),
+                sum(distances),
+                -candidate.score,
+                candidate.rms_nm,
+            )
+
+        return sorted(candidates, key=two_peak_order)[:max_candidates]
 
     return sorted(
         candidates,

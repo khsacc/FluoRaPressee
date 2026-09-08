@@ -208,6 +208,53 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
             [self.window.row_widgets[row]["px"] for row in (0, 2)],
         )
 
+    def test_two_peak_seed_candidate_does_not_bypass_center_outwards_order(self):
+        self.window.row_widgets[0]["check"].setChecked(True)
+        self.window.row_widgets[2]["check"].setChecked(True)
+        lines = self.window.active_reference_lines()
+        near_lines = lines[10:12]
+        far_lines = (lines[0], lines[-1])
+        center = sum(line.wavelength_nm for line in near_lines) / 2.0
+        near_candidate = MatchCandidate(
+            coefficients=(600.0, 0.1, 0.0),
+            assignments=(
+                (0, near_lines[0].line_id),
+                (1, near_lines[1].line_id),
+            ),
+            matched_count=2,
+            rms_nm=0.0,
+            center_error_nm=0.0,
+            score=200.0,
+        )
+        far_seed_candidate = MatchCandidate(
+            coefficients=(500.0, 0.2, 0.0),
+            assignments=(
+                (0, far_lines[0].line_id),
+                (1, far_lines[1].line_id),
+            ),
+            matched_count=2,
+            rms_nm=0.0,
+            center_error_nm=None,
+            score=200.0,
+        )
+        self.window.initial_wavelength_axis = np.linspace(500.0, 800.0, 1024)
+
+        with patch.object(
+            self.window, "_center_wavelength_nm", return_value=center
+        ), patch(
+            "src.ui.calibration_ui.find_match_candidates",
+            return_value=[near_candidate],
+        ), patch(
+            "src.ui.calibration_ui.match_from_seed_axis",
+            return_value=far_seed_candidate,
+        ):
+            self.window.find_assignment_candidates()
+
+        self.assertEqual(
+            self.window.match_candidates,
+            [near_candidate, far_seed_candidate],
+        )
+
     def test_automatic_matching_rejects_a_single_checked_peak(self):
         self.window.row_widgets[1]["check"].setChecked(True)
         self.window.match_candidates = [

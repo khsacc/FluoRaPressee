@@ -232,6 +232,98 @@ class PatternMatcherTests(unittest.TestCase):
         c0, c1, c2 = candidates[0].coefficients
         self.assertAlmostEqual(c0 + c1 * 10.0 + c2 * 100.0, 510.0, places=6)
 
+    def test_two_peak_candidates_search_outwards_from_center(self):
+        pixels = [100.0, 900.0]
+        lines = _lines(
+            "Ne-I", [450.0, 500.0, 506.0, 514.0, 520.0, 700.0]
+        )
+
+        candidates = find_match_candidates(
+            pixels,
+            lines,
+            center_wavelength_nm=510.0,
+            detector_midpoint_px=500.0,
+            expected_slope_sign=1,
+        )
+
+        self.assertGreaterEqual(len(candidates), 2)
+        wavelengths_by_id = {line.line_id: line.wavelength_nm for line in lines}
+        assigned_wavelengths = [
+            wavelengths_by_id[line_id]
+            for _, line_id in candidates[0].assignments
+        ]
+        self.assertEqual(assigned_wavelengths, [506.0, 514.0])
+        search_radii = [
+            max(
+                abs(wavelengths_by_id[line_id] - 510.0)
+                for _, line_id in candidate.assignments
+            )
+            for candidate in candidates
+        ]
+        self.assertEqual(search_radii, sorted(search_radii))
+
+    def test_two_peak_center_order_preserves_a_locked_assignment(self):
+        pixels = [100.0, 900.0]
+        lines = _lines("Ne-I", [500.0, 506.0, 514.0, 520.0, 700.0])
+
+        candidates = find_match_candidates(
+            pixels,
+            lines,
+            center_wavelength_nm=510.0,
+            detector_midpoint_px=500.0,
+            locked_assignments={0: lines[0].line_id},
+            expected_slope_sign=1,
+        )
+
+        self.assertTrue(candidates)
+        self.assertEqual(
+            candidates[0].assignments,
+            ((0, lines[0].line_id), (1, lines[2].line_id)),
+        )
+
+    def test_two_peak_hypothesis_cap_still_starts_near_center(self):
+        pixels = [100.0, 900.0]
+        lines = _lines("Ne-I", np.arange(400.0, 530.0))
+
+        candidates = find_match_candidates(
+            pixels,
+            lines,
+            center_wavelength_nm=500.0,
+            detector_midpoint_px=500.0,
+            expected_slope_sign=1,
+        )
+
+        self.assertTrue(candidates)
+        wavelengths_by_id = {line.line_id: line.wavelength_nm for line in lines}
+        first_radius = max(
+            abs(wavelengths_by_id[line_id] - 500.0)
+            for _, line_id in candidates[0].assignments
+        )
+        self.assertEqual(first_radius, 1.0)
+
+    def test_three_peak_pattern_ranking_is_not_replaced_by_center_outwards_order(self):
+        pixels = [0.0, 10.0, 20.0]
+        lines = _lines("Ne-I", [500.0, 509.0, 510.0, 511.0, 520.0])
+
+        candidates = find_match_candidates(
+            pixels,
+            lines,
+            center_wavelength_nm=510.0,
+            detector_midpoint_px=10.0,
+            expected_slope_sign=1,
+        )
+
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0].matched_count, 3)
+        self.assertEqual(
+            candidates[0].assignments,
+            (
+                (0, lines[0].line_id),
+                (1, lines[2].line_id),
+                (2, lines[4].line_id),
+            ),
+        )
+
     def test_expected_slope_sign_follows_flip_x_direction(self):
         pixels = [0.0, 10.0, 20.0]
         lines = _lines("Ne-I", [500.0, 510.0, 520.0])
