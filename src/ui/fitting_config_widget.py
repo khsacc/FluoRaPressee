@@ -50,7 +50,7 @@ class FittingConfigWidget(QGroupBox):
         self.combo_fit_func.addItems([
             "Pseudo Voigt", "Moffat", "Gauss", "Lorentz", "Diamond Raman Edge"
         ])
-        self.combo_fit_func.setCurrentText("Pseudo Voigt")
+        self.combo_fit_func.setCurrentText("Moffat")
 
         self.combo_fit_peak_count = CustomComboBox()
         for count in range(1, 6):
