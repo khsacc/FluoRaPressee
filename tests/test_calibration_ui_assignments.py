@@ -193,6 +193,26 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
             [row["px"] for row in self.window.row_widgets],
         )
 
+    def test_pi_seed_axis_expands_automatic_matching_to_thirty_peaks(self):
+        unchecked = self.window.row_widgets[0]["check"]
+        unchecked.setChecked(False)
+        self.window.row_widgets = [
+            {"px": float(index), "check": unchecked}
+            for index in range(35)
+        ]
+        self.window.current_spectrum = np.arange(35.0)
+        self.window.initial_wavelength_axis = np.linspace(550.0, 775.0, 35)
+
+        with patch(
+            "src.ui.calibration_ui.find_match_candidates", return_value=[]
+        ), patch(
+            "src.ui.calibration_ui.match_from_seed_axis", return_value=None
+        ):
+            self.window.find_assignment_candidates()
+
+        self.assertEqual(len(self.window.match_peak_rows), 30)
+        self.assertEqual(self.window.match_peak_rows, list(range(5, 35)))
+
     def test_automatic_matching_uses_only_checked_peaks(self):
         self.window.row_widgets[0]["check"].setChecked(True)
         self.window.row_widgets[2]["check"].setChecked(True)

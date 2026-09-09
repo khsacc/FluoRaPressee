@@ -1,6 +1,7 @@
 **/__pycache__/**
 /.venv/
 /teste/
+/tests/
 /config/
 /AI_docs/
 /memo.txt

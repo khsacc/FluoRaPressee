@@ -22,6 +22,10 @@ from src.core.calibration_reference import (
 from src.core.configuration_catalog import format_configuration_label
 from src.ui.theme import colored_button_style
 
+_AUTO_MATCH_PEAK_LIMIT = 20
+_AUTO_MATCH_SEEDED_PEAK_LIMIT = 30
+
+
 class CustomDoubleSpinBox(QDoubleSpinBox):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1208,7 +1212,13 @@ class CalibrationWindow(QDialog):
             # An explicit Use selection is authoritative: search exactly those
             # peaks, regardless of their relative intensity.
             self.match_peak_rows = checked_rows
-        elif len(all_rows) > 12:
+        else:
+            peak_limit = (
+                _AUTO_MATCH_SEEDED_PEAK_LIMIT
+                if self.initial_wavelength_axis is not None
+                else _AUTO_MATCH_PEAK_LIMIT
+            )
+        if not checked_rows and len(all_rows) > peak_limit:
             # With no explicit selection, limit only the hypothesis generator,
             # not the displayed/assignable peaks. Strong peaks plus every locked
             # peak are retained, avoiding combinatorial growth for noisy spectra
@@ -1218,10 +1228,13 @@ class CalibrationWindow(QDialog):
                 pixel = self.row_widgets[row]["px"]
                 index = int(np.clip(round(pixel), 0, len(self.current_spectrum) - 1))
                 strengths.append((float(self.current_spectrum[index]), row))
-            chosen = {row for _, row in sorted(strengths, reverse=True)[:12]}
+            chosen = {
+                row for _, row in
+                sorted(strengths, reverse=True)[:peak_limit]
+            }
             chosen.update(self.assignments)
             self.match_peak_rows = sorted(chosen)
-        else:
+        elif not checked_rows:
             self.match_peak_rows = all_rows
 
         pixels = [self.row_widgets[row]["px"] for row in self.match_peak_rows]
@@ -1254,6 +1267,7 @@ class CalibrationWindow(QDialog):
                 lines,
                 self.initial_wavelength_axis,
                 expected_slope_sign=expected_slope_sign,
+                locked_assignments=locked,
             )
             if seeded is not None:
                 duplicate = any(
@@ -1282,7 +1296,14 @@ class CalibrationWindow(QDialog):
                         self.match_candidates.append(seeded)
                         self.match_candidates.sort(key=center_proximity)
                     else:
-                        self.match_candidates.insert(0, seeded)
+                        self.match_candidates.append(seeded)
+                        self.match_candidates.sort(
+                            key=lambda candidate: (
+                                -candidate.matched_count,
+                                candidate.rms_nm,
+                                -candidate.score,
+                            )
+                        )
                     self.match_candidates = self.match_candidates[:5]
         for index, candidate in enumerate(self.match_candidates):
             center_text = (

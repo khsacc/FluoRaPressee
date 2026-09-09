@@ -2,6 +2,7 @@ import json
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 # The test exercises controller caching/status only and never opens a serial
 # port. Keep it runnable in lightweight CI environments without pyserial.
@@ -34,6 +35,41 @@ if "PyQt6.QtCore" not in sys.modules:
         sys.modules["PyQt6.QtCore"] = qtcore_stub
 
 from src.hardware.spectrometer_princeton import SpectrometerControllerPI
+from src.hardware.princeton_calibration import build_seed_axis, starting_parameters
+
+
+_CALIBRATION_XML = """
+<monochromators>
+  <sp2500><startingParams gamma="17" focus="500" delta="0" eta="0.75" /></sp2500>
+  <sp2700><startingParams gamma="13.1" focus="750" delta="0.7" eta="0.75" /></sp2700>
+  <SCT320><startingParams gamma="18" focus="320" delta="8" eta="0.86" /></SCT320>
+</monochromators>
+"""
+
+
+class _ArrayFactory:
+    def __getitem__(self, _type):
+        return lambda values: list(values)
+
+
+class _FakeMonoCalibrate:
+    def __init__(self, model, number_pixels, pixel_width_um, flags):
+        self.defaults = None
+
+    def LoadConfigParams(self):
+        return _CALIBRATION_XML
+
+    def ApplyDefaultParamaters(self, *values):
+        self.defaults = values
+
+    def GratingAngleCalc(self):
+        return 0.25
+
+
+class _FakeSpectralCal:
+    def dispersedWave(self, gamma, spacing, order, center, detector_angle,
+                      focus, pixel_width, offset, grating_angle, lens_correct):
+        return center + offset * pixel_width
 
 
 class FakePIController(SpectrometerControllerPI):
@@ -171,6 +207,50 @@ class PrincetonSpectrometerMetadataTests(unittest.TestCase):
 
         self.assertFalse(snapshot["available"])
         self.assertEqual(snapshot["backend"], "princeton_acton")
+
+    def test_calibration_seed_uses_cached_pi_hardware_parameters(self):
+        controller = self._controller()
+        controller._device_identity["model"] = "SP-2750"
+        controller._gratings = [{"index": 3, "grooves": 150}]
+        controller._current_grating = 3
+        controller._current_wavelength_nm = 685.0
+
+        with patch(
+            "src.hardware.spectrometer_princeton.build_seed_axis",
+            return_value=[680.0, 690.0],
+        ) as builder:
+            axis = controller.get_calibration_seed_axis(2, 16.0)
+
+        self.assertEqual(axis, [680.0, 690.0])
+        builder.assert_called_once_with(
+            "SP-2750", 2, 16.0, 150, 685.0, lightfield_path=None
+        )
+
+    def test_spectrapro_2750_controller_name_maps_to_dll_family(self):
+        params = starting_parameters("MODEL SP-2-750i", _CALIBRATION_XML)
+
+        self.assertEqual(params["focus"], 750.0)
+        self.assertEqual(params["gamma"], 13.1)
+
+    def test_isoplane_name_maps_to_dll_family(self):
+        params = starting_parameters("IsoPlane SCT-320", _CALIBRATION_XML)
+
+        self.assertEqual(params["focus"], 320.0)
+
+    def test_seed_axis_uses_pi_pixel_center_convention(self):
+        runtime = (
+            _FakeMonoCalibrate,
+            _FakeSpectralCal,
+            _ArrayFactory(),
+            bool,
+        )
+        with patch(
+            "src.hardware.princeton_calibration._load_runtime",
+            return_value=runtime,
+        ):
+            axis = build_seed_axis("SP-2750", 4, 10.0, 150, 685.0)
+
+        self.assertEqual(axis, [684.99, 685.0, 685.01, 685.02])
 
 
 if __name__ == "__main__":
