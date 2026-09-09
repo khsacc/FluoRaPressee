@@ -79,7 +79,7 @@ Analysis Modeの起動には、カメラ・分光器の接続、装置SDK、``sp
 
 ```bash
 cd docs-site
-NODENV_VERSION=22.22.0 npm start
+npm start
 ```
 
 

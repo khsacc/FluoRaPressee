@@ -13,6 +13,8 @@ npm ci
 **Note**: feel free to use the package manager of your choice.
 
 Node.js 20以上が必要です。
+nodenvを使用している場合は、このディレクトリの`.node-version`により互換性のある
+Node.jsが自動的に選択されます。
 
 ## ローカル開発
 
