@@ -6,6 +6,7 @@ import serial
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from src.hardware.status.instrument_status import device_snapshot, item, safe_item, unavailable_device
+from src.hardware.princeton_calibration import build_seed_axis
 
 
 class MoveCancelled(Exception):
@@ -438,6 +439,49 @@ class SpectrometerControllerPI:
                 "center_wavelength_nm": self._current_wavelength_nm,
                 "wavelength_limits_nm": limits,
             }
+
+    def get_calibration_seed_axis(self, number_pixels, pixel_width_um):
+        """Return an approximate wavelength axis calculated by the PI library."""
+        with self._hw_lock:
+            model = self._device_identity.get("model")
+            if not model:
+                model = (
+                    self.config.get("hardware_identity", {})
+                    .get("spectrometer", {})
+                    .get("model")
+                )
+            selected = next(
+                (
+                    grating for grating in self._gratings
+                    if grating.get("index") == self._current_grating
+                ),
+                None,
+            )
+            if selected is None:
+                selected = next(
+                    (
+                        grating for grating in self.config.get("grating", [])
+                        if grating.get("index") == self._current_grating
+                    ),
+                    None,
+                )
+            grooves = selected.get("grooves") if selected else None
+            center_wavelength_nm = self._current_wavelength_nm
+
+        if not model or not grooves:
+            return None
+        try:
+            return build_seed_axis(
+                model,
+                number_pixels,
+                pixel_width_um,
+                grooves,
+                center_wavelength_nm,
+                lightfield_path=self.config.get("lightfield_path"),
+            )
+        except Exception as exc:
+            print(f"Failed to calculate PI wavelength seed axis: {exc}")
+            return None
 
     def get_capabilities(self):
         """Duck-typing counterpart to SpectrometerControllerOceanOptics.get_capabilities()

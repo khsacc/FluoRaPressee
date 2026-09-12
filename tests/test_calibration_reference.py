@@ -89,6 +89,17 @@ class ReferenceCatalogueTests(unittest.TestCase):
             {673.80320, 675.95821, 705.12922, 706.4762},
         )
 
+    def test_neon_catalogue_includes_nist_strong_lines_down_to_570_nm(self):
+        standards_dir = Path(__file__).parents[1] / "calibrationStandards"
+        neon = load_reference_standards(standards_dir)["Ne-I"]
+        wavelengths = {line.wavelength_nm for line in neon.lines}
+
+        self.assertTrue({
+            571.92248, 574.82985, 576.44188, 580.44496, 582.01558,
+            585.24879, 587.28275, 588.18952, 590.24623, 590.64294,
+            594.48342, 596.54710, 597.46273, 597.55340, 598.79074,
+        }.issubset(wavelengths))
+
 
 class RamanShiftStandardTests(unittest.TestCase):
     """Raman-shift-native standards (e.g. ASTM materials, polystyrene RMs)."""
@@ -232,6 +243,98 @@ class PatternMatcherTests(unittest.TestCase):
         c0, c1, c2 = candidates[0].coefficients
         self.assertAlmostEqual(c0 + c1 * 10.0 + c2 * 100.0, 510.0, places=6)
 
+    def test_two_peak_candidates_search_outwards_from_center(self):
+        pixels = [100.0, 900.0]
+        lines = _lines(
+            "Ne-I", [450.0, 500.0, 506.0, 514.0, 520.0, 700.0]
+        )
+
+        candidates = find_match_candidates(
+            pixels,
+            lines,
+            center_wavelength_nm=510.0,
+            detector_midpoint_px=500.0,
+            expected_slope_sign=1,
+        )
+
+        self.assertGreaterEqual(len(candidates), 2)
+        wavelengths_by_id = {line.line_id: line.wavelength_nm for line in lines}
+        assigned_wavelengths = [
+            wavelengths_by_id[line_id]
+            for _, line_id in candidates[0].assignments
+        ]
+        self.assertEqual(assigned_wavelengths, [506.0, 514.0])
+        search_radii = [
+            max(
+                abs(wavelengths_by_id[line_id] - 510.0)
+                for _, line_id in candidate.assignments
+            )
+            for candidate in candidates
+        ]
+        self.assertEqual(search_radii, sorted(search_radii))
+
+    def test_two_peak_center_order_preserves_a_locked_assignment(self):
+        pixels = [100.0, 900.0]
+        lines = _lines("Ne-I", [500.0, 506.0, 514.0, 520.0, 700.0])
+
+        candidates = find_match_candidates(
+            pixels,
+            lines,
+            center_wavelength_nm=510.0,
+            detector_midpoint_px=500.0,
+            locked_assignments={0: lines[0].line_id},
+            expected_slope_sign=1,
+        )
+
+        self.assertTrue(candidates)
+        self.assertEqual(
+            candidates[0].assignments,
+            ((0, lines[0].line_id), (1, lines[2].line_id)),
+        )
+
+    def test_two_peak_hypothesis_cap_still_starts_near_center(self):
+        pixels = [100.0, 900.0]
+        lines = _lines("Ne-I", np.arange(400.0, 530.0))
+
+        candidates = find_match_candidates(
+            pixels,
+            lines,
+            center_wavelength_nm=500.0,
+            detector_midpoint_px=500.0,
+            expected_slope_sign=1,
+        )
+
+        self.assertTrue(candidates)
+        wavelengths_by_id = {line.line_id: line.wavelength_nm for line in lines}
+        first_radius = max(
+            abs(wavelengths_by_id[line_id] - 500.0)
+            for _, line_id in candidates[0].assignments
+        )
+        self.assertEqual(first_radius, 1.0)
+
+    def test_three_peak_pattern_ranking_is_not_replaced_by_center_outwards_order(self):
+        pixels = [0.0, 10.0, 20.0]
+        lines = _lines("Ne-I", [500.0, 509.0, 510.0, 511.0, 520.0])
+
+        candidates = find_match_candidates(
+            pixels,
+            lines,
+            center_wavelength_nm=510.0,
+            detector_midpoint_px=10.0,
+            expected_slope_sign=1,
+        )
+
+        self.assertTrue(candidates)
+        self.assertEqual(candidates[0].matched_count, 3)
+        self.assertEqual(
+            candidates[0].assignments,
+            (
+                (0, lines[0].line_id),
+                (1, lines[2].line_id),
+                (2, lines[4].line_id),
+            ),
+        )
+
     def test_expected_slope_sign_follows_flip_x_direction(self):
         pixels = [0.0, 10.0, 20.0]
         lines = _lines("Ne-I", [500.0, 510.0, 520.0])
@@ -285,6 +388,68 @@ class PatternMatcherTests(unittest.TestCase):
 
         self.assertIsNotNone(candidate)
         self.assertLess(candidate.coefficients[1], 0)
+
+    def test_seed_axis_recovers_a_shared_factory_axis_offset(self):
+        true_axis = np.linspace(600.0, 610.0, 101)
+        seed_axis = true_axis - 1.4
+        pixels = [0.0, 20.0, 50.0, 80.0, 100.0]
+        lines = _lines("Ne-I", true_axis[np.asarray(pixels, dtype=int)])
+
+        candidate = match_from_seed_axis(pixels, lines, seed_axis)
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate.matched_count, 5)
+        self.assertEqual(
+            candidate.assignments,
+            tuple((index, line.line_id) for index, line in enumerate(lines)),
+        )
+
+    def test_seed_axis_honours_locked_assignments_while_searching_offset(self):
+        axis = np.linspace(500.0, 510.0, 101)
+        pixels = [0.0, 50.0, 100.0]
+        lines = _lines("Ne-I", [500.0, 505.0, 510.0, 515.0])
+
+        candidate = match_from_seed_axis(
+            pixels,
+            lines,
+            axis,
+            locked_assignments={1: lines[1].line_id},
+        )
+
+        self.assertIsNotNone(candidate)
+        self.assertIn((1, lines[1].line_id), candidate.assignments)
+
+    def test_coarse_grating_neon_pattern_rejects_incidental_extra_matches(self):
+        # Strongest 20 detections from data_20260909_134501_699.txt.  Three are
+        # not coherent catalogue peaks and must not displace the 17-line fit.
+        pixels = [
+            80.73, 101.63, 146.31, 238.13, 253.61, 286.88, 301.50,
+            374.49, 422.72, 457.22, 470.85, 544.90, 563.67, 610.59,
+            666.90, 694.46, 845.41, 918.58, 1069.87, 1253.92,
+        ]
+        standards_dir = Path(__file__).parents[1] / "calibrationStandards"
+        lines = [
+            line
+            for line in load_reference_standards(standards_dir)["Ne-I"].lines
+            if line.enabled_for_calibration
+        ]
+        seed_axis = np.linspace(572.7687665, 797.0042691, 1600)
+
+        candidate = match_from_seed_axis(pixels, lines, seed_axis)
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate.matched_count, 19)
+        self.assertLess(candidate.rms_nm, 0.004)
+        line_by_id = {line.line_id: line.wavelength_nm for line in lines}
+        self.assertEqual(
+            [line_by_id[line_id] for _, line_id in candidate.assignments],
+            [
+                585.24879, 588.18952, 594.48342, 607.43376, 609.61630,
+                614.30627, 616.35937, 626.64952, 633.44276, 638.29914,
+                640.22480, 650.65277, 653.28824, 659.89528, 667.82766,
+                671.70430, 692.94672, 703.24128, 724.51665,
+            ],
+        )
 
 
 if __name__ == "__main__":

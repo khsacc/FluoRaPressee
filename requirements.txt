@@ -9,6 +9,7 @@ numba<=0.62.1
 # the standard package is retained for current Python/Windows camera-driver wheels.
 pylablib==1.4.5
 pyserial
+pythonnet>=3.0
 # API layer (src/api/, src/ui_mixins/api_mixin.py)
 fastapi
 uvicorn

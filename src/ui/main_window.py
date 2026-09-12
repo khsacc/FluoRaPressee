@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+import uuid
 from copy import deepcopy
 from datetime import datetime
 import numpy as np
@@ -10,6 +11,7 @@ from PyQt6.QtWidgets import (QMainWindow, QPushButton, QVBoxLayout,
                              QScrollArea, QFileDialog, QButtonGroup, QGridLayout,
                              QDialog, QTextEdit, QCheckBox, QMessageBox)
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QKeySequence
 import pyqtgraph as pg
 
 # ---- Imports from the split-out modules ----
@@ -33,7 +35,9 @@ from src.ui.ui_mixins.sequential_mixin import SequentialMixin
 from src.ui.ui_mixins.acquisition_mixin import AcquisitionMixin
 from src.ui.ui_mixins.display_mixin import DisplayMixin
 from src.ui.ui_mixins.pressure_dialog_mixin import PressureDialogMixin
-from src.ui.ui_mixins.api_mixin import ApiMixin
+from src.api.gui_bridge import GuiBridge
+from src.core.api_clients import LastSeenRegistry as ApiLastSeenRegistry
+from src.ui.ui_mixins.api_mixin import API_MODES, ApiMixin, local_ip_address
 # ----------------------------------------
 
 BUTTON_STYLE_BLUE = "background-color: #2196F3; color: white; font-weight: bold;"
@@ -87,12 +91,25 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # currently active values from changes saved for the next restart.
         self._startup_config = deepcopy(self.config)
         _cache = self._load_local_cache()
-        self._api_key = self.get_or_create_api_key()
+        # Authorised API clients, as an immutable snapshot (see src/core/api_clients.py).
+        # Loaded eagerly so the legacy single-key file is migrated on first launch even
+        # if the server is never started.
+        self._api_clients = ()
+        self._api_last_seen = ApiLastSeenRegistry()
+        # Constructed here (on the GUI thread, as GuiBridge requires) rather than being
+        # injected afterwards: Standby can start the server on its own from the camera
+        # init handler, so the window must never depend on a caller having attached
+        # this first.
+        self.gui_bridge = GuiBridge()
 
         self.raw_1d_data = None 
         self.raw_2d_data = None
         self.latest_1d_data = None
         self.latest_2d_data = None
+        # Includes provisional accumulation frames for cursor readout only;
+        # latest_* remains reserved for completed, saveable measurements.
+        self._displayed_1d_data = None
+        self._displayed_2d_data = None
         
         self.calib_coeffs = None
         self.calib_unit = 'Wavelength'   # 'Wavelength' (pixel→nm) or 'Raman shift' (pixel→cm⁻¹)
@@ -123,6 +140,16 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # This is a layer independent of widget enabled/disabled state.
         self._acquisition_gate = threading.Lock()
         self._gate_held_by_me = False
+        # "gui" (an operator action) or "api" (a request). The UI lock reason
+        # "api_active" is derived from this single choke point rather than being
+        # applied by hand at each call site - see work_API_standby.md 方針4.
+        self._gate_owner = None
+        # Opaque instrument-state token. The epoch is regenerated every launch so the
+        # same counter value can never denote two different states across a restart
+        # (the ABA problem an integer alone would have). Clients compare it for
+        # equality and never interpret it - see instrument_state_token below.
+        self._instrument_state_epoch = uuid.uuid4().hex[:8]
+        self._instrument_state_counter = 0
 
         self.latest_fit_res = None
         self.latest_fit_func = None
@@ -137,6 +164,26 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # Future that api_acquire() waits on for a single-shot acquisition to complete (set from the
         # API worker thread via GuiBridge, resolved on the GUI thread by _process_completed_data()).
         self._api_pending_future = None
+        # API server lifecycle. _api_accepting is read by the server's request
+        # dependency: clearing it refuses new requests immediately, while operations
+        # already running are allowed to finish (work_API_standby.md 方針6).
+        self._api_server = None
+        self._api_server_thread = None
+        self._api_accepting = False
+        self._api_stopping = False
+        self._api_last_port = None
+        # Default 1000 ms: with a closed-loop client the gap between requests is only
+        # its response handling plus the network round trip (well under the ~250 ms
+        # measured inter-frame interval), so the timer never fires mid-burst.
+        self._api_unlock_delay_ms = int(_cache.get("api_unlock_delay_ms", 1000))
+        self._api_lock_focus_widget = None
+        # "off" | "standby" | "locked". Persisted, so a rig left in Standby resumes
+        # listening on the next launch (work_API_standby.md 方針1).
+        self._api_mode = _cache.get("api_mode", "off")
+        if self._api_mode not in API_MODES:
+            self._api_mode = "off"
+        self._api_start_attempts = 0
+        self._api_last_request = None
         # Future used only by GET /hardware/camera?refresh=true. The camera owns
         # its SDK and reports the live snapshot asynchronously via status_ready.
         self._api_camera_status_future = None
@@ -262,6 +309,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         plot_layout.addLayout(self.plot_content_layout)
         
         plot_controls_layout = QHBoxLayout()
+        self.radio_plot_bg_black = QRadioButton("Black")
+        self.radio_plot_bg_white = QRadioButton("White")
+        self.radio_plot_bg_black.setChecked(True)
+        self._plot_background_group = QButtonGroup(self)
+        self._plot_background_group.addButton(self.radio_plot_bg_black)
+        self._plot_background_group.addButton(self.radio_plot_bg_white)
         self.radio_plot_line = QRadioButton("Line")
         self.radio_plot_scatter = QRadioButton("Scatter")
         self.radio_plot_line.setChecked(True)
@@ -275,10 +328,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         plot_controls_layout.addWidget(QLabel("Plot style:"))
         plot_controls_layout.addWidget(self.radio_plot_line)
         plot_controls_layout.addWidget(self.radio_plot_scatter)
+        plot_controls_layout.addSpacing(16)
+        plot_controls_layout.addWidget(QLabel("Plot background:"))
+        plot_controls_layout.addWidget(self.radio_plot_bg_black)
+        plot_controls_layout.addWidget(self.radio_plot_bg_white)
         plot_controls_layout.addStretch()
         plot_controls_layout.addWidget(self.chk_rescale_x)
         plot_controls_layout.addWidget(self.chk_rescale_y)
         plot_layout.addLayout(plot_controls_layout)
+        self.update_plot_background()
 
         self.plot_widget.scene().sigMouseMoved.connect(self.on_mouse_moved)
         self.image_view.getView().scene().sigMouseMoved.connect(self.on_mouse_moved)
@@ -297,6 +355,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         meas_layout = QVBoxLayout()
         
         self.btn_single = QPushButton("Take single spectrum")
+        self.btn_single.setShortcut(QKeySequence("F5"))
         self._set_button_style(self.btn_single, self.BUTTON_STYLE_BLUE)
         
         self.btn_commence = QPushButton("Commence Measurement")
@@ -307,6 +366,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self._set_button_style(self.btn_terminate, self.BUTTON_STYLE_RED)
         
         self.btn_save_data = QPushButton("Save data")
+        self.btn_save_data.setShortcut(QKeySequence("Ctrl+S"))
         self._set_button_style(self.btn_save_data, self.BUTTON_STYLE_ORANGE)
         
         self.chk_save_fitting = QCheckBox("Save fitting results")
@@ -479,6 +539,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         bg_radio_layout.addWidget(self.radio_bg_off)
 
         self.btn_acq_bg = QPushButton("Acquire and save background")
+        self.btn_acq_bg.setShortcut(QKeySequence("Ctrl+B"))
         self.btn_load_bg = QPushButton("Load background")
         self.lbl_loaded_bg = QLabel("Loaded: None")
         self.lbl_loaded_bg.setStyleSheet("color: #666; font-size: 11px;")
@@ -599,32 +660,87 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         controls_layout.addWidget(self.press_group)
 
-        api_group = QGroupBox("API Server")
-        api_layout = QVBoxLayout()
+        # The whole API panel deliberately stays outside set_ui_enabled_during_seq's
+        # widget set: the operator must be able to switch the mode back to Off even
+        # while a remote request holds the UI lock.
+        self.api_toggle_btn = QPushButton("▶ API Server")
+        self.api_toggle_btn.setCheckable(True)
+        self.api_toggle_btn.setStyleSheet(
+            "text-align: left; font-weight: bold; border: none; padding: 5px;"
+        )
 
-        api_port_layout = QHBoxLayout()
-        api_port_layout.addWidget(QLabel("Port:"))
+        self.api_content = QWidget()
+        self.api_content.setVisible(False)
+        api_grid = QGridLayout(self.api_content)
+
+        api_grid.addWidget(QLabel("Mode:"), 0, 0)
+        self.combo_api_mode = CustomComboBox()
+        for label, value in (
+            ("Off", "off"),
+            ("Standby (lock only while remote)", "standby"),
+            ("Locked (lock while running)", "locked"),
+        ):
+            self.combo_api_mode.addItem(label, value)
+        self.combo_api_mode.setToolTip(
+            "Off: no listening.\n"
+            "Standby: listens continuously; the measurement controls are locked only "
+            "while a remote request is actually operating the instrument.\n"
+            "Locked: listens continuously and keeps the measurement controls locked "
+            "for as long as the server runs."
+        )
+        api_grid.addWidget(self.combo_api_mode, 0, 1)
+
+        api_grid.addWidget(QLabel("Port:"), 1, 0)
         self.spin_api_port = CustomSpinBox()
         self.spin_api_port.setRange(1, 65535)
-        self.spin_api_port.setValue(8765)
-        api_port_layout.addWidget(self.spin_api_port)
-        api_layout.addLayout(api_port_layout)
+        self.spin_api_port.setValue(int(_cache.get("api_port", 8765)))
+        api_grid.addWidget(self.spin_api_port, 1, 1)
 
-        self.btn_start_api = QPushButton("Start API Server")
-        self._set_button_style(self.btn_start_api, self.BUTTON_STYLE_GREEN)
-        self.btn_stop_api = QPushButton("Stop API Server")
-        self.btn_stop_api.setEnabled(False)
-        self._set_button_style(self.btn_stop_api, self.BUTTON_STYLE_RED)
-        api_layout.addWidget(self.btn_start_api)
-        api_layout.addWidget(self.btn_stop_api)
+        api_grid.addWidget(QLabel("Listen on:"), 2, 0)
+        self.combo_api_bind = CustomComboBox()
+        self.combo_api_bind.addItem("All interfaces (0.0.0.0)", "0.0.0.0")
+        self.combo_api_bind.addItem("This machine only (127.0.0.1)", "127.0.0.1")
+        local_ip = local_ip_address()
+        if local_ip not in ("0.0.0.0", "127.0.0.1"):
+            self.combo_api_bind.addItem(f"This machine's LAN address ({local_ip})", local_ip)
+        api_grid.addWidget(self.combo_api_bind, 2, 1)
+
+        api_grid.addWidget(QLabel("Unlock delay:"), 3, 0)
+        self.spin_api_unlock_delay = CustomDoubleSpinBox()
+        self.spin_api_unlock_delay.setRange(0.5, 10.0)
+        self.spin_api_unlock_delay.setSingleStep(0.5)
+        self.spin_api_unlock_delay.setDecimals(1)
+        self.spin_api_unlock_delay.setSuffix(" s")
+        self.spin_api_unlock_delay.setValue(self._api_unlock_delay_ms / 1000.0)
+        self.spin_api_unlock_delay.setToolTip(
+            "How long the controls stay locked after a remote request finishes.\n"
+            "Keeps a run of back-to-back requests from flickering the controls; the "
+            "delay is measured from the end of each request."
+        )
+        api_grid.addWidget(self.spin_api_unlock_delay, 3, 1)
+
+        self.chk_api_expose_docs = QCheckBox("Expose /docs (unauthenticated)")
+        self.chk_api_expose_docs.setChecked(bool(_cache.get("api_expose_docs", False)))
+        self.chk_api_expose_docs.setToolTip(
+            "FastAPI's interactive documentation is served without the API key check, "
+            "so it is disabled by default. Takes effect the next time the server starts."
+        )
+        api_grid.addWidget(self.chk_api_expose_docs, 4, 0, 1, 2)
+
+        self.lbl_api_remote_active = QLabel("● Remote control active")
+        self.lbl_api_remote_active.setStyleSheet(
+            "color: #C62828; font-weight: bold; font-size: 12px;"
+        )
+        self.lbl_api_remote_active.setVisible(False)
+        api_grid.addWidget(self.lbl_api_remote_active, 5, 0, 1, 2)
 
         self.lbl_api_status = QLabel("Not running")
         self.lbl_api_status.setWordWrap(True)
         self.lbl_api_status.setStyleSheet("color: #666; font-size: 11px;")
-        api_layout.addWidget(self.lbl_api_status)
+        api_grid.addWidget(self.lbl_api_status, 6, 0, 1, 2)
 
-        api_group.setLayout(api_layout)
-        controls_layout.addWidget(api_group)
+        controls_layout.addWidget(self.api_toggle_btn)
+        controls_layout.addWidget(self.api_content)
 
         controls_layout.addStretch()
         scroll_area.setWidget(controls_widget)
@@ -639,6 +755,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.radio_spec_mode_raman.toggled.connect(self.on_spec_mode_changed)
         
         self.seq_toggle_btn.toggled.connect(self.toggle_sequential)
+        self.api_toggle_btn.toggled.connect(self.toggle_api_server)
         self.btn_choose_dir.clicked.connect(self.on_choose_seq_dir)
         self.btn_stop_seq.clicked.connect(self.stop_sequential)
         
@@ -653,7 +770,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.radio_bg_on.toggled.connect(self.on_fit_settings_changed)
         self.radio_bg_off.toggled.connect(self.on_fit_settings_changed)
         
-        self.btn_terminate.clicked.connect(self.stop_measurement)
+        # Wrapped in a lambda: QPushButton.clicked emits clicked(bool checked), and
+        # since stop_measurement() gained an optional release_gate parameter, PyQt
+        # would otherwise forward that checked value straight into release_gate on
+        # every click - silently turning every Terminate press into
+        # stop_measurement(False), which never releases the acquisition gate.
+        self.btn_terminate.clicked.connect(lambda: self.stop_measurement())
         
         self.chk_flip_x.toggled.connect(self.on_flip_x_changed)
         
@@ -662,10 +784,13 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.radio_plot_line.toggled.connect(self.on_fit_settings_changed)
         self.radio_plot_scatter.toggled.connect(self.on_fit_settings_changed)
+        self.radio_plot_bg_white.toggled.connect(self.update_plot_background)
 
         self.btn_read_temp.clicked.connect(self.request_temperature_read)
 
         self.chk_cosmic_ray_removal.toggled.connect(self.on_cosmic_ray_removal_toggled)
+        self.spin_spike_threshold.valueChanged.connect(self.on_spike_threshold_changed)
+        self.spin_accumulate.valueChanged.connect(self.on_accumulations_changed)
 
         self.radio_fit_on.toggled.connect(self.toggle_fitting_panel)
         self.radio_fit_off.toggled.connect(self.toggle_fitting_panel)
@@ -695,12 +820,19 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spin_centre_wl.valueChanged.connect(self.check_spectrometer_changes)
         self.spin_exc_wl.valueChanged.connect(self.on_exc_wl_changed)
 
-        self.btn_apply_spec.clicked.connect(self.on_apply_spectrometer)
+        self.btn_apply_spec.clicked.connect(self.on_apply_spectrometer_clicked)
         self.btn_calib_neon.clicked.connect(self.on_calibrate_neon)
         self.btn_load_configuration.clicked.connect(self.on_load_configuration)
 
-        self.btn_start_api.clicked.connect(self.on_start_api_server_clicked)
-        self.btn_stop_api.clicked.connect(self.on_stop_api_server_clicked)
+        self.combo_api_mode.currentIndexChanged.connect(self.on_api_mode_changed)
+        self.spin_api_port.valueChanged.connect(
+            lambda value: self._save_local_cache("api_port", int(value))
+        )
+        self.combo_api_bind.currentIndexChanged.connect(self.on_api_bind_changed)
+        self.spin_api_unlock_delay.valueChanged.connect(self.on_api_unlock_delay_changed)
+        self.chk_api_expose_docs.toggled.connect(
+            lambda checked: self._save_local_cache("api_expose_docs", bool(checked))
+        )
 
         hardware_menu = self.menuBar().addMenu("Hardware")
         self.action_hardware_config = hardware_menu.addAction("Hardware Configuration...")
@@ -717,8 +849,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         )
 
         api_menu = self.menuBar().addMenu("API")
-        self.action_regenerate_api_key = api_menu.addAction("Regenerate Key")
-        self.action_regenerate_api_key.triggered.connect(self.on_regenerate_api_key_clicked)
+        self.action_manage_api_clients = api_menu.addAction("Manage Clients...")
+        self.action_manage_api_clients.triggered.connect(self.on_manage_api_clients_clicked)
 
         tools_menu = self.menuBar().addMenu("Tools")
         self.action_analysis_mode = tools_menu.addAction("Analysis Mode…")
@@ -729,6 +861,37 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
 
         self.temp_poll_timer = QTimer(self)
         self.temp_poll_timer.setInterval(5000)
+
+        # Watches the uvicorn thread after a stop request instead of blocking the GUI
+        # thread on join() - see ApiMixin.stop_api_server (work_API_standby.md 方針6).
+        self._api_stop_timer = QTimer(self)
+        self._api_stop_timer.timeout.connect(self._check_api_server_stopped)
+
+        # Debounces the release of the per-request "api_active" UI lock, so a burst of
+        # requests holds the lock continuously instead of toggling ~35 widgets several
+        # times a second (work_API_standby.md 方針5).
+        self._api_unlock_timer = QTimer(self)
+        self._api_unlock_timer.setSingleShot(True)
+        self._api_unlock_timer.timeout.connect(self._on_api_unlock_timeout)
+
+        # uvicorn reports a bind failure (port already in use) from inside its own
+        # thread, so a start has to be confirmed rather than assumed - silently
+        # failing to listen would leave the operator believing the rig is remotely
+        # controllable (work_API_standby.md Step 5 手順4).
+        self._api_start_timer = QTimer(self)
+        self._api_start_timer.timeout.connect(self._check_api_server_started)
+
+        # Reflect the persisted mode/bind host without firing the change handlers -
+        # the server itself is only started once the hardware has settled
+        # (ApiMixin.maybe_autostart_api_server, called from the camera init handlers).
+        self.load_api_client_list()
+        self._set_api_mode_widget(self._api_mode)
+        bind_index = self.combo_api_bind.findData(_cache.get("api_bind_host", "0.0.0.0"))
+        if bind_index >= 0:
+            self.combo_api_bind.blockSignals(True)
+            self.combo_api_bind.setCurrentIndex(bind_index)
+            self.combo_api_bind.blockSignals(False)
+        self._on_api_state_changed()
 
         self.update_plot_labels()
 
@@ -836,7 +999,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         if hasattr(self.thread, "roi_applied"):
             self.thread.roi_applied.connect(self.on_roi_applied)
 
-        self.thread.exposure_set_finished.connect(lambda: self.spin_acq_time.setEnabled(True))
+        self.thread.exposure_set_finished.connect(self.on_exposure_set_finished)
         self.thread.em_gain_set_finished.connect(self.on_em_gain_set_finished)
         self.thread.temperature_set_finished.connect(self.on_temperature_set_finished)
         self.temp_poll_timer.timeout.connect(self._poll_temperature)
@@ -860,6 +1023,22 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         button.setStyleSheet(colored_button_style(enabled_style, BUTTON_STYLE_DISABLED))
 
     def closeEvent(self, event):
+        if "api_active" in self._ui_lock_reasons:
+            # Quitting kills the daemon server thread with the process, which can cut a
+            # hardware operation short mid-flight. Unlike switching the server off
+            # (方針6), there is no way to let it finish, so ask first.
+            remote_reply = QMessageBox.question(
+                self, "A remote operation is running",
+                "An API request is currently operating the instrument.\n\n"
+                "Closing now interrupts it - the acquisition or spectrometer movement "
+                "in progress will not be completed.\n\nClose anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if remote_reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+
         confirmation = self._close_confirmation_message()
         reply = QMessageBox.question(
             self, "Confirm Exit",
@@ -868,7 +1047,11 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
             QMessageBox.StandardButton.No
         )
         if reply == QMessageBox.StandardButton.Yes:
+            self._api_stop_timer.stop()
+            self._api_unlock_timer.stop()
             if getattr(self, '_api_server', None) is not None:
+                # Refuses new requests straight away; the daemon thread itself goes
+                # down with the process.
                 self.stop_api_server()
             if (
                 self.instrument_status_window is not None

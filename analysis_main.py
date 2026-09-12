@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import QApplication
 # the Andor SDK (pylablib/pyserial/ShamrockCIF.dll) and spectrometerConfig.json.
 from src.ui.analysis_ui import AnalysisWindow
 from src.ui.theme import apply_application_style
+from src.app_bootstrap import apply_window_icon
 
 
 def main():
@@ -24,6 +25,7 @@ def main():
     apply_application_style(app)
 
     window = AnalysisWindow()
+    apply_window_icon(app, window)
     window.show()
 
     sys.exit(app.exec())

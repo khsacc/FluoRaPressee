@@ -181,6 +181,153 @@ class CalibrationUiAssignmentTests(unittest.TestCase):
 
             self.assertEqual(matcher.call_args.kwargs["expected_slope_sign"], 1)
 
+    def test_automatic_matching_uses_all_peaks_when_none_are_checked(self):
+        with patch(
+            "src.ui.calibration_ui.find_match_candidates", return_value=[]
+        ) as matcher:
+            self.window.find_assignment_candidates()
+
+        self.assertEqual(self.window.match_peak_rows, [0, 1, 2])
+        self.assertEqual(
+            list(matcher.call_args.args[0]),
+            [row["px"] for row in self.window.row_widgets],
+        )
+
+    def test_pi_seed_axis_expands_automatic_matching_to_thirty_peaks(self):
+        unchecked = self.window.row_widgets[0]["check"]
+        unchecked.setChecked(False)
+        self.window.row_widgets = [
+            {"px": float(index), "check": unchecked}
+            for index in range(35)
+        ]
+        self.window.current_spectrum = np.arange(35.0)
+        self.window.initial_wavelength_axis = np.linspace(550.0, 775.0, 35)
+
+        with patch(
+            "src.ui.calibration_ui.find_match_candidates", return_value=[]
+        ), patch(
+            "src.ui.calibration_ui.match_from_seed_axis", return_value=None
+        ):
+            self.window.find_assignment_candidates()
+
+        self.assertEqual(len(self.window.match_peak_rows), 30)
+        self.assertEqual(self.window.match_peak_rows, list(range(5, 35)))
+
+    def test_automatic_matching_uses_only_checked_peaks(self):
+        self.window.row_widgets[0]["check"].setChecked(True)
+        self.window.row_widgets[2]["check"].setChecked(True)
+
+        with patch(
+            "src.ui.calibration_ui.find_match_candidates", return_value=[]
+        ) as matcher:
+            self.window.find_assignment_candidates()
+
+        self.assertEqual(self.window.match_peak_rows, [0, 2])
+        self.assertEqual(
+            list(matcher.call_args.args[0]),
+            [self.window.row_widgets[row]["px"] for row in (0, 2)],
+        )
+
+    def test_two_peak_seed_candidate_does_not_bypass_center_outwards_order(self):
+        self.window.row_widgets[0]["check"].setChecked(True)
+        self.window.row_widgets[2]["check"].setChecked(True)
+        lines = self.window.active_reference_lines()
+        near_lines = lines[10:12]
+        far_lines = (lines[0], lines[-1])
+        center = sum(line.wavelength_nm for line in near_lines) / 2.0
+        near_candidate = MatchCandidate(
+            coefficients=(600.0, 0.1, 0.0),
+            assignments=(
+                (0, near_lines[0].line_id),
+                (1, near_lines[1].line_id),
+            ),
+            matched_count=2,
+            rms_nm=0.0,
+            center_error_nm=0.0,
+            score=200.0,
+        )
+        far_seed_candidate = MatchCandidate(
+            coefficients=(500.0, 0.2, 0.0),
+            assignments=(
+                (0, far_lines[0].line_id),
+                (1, far_lines[1].line_id),
+            ),
+            matched_count=2,
+            rms_nm=0.0,
+            center_error_nm=None,
+            score=200.0,
+        )
+        self.window.initial_wavelength_axis = np.linspace(500.0, 800.0, 1024)
+
+        with patch.object(
+            self.window, "_center_wavelength_nm", return_value=center
+        ), patch(
+            "src.ui.calibration_ui.find_match_candidates",
+            return_value=[near_candidate],
+        ), patch(
+            "src.ui.calibration_ui.match_from_seed_axis",
+            return_value=far_seed_candidate,
+        ):
+            self.window.find_assignment_candidates()
+
+        self.assertEqual(
+            self.window.match_candidates,
+            [near_candidate, far_seed_candidate],
+        )
+
+    def test_automatic_matching_rejects_a_single_checked_peak(self):
+        self.window.row_widgets[1]["check"].setChecked(True)
+        self.window.match_candidates = [
+            MatchCandidate(
+                coefficients=(600.0, 0.1, 0.0),
+                assignments=(),
+                matched_count=2,
+                rms_nm=0.0,
+                center_error_nm=None,
+                score=200.0,
+            )
+        ]
+        self.window.match_peak_rows = [0, 1, 2]
+        self.window.combo_match_candidate.addItem("Old candidate")
+        self.window.btn_apply_candidate.setEnabled(True)
+
+        with patch("src.ui.calibration_ui.QMessageBox.warning") as warning, patch(
+            "src.ui.calibration_ui.find_match_candidates"
+        ) as matcher:
+            self.window.find_assignment_candidates()
+
+        matcher.assert_not_called()
+        self.assertIn("at least two Use peaks", warning.call_args.args[2])
+        self.assertEqual(self.window.match_candidates, [])
+        self.assertEqual(self.window.match_peak_rows, [])
+        self.assertFalse(self.window.btn_apply_candidate.isEnabled())
+
+    def test_use_selection_can_be_extended_manually_after_applying_candidate(self):
+        lines = self.window.reference_standards["Ne-I"].lines[17:20]
+        self.window.match_peak_rows = [0, 1]
+        self.window.match_candidates = [
+            MatchCandidate(
+                coefficients=(lines[0].wavelength_nm, 0.01, 0.0),
+                assignments=((0, lines[0].line_id), (1, lines[1].line_id)),
+                matched_count=2,
+                rms_nm=0.0,
+                center_error_nm=None,
+                score=200.0,
+            )
+        ]
+        self.window.combo_match_candidate.addItem("Candidate 1")
+
+        self.window.apply_selected_candidate()
+        self.window.row_widgets[2]["check"].setChecked(True)
+        self.window.assign_reference_line(2, lines[2])
+
+        self.assertEqual(set(self.window.assignments), {0, 1, 2})
+        self.assertEqual(self.window.match_candidates, [])
+        self.assertTrue(all(
+            self.window.row_widgets[row]["check"].isChecked()
+            for row in (0, 1, 2)
+        ))
+
     def test_raw_pixel_domain_unchanged_when_not_flipped(self):
         self.window._spectrum_is_flipped = False
         coeffs = (673.3, 2.1097e-2, -3.347e-7)

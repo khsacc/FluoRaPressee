@@ -223,8 +223,17 @@ def match_from_seed_axis(
     wavelength_axis_nm: Sequence[float],
     *,
     expected_slope_sign: int | None = None,
+    locked_assignments: Mapping[int, str] | None = None,
+    max_offset_nm: float = 5.0,
+    max_rms_nm: float = 0.1,
 ) -> MatchCandidate | None:
-    """Build a candidate from a vendor-provided approximate/factory axis."""
+    """Build a candidate from a vendor-provided approximate/factory axis.
+
+    A factory axis usually describes the dispersion well but its absolute zero
+    can differ from the acquired spectrum.  Search a shared wavelength offset
+    before fitting, rather than requiring every seed point to already fall near
+    its final reference line.
+    """
 
     pixels = np.asarray(measured_pixels, dtype=float)
     axis = np.asarray(wavelength_axis_nm, dtype=float)
@@ -241,39 +250,75 @@ def match_from_seed_axis(
     estimated = np.interp(pixels, np.arange(len(axis), dtype=float), axis)
     pixel_step = float(np.median(np.abs(np.diff(axis))))
     tolerance = min(2.0, max(0.08, pixel_step * 6.0))
-    matches = _nearest_one_to_one(estimated, lines, tolerance)
-    if len(matches) < 2:
-        return None
-    fit_pixels = np.asarray([pixels[peak] for peak, _, _ in matches])
-    fit_wavelengths = np.asarray(
-        [lines[line].wavelength_nm for _, line, _ in matches]
-    )
-    coefficients = _fit_coefficients(
-        fit_pixels, fit_wavelengths, allow_quadratic=len(matches) >= 4
-    )
-    derivative = coefficients[1] + 2.0 * coefficients[2] * np.asarray(
-        [np.min(pixels), np.max(pixels)]
-    )
-    if derivative[0] * derivative[1] <= 0:
-        return None
-    if (
-        expected_slope_sign is not None
-        and np.any(derivative * expected_slope_sign <= 0)
-    ):
-        return None
-    fitted = _poly_values(coefficients, fit_pixels)
-    rms = float(np.sqrt(np.mean((fitted - fit_wavelengths) ** 2)))
-    assignments = tuple(
-        (peak, lines[line].line_id) for peak, line, _ in matches
-    )
-    return MatchCandidate(
-        coefficients=coefficients,
-        assignments=assignments,
-        matched_count=len(matches),
-        rms_nm=rms,
-        center_error_nm=None,
-        score=len(matches) * 100.0 - rms,
-    )
+    if not np.isfinite(max_offset_nm) or max_offset_nm < 0:
+        raise ValueError("max_offset_nm must be a finite non-negative number")
+    if not np.isfinite(max_rms_nm) or max_rms_nm <= 0:
+        raise ValueError("max_rms_nm must be a finite positive number")
+
+    line_index_by_id = {line.line_id: index for index, line in enumerate(lines)}
+    locked = {
+        int(peak_index): line_index_by_id[line_id]
+        for peak_index, line_id in (locked_assignments or {}).items()
+        if 0 <= int(peak_index) < len(pixels) and line_id in line_index_by_id
+    }
+    offsets = {0.0}
+    for estimate in estimated:
+        for line in lines:
+            offset = line.wavelength_nm - estimate
+            if abs(offset) <= max_offset_nm:
+                offsets.add(round(float(offset), 9))
+
+    best = None
+    best_rank = None
+    for offset in offsets:
+        matches = _nearest_one_to_one(estimated + offset, lines, tolerance)
+        if len(matches) < 2:
+            continue
+        matched_pairs = {(peak, line) for peak, line, _ in matches}
+        if any((peak, line) not in matched_pairs for peak, line in locked.items()):
+            continue
+        fit_pixels = np.asarray([pixels[peak] for peak, _, _ in matches])
+        fit_wavelengths = np.asarray(
+            [lines[line].wavelength_nm for _, line, _ in matches]
+        )
+        coefficients = _fit_coefficients(
+            fit_pixels, fit_wavelengths, allow_quadratic=len(matches) >= 4
+        )
+        derivative = coefficients[1] + 2.0 * coefficients[2] * np.asarray(
+            [np.min(pixels), np.max(pixels)]
+        )
+        if derivative[0] * derivative[1] <= 0:
+            continue
+        if (
+            expected_slope_sign is not None
+            and np.any(derivative * expected_slope_sign <= 0)
+        ):
+            continue
+        fitted = _poly_values(coefficients, fit_pixels)
+        rms = float(np.sqrt(np.mean((fitted - fit_wavelengths) ** 2)))
+        # A larger but internally inconsistent match is normally a collection
+        # of noise peaks landing near unrelated catalogue lines.  Do not let it
+        # outrank a slightly smaller, spectrally coherent solution.
+        if rms > max_rms_nm:
+            continue
+        assignments = tuple(
+            (peak, lines[line].line_id) for peak, line, _ in matches
+        )
+        seed_deviation = float(np.sqrt(np.mean(
+            (fitted - (estimated[[peak for peak, _, _ in matches]] + offset)) ** 2
+        )))
+        rank = (-len(matches), rms, seed_deviation, abs(offset))
+        if best_rank is None or rank < best_rank:
+            best_rank = rank
+            best = MatchCandidate(
+                coefficients=coefficients,
+                assignments=assignments,
+                matched_count=len(matches),
+                rms_nm=rms,
+                center_error_nm=None,
+                score=len(matches) * 100.0 - rms - seed_deviation,
+            )
+    return best
 
 
 def find_match_candidates(
@@ -291,7 +336,9 @@ def find_match_candidates(
 
     Two peak/line pairs generate an affine hypothesis.  Every hypothesis is
     scored by the number of one-to-one matches and residuals.  A hardware
-    centre wavelength, when available, is only a soft ranking term.
+    centre wavelength, when available, is only a ranking term.  With exactly
+    two measured peaks, where every line pair otherwise fits perfectly,
+    candidates are searched from the lines nearest that centre outwards.
 
     ``locked_assignments`` maps measured-peak indices to line IDs and acts as a
     constraint; candidates never replace those user-confirmed relationships.
@@ -321,6 +368,13 @@ def find_match_candidates(
         float(detector_midpoint_px)
         if detector_midpoint_px is not None
         else float((np.min(pixels) + np.max(pixels)) / 2.0)
+    )
+    two_peak_center = (
+        float(center_wavelength_nm)
+        if len(pixels) == 2
+        and center_wavelength_nm is not None
+        and math.isfinite(center_wavelength_nm)
+        else None
     )
 
     peak_pairs: list[tuple[int, int]] = []
@@ -394,7 +448,26 @@ def find_match_candidates(
     # uniformly rather than biasing it toward any particular dispersion.
     max_hypotheses = 8000
     if len(hypotheses) > max_hypotheses:
-        if center_wavelength_nm is not None and math.isfinite(center_wavelength_nm):
+        if two_peak_center is not None:
+            # Two measured peaks fit every reference-line pair exactly, so there
+            # is no third point with which to infer the wavelength span. Search
+            # outwards from the commanded centre instead: first minimize the
+            # radius needed to contain both assigned lines, then their combined
+            # distance from the centre.
+            hypotheses.sort(
+                key=lambda hypothesis: (
+                    float(np.max(np.abs(
+                        hypothesis[0] + hypothesis[1] * pixels
+                        - two_peak_center
+                    ))),
+                    float(np.sum(np.abs(
+                        hypothesis[0] + hypothesis[1] * pixels
+                        - two_peak_center
+                    ))),
+                )
+            )
+            hypotheses = hypotheses[:max_hypotheses]
+        elif center_wavelength_nm is not None and math.isfinite(center_wavelength_nm):
             hypotheses.sort(
                 key=lambda hypothesis: abs(
                     hypothesis[0] + hypothesis[1] * midpoint
@@ -443,6 +516,16 @@ def find_match_candidates(
         assignment_key = tuple(
             (peak, lines[line].line_id) for peak, line, _ in matches
         )
+        center_proximity = None
+        if two_peak_center is not None:
+            line_distances = [
+                abs(float(lines[line].wavelength_nm) - two_peak_center)
+                for _, line, _ in matches
+            ]
+            center_proximity = (
+                max(line_distances),
+                sum(line_distances),
+            )
         score = len(matches) * 100.0 - 20.0 * affine_rms / tolerance - center_penalty
         previous = raw_candidates.get(assignment_key)
         if previous is None or score > previous["score"]:
@@ -450,15 +533,26 @@ def find_match_candidates(
                 "matches": matches,
                 "score": score,
                 "center_error": center_error,
+                "center_proximity": center_proximity,
             }
 
-    raw_ranked = sorted(
-        raw_candidates.items(),
-        key=lambda item: (
-            -len(item[1]["matches"]),
-            -item[1]["score"],
-        ),
-    )[:250]
+    if two_peak_center is not None:
+        raw_ranked = sorted(
+            raw_candidates.items(),
+            key=lambda item: (
+                item[1]["center_proximity"][0],
+                item[1]["center_proximity"][1],
+                -item[1]["score"],
+            ),
+        )[:250]
+    else:
+        raw_ranked = sorted(
+            raw_candidates.items(),
+            key=lambda item: (
+                -len(item[1]["matches"]),
+                -item[1]["score"],
+            ),
+        )[:250]
     candidates = []
     for assignment_key, raw in raw_ranked:
         matches = raw["matches"]
@@ -490,6 +584,25 @@ def find_match_candidates(
             center_error_nm=raw["center_error"],
             score=score,
         ))
+
+    if two_peak_center is not None:
+        line_wavelength_by_id = {
+            line.line_id: float(line.wavelength_nm) for line in lines
+        }
+
+        def two_peak_order(candidate):
+            distances = [
+                abs(line_wavelength_by_id[line_id] - two_peak_center)
+                for _, line_id in candidate.assignments
+            ]
+            return (
+                max(distances),
+                sum(distances),
+                -candidate.score,
+                candidate.rms_nm,
+            )
+
+        return sorted(candidates, key=two_peak_order)[:max_candidates]
 
     return sorted(
         candidates,

@@ -1,6 +1,7 @@
 **/__pycache__/**
 /.venv/
 /teste/
+/tests/
 /config/
 /AI_docs/
 /memo.txt
@@ -10,3 +11,4 @@
 ShamrockCIF.dll
 .DS_Store
 /offline_packages/
+/scripts/

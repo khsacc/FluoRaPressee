@@ -17,10 +17,8 @@ description: 露光時間・積算回数・ROIの設定
 
 **Detector Configurations** サブパネルにある以下のコントロールで、検出器の基本的な取得条件を設定します。
 
-- **Acquisition time (s)**: 露光時間。
-  値を入力してフォーカスを外す（あるいはEnter）と、その場でカメラに適用されます。
-  適用中はスピンボックスが一時的に無効化され、カメラが実際に受け付けた値（SDKの都合で丸められる場合があります）が返ってくると再度有効になり、その値で表示が更新されます。
-- **EM Gain (×)**: 電子増倍（EM）ゲインに対応した機種（Princeton Instrumentsの一部のカメラなど）でのみ表示される項目です。
+- **Acquisition time (s)**: 露光時間。即時適用されます。
+- **EM Gain (×)**: 電子増倍（EM）ゲインに対応した機種（Princeton Instruments ProEM）でのみ表示される項目です。
   対応していない機種では行ごと非表示になります。
   設定可能な範囲・刻み幅はカメラ自身が報告する値がそのまま使われ、Acquisition timeと同様に値を確定するとカメラへ適用されます。
 - **Cooler target temp (°C)** / **Read current temperature**: 検出器の冷却制御に対応した機種でのみ表示されます。
@@ -72,11 +70,12 @@ ROIの行選択（縦方向）とは独立で、回折格子ごとではなく�
 
 **▶ Sequential measurements** を開くと、一定間隔でスペクトルを自動保存し続ける連続測定の設定が現れます。
 
-1. **Choose directory** で保存先フォルダを選びます（前回選んだフォルダは次回起動時も記憶されています）。
-   フォルダを選ぶまで **Start Sequential** は押せません。
+<img src={require('@site/static/img/usage_seq_meas.png').default}  />
+
+1. **Choose directory** で保存先フォルダを選びます。
 2. **Skip frames** で、保存する頻度を指定します。
    Nに設定すると「1フレーム保存 → 続くN回は保存せず破棄」を繰り返します。
-   例えば露光時間0.1 s・Skip frames=9なら、10フレームごと（1.0 s間隔）に1枚保存されます（詳細はUI上の「how this works?」リンクからも確認できます）。
+   例えば露光時間0.1 s・Skip frames=9なら、10フレームごと（1.0 s間隔）に1枚保存されます。
 3. **Max. number** で、保存する最大フレーム数を指定します。
    到達すると自動的に停止します。
 4. **Start Sequential** を押すと、連続測定がまだ動いていなければ自動的に開始され、以後は積算サイクルが完了するたびにSkip framesの設定に従って保存するかどうかを判定します。
