@@ -658,8 +658,17 @@ class CalibrationWindow(QDialog):
             small_plot.setFixedSize(180, 180)
             small_plot.setBackground('w')
             small_plot.setTitle(f"Peak #{i + 1}", color="k", size="11pt")
-            small_plot.plot(p_data["x_fit"], p_data["y_data"], pen=None, symbol='o', symbolSize=3, symbolBrush='b')
-            small_plot.plot(p_data["x_curve"], p_data["y_curve"], pen=pg.mkPen('r', width=2))
+            measured_points = small_plot.plot(
+                p_data["x_fit"], p_data["y_data"],
+                pen=None, symbol='o', symbolSize=7,
+                symbolPen=pg.mkPen("#0D47A1", width=1),
+                symbolBrush="#1565C0",
+            )
+            measured_points.setZValue(1)
+            small_plot.plot(
+                p_data["x_curve"], p_data["y_curve"],
+                pen=pg.mkPen("#D32F2F", width=1, style=Qt.PenStyle.DashLine),
+            )
             fitted_center_line = pg.InfiniteLine(
                 pos=center,
                 angle=90,

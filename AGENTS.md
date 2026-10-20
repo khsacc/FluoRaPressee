@@ -28,6 +28,8 @@ spectrometer control), but `--debug` mode runs fine cross-platform for UI develo
 Automated tests use the standard-library `unittest` runner. Run them headlessly with
 `QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -v`, then verify GUI changes by
 running the app in `--debug` mode and exercising the relevant UI flow.
+On macOS, do not run automated tests or start the application, including `--debug` mode.
+Check changes by reviewing the code and diff instead; leave runtime verification for Windows.
 
 It is not required to verify screenshots once you made changes to GUI. If something is needed to be checked, ask the user. 
 
