@@ -157,6 +157,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.current_accum_count = 0
         self.accumulated_data = None
         self.accum_frames = None
+        self._calibration_dialog_active = False
         self._accum_use_rejection = False
         # Accumulation count that overrides spin_accumulate.value(), set only for API-triggered
         # acquisitions. When None, the widget value is always used (existing GUI behaviour is unchanged).

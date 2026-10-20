@@ -21,6 +21,7 @@ from src.core.calibration_reference import (
 )
 from src.core.configuration_catalog import format_configuration_label
 from src.ui.theme import colored_button_style
+from src.ui.ui_widgets import CustomSpinBox
 
 _AUTO_MATCH_PEAK_LIMIT = 20
 _AUTO_MATCH_SEEDED_PEAK_LIMIT = 30
@@ -71,6 +72,9 @@ class CalibrationWindow(QDialog):
         self.reference_tick_positions = []
         self.hovered_reference_line_id = None
         self.is_acquiring = False
+        self._accumulated_spectrum = None
+        self._accumulation_count = 0
+        self._target_accumulations = 1
         # Whether self.current_spectrum's pixel index already had Flip X applied
         # when it was populated (on_data_ready / use_displayed_data). Needed to
         # convert self.calib_coeffs back to the raw (unflipped) sensor pixel
@@ -126,6 +130,7 @@ class CalibrationWindow(QDialog):
         
         if self.camera_thread:
             self.camera_thread.data_ready.connect(self.on_data_ready)
+            self.camera_thread.acquisition_failed.connect(self.on_acquisition_failed)
 
     def nm_to_raman(self, wl_nm, laser_wl):
         return self.calib_core.nm_to_raman(wl_nm, laser_wl)
@@ -229,6 +234,13 @@ class CalibrationWindow(QDialog):
         self.spin_acq_time.setDecimals(3)
         self.spin_acq_time.editingFinished.connect(self.update_acq_time)
         acq_time_layout.addWidget(self.spin_acq_time)
+
+        accum_layout = QHBoxLayout()
+        accum_layout.addWidget(QLabel("Accumulations:"))
+        self.spin_accumulate = CustomSpinBox()
+        self.spin_accumulate.setRange(1, 99999)
+        self.spin_accumulate.setValue(1)
+        accum_layout.addWidget(self.spin_accumulate)
 
         unit_layout = QHBoxLayout()
         self.radio_unit_wl = QRadioButton("Wavelength (nm)")
@@ -335,6 +347,7 @@ class CalibrationWindow(QDialog):
         controls_layout.addWidget(self.btn_use_displayed)
         controls_layout.addWidget(self.btn_full_screen)
         controls_layout.addLayout(acq_time_layout)
+        controls_layout.addLayout(accum_layout)
         controls_layout.addLayout(unit_layout) 
         controls_layout.addLayout(find_peaks_layout)
         controls_layout.addLayout(reference_layout)
@@ -408,12 +421,24 @@ class CalibrationWindow(QDialog):
             self.camera_thread.update_exposure(self.spin_acq_time.value())
             
     def acquire_spectrum(self):
-        if self.camera_thread:
+        if self.camera_thread and not self.is_acquiring:
             self.update_acq_time()
+            self._accumulated_spectrum = None
+            self._accumulation_count = 0
+            self._target_accumulations = self.spin_accumulate.value()
             self.is_acquiring = True
             self.btn_acquire.setEnabled(False)
-            self.btn_acquire.setText("Acquiring...")
+            self.btn_acquire.setText(f"Acquiring... (0/{self._target_accumulations})")
+            self.spin_accumulate.setEnabled(False)
             self.camera_thread.start_measuring()
+
+    def _finish_acquisition(self):
+        self.is_acquiring = False
+        self._accumulated_spectrum = None
+        self._accumulation_count = 0
+        self.btn_acquire.setEnabled(True)
+        self.btn_acquire.setText("Acquire a spectrum")
+        self.spin_accumulate.setEnabled(True)
 
     def _flip_x_enabled(self):
         main_window = self.parent()
@@ -455,6 +480,19 @@ class CalibrationWindow(QDialog):
 
     def on_data_ready(self, mode, data):
         if self.is_acquiring and mode == "1d":
+            if self._accumulated_spectrum is None:
+                self._accumulated_spectrum = np.asarray(data, dtype=np.float64).copy()
+            else:
+                self._accumulated_spectrum += data
+            self._accumulation_count += 1
+            if self._accumulation_count < self._target_accumulations:
+                self.btn_acquire.setText(
+                    f"Acquiring... ({self._accumulation_count}/{self._target_accumulations})"
+                )
+                return
+
+            self.camera_thread.stop_measuring()
+            data = self._accumulated_spectrum
             flipped = self._flip_x_enabled()
             if flipped:
                 data = data[::-1]
@@ -464,11 +502,13 @@ class CalibrationWindow(QDialog):
             self._apply_plot_data_limits(len(data))
             self._refresh_initial_wavelength_axis(len(data))
             self.assignments.clear()
-            self.camera_thread.stop_measuring()
-            self.is_acquiring = False
-            self.btn_acquire.setEnabled(True)
-            self.btn_acquire.setText("Acquire a spectrum")
+            self._finish_acquisition()
             self.find_peaks()
+
+    def on_acquisition_failed(self, error_msg):
+        if self.is_acquiring:
+            self._finish_acquisition()
+            QMessageBox.critical(self, "Acquisition Stopped", error_msg)
 
     def use_displayed_data(self):
         # main_window.latest_1d_data already has background subtraction / X-flip applied, matching the on-screen plot.
@@ -1573,9 +1613,13 @@ class CalibrationWindow(QDialog):
             return
         if self.is_acquiring:
             self.camera_thread.stop_measuring()
-            self.is_acquiring = False
+            self._finish_acquisition()
         try:
             self.camera_thread.data_ready.disconnect(self.on_data_ready)
+        except TypeError:
+            pass  # already disconnected
+        try:
+            self.camera_thread.acquisition_failed.disconnect(self.on_acquisition_failed)
         except TypeError:
             pass  # already disconnected
 

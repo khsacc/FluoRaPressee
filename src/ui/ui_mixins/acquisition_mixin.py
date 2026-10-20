@@ -674,6 +674,8 @@ class AcquisitionMixin:
         that data collection actually halted - dangerous for unattended
         Sequential runs that may go for hours.
         """
+        if getattr(self, '_calibration_dialog_active', False):
+            return  # The calibration dialog owns this acquisition and reports its error.
         was_sequential = getattr(self, 'is_sequential_running', False)
 
         self.current_accum_count = 0
@@ -705,6 +707,8 @@ class AcquisitionMixin:
         self._bump_instrument_state()
 
     def on_data_ready(self, mode, data):
+        if getattr(self, '_calibration_dialog_active', False):
+            return  # The calibration dialog combines these frames independently.
         if not getattr(self.thread, 'is_measuring', False) and not self.is_single_shot:
             # Stray frame that arrived after the thread was told to stop measuring
             # (the camera thread may already be mid-acquisition when stop_measuring()
