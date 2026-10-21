@@ -277,6 +277,7 @@ class TokenResponseTests(unittest.TestCase):
         def __init__(self, raiser=None):
             self.raiser = raiser
             self.received = None
+            self.saturated = False
 
         def api_acquire(self, **kwargs):
             self.received = kwargs
@@ -287,6 +288,7 @@ class TokenResponseTests(unittest.TestCase):
                 "y_raw": np.asarray([1.0]),
                 "y": np.asarray([1.0]),
                 "mode": "1d",
+                "saturated": self.saturated,
                 "exposure_time_s": 0.1,
                 "accumulations": 1,
                 "detector_temperature_c": None,
@@ -306,6 +308,11 @@ class TokenResponseTests(unittest.TestCase):
         # _acquire_response_payload() lists its fields by hand, so this would silently
         # go missing if only the schema were updated.
         self.assertEqual(payload["instrument_state_token"], "epoch123:4")
+        self.assertIs(payload["saturated"], False)
+
+        gui.saturated = True
+        payload = endpoint(AcquireRequest())
+        self.assertIs(payload["saturated"], True)
 
     def test_expected_token_is_forwarded_to_the_gui(self):
         gui = self._Gui()

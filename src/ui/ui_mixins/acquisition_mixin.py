@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from src.hardware.accumulation import AccumulationCombiner
 from src.core.measurement_metadata import capture_hardware_state
+from src.core.saturation import is_saturated
 
 # Cap on how many raw frames we buffer in memory for spike rejection (list of
 # individual frames instead of an O(1) running sum). ~16MB worst case for a
@@ -796,6 +797,8 @@ class AcquisitionMixin:
             self._process_completed_data(mode, final_data)
 
     def _process_completed_data(self, mode, data):
+        saturated = is_saturated(data)
+        self.lbl_saturation_warning.setVisible(saturated)
         if self.is_single_shot:
             self.is_single_shot = False
             acquiring_bg = getattr(self, '_is_acquiring_bg', False)
@@ -826,7 +829,7 @@ class AcquisitionMixin:
                 try:
                     if not pending.done():
                         raw = self.raw_1d_data if mode == "1d" else self.raw_2d_data
-                        payload = {"raw": raw, "mode": mode}
+                        payload = {"raw": raw, "mode": mode, "saturated": saturated}
                         # Captured before the gate is released, so the state reported
                         # really is the state this frame was taken under (方針9).
                         payload.update(self._api_acquire_snapshot(

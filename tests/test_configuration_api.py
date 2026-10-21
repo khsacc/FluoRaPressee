@@ -153,6 +153,7 @@ class FakeGui:
             "y_raw": np.asarray([10.0, 20.0]),
             "y": np.asarray([10.0, 20.0]),
             "mode": "1d",
+            "saturated": False,
             "exposure_time_s": 0.1,
             "accumulations": 1,
             "detector_temperature_c": -65.0,

@@ -226,6 +226,7 @@ def create_app(gui_window, gui_bridge, expose_docs: bool = False) -> FastAPI:
             "y_raw": _to_list(result["y_raw"]),
             "y": _to_list(result["y"]),
             "mode": result["mode"],
+            "saturated": result["saturated"],
             "exposure_time_s": result["exposure_time_s"],
             "accumulations": result["accumulations"],
             "detector_temperature_c": result["detector_temperature_c"],

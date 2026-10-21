@@ -245,6 +245,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.lbl_accum_status.setVisible(False)
         plot_layout.addWidget(self.lbl_accum_status)
 
+        self.lbl_saturation_warning = QLabel(
+            "Warning: detector may be saturated (3 consecutive pixels at the maximum)."
+        )
+        self.lbl_saturation_warning.setStyleSheet(
+            "color: #F03511; font-weight: bold; font-size: 14px;"
+        )
+        self.lbl_saturation_warning.setVisible(False)
+        plot_layout.addWidget(self.lbl_saturation_warning)
+
         # Shown only while displaying Ocean Optics' native (factory-calibrated) wavelength
         # axis with no FluoRaPressée calibration loaded - see
         # SpectrometerControlMixin.update_plot_labels() (work/work_OceanOptics.md Step 6).

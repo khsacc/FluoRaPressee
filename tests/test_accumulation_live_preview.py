@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 import numpy as np
+from src.core.saturation import is_saturated
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -91,6 +92,24 @@ class _Thread:
     is_measuring = True
 
 
+class SaturationTests(unittest.TestCase):
+    def test_three_adjacent_samples_must_share_the_nonzero_maximum(self):
+        self.assertFalse(is_saturated([0, 1, 2, 3, 0]))
+        self.assertTrue(is_saturated([0, 5, 5, 5, 0]))
+        self.assertFalse(is_saturated([0, 5, 5, 0, 5]))
+        self.assertFalse(is_saturated([0, 0, 0]))
+
+    def test_repeated_values_below_the_maximum_do_not_warn(self):
+        self.assertFalse(is_saturated([2, 2, 2, 9]))
+
+    def test_2d_runs_do_not_cross_rows(self):
+        self.assertFalse(is_saturated(np.array([[0, 5, 5], [5, 0, 0]])))
+        self.assertTrue(is_saturated(np.array([[0, 0, 0], [5, 5, 5]])))
+
+    def test_nonfinite_values_do_not_count_as_detector_samples(self):
+        self.assertFalse(is_saturated([5, np.nan, 5, np.inf, 5]))
+
+
 class _PreviewWindow(AcquisitionMixin if AcquisitionMixin is not None else object):
     def __init__(self, *, cosmic_ray_removal=False):
         self.thread = _Thread()
@@ -117,6 +136,21 @@ class _PreviewWindow(AcquisitionMixin if AcquisitionMixin is not None else objec
 
     def _process_completed_data(self, mode, data):
         self.completed_calls.append((mode, data.copy()))
+
+
+@unittest.skipIf(AcquisitionMixin is None, "PyQt6 is not installed")
+class SaturationWarningTests(unittest.TestCase):
+    def test_completed_measurements_toggle_warning(self):
+        window = AcquisitionMixin()
+        window.is_single_shot = False
+        window.lbl_saturation_warning = _Label()
+        window.update_display = lambda **_kwargs: None
+
+        window._process_completed_data("1d", np.array([5, 5, 5]))
+        self.assertTrue(window.lbl_saturation_warning.visible)
+
+        window._process_completed_data("1d", np.array([5, 5, 0, 5]))
+        self.assertFalse(window.lbl_saturation_warning.visible)
 
 
 @unittest.skipIf(AcquisitionMixin is None, "PyQt6 is not installed")

@@ -782,6 +782,7 @@ class ApiMixin:
             raise
         raw = result["raw"]
         mode = result["mode"]
+        saturated = result["saturated"]
 
         # Everything below was captured on the GUI thread while the gate was still
         # held (方針9), so no further gui_bridge round trip is needed here.
@@ -824,6 +825,7 @@ class ApiMixin:
             "y_raw": raw,
             "y": y,
             "mode": mode,
+            "saturated": saturated,
             "exposure_time_s": actual_exposure,
             "accumulations": actual_accum,
             "detector_temperature_c": _parse_temp_c(temp_text),
