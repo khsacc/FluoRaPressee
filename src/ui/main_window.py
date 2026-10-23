@@ -321,7 +321,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         plot_controls_layout = QHBoxLayout()
         self.radio_plot_bg_black = QRadioButton("Black")
         self.radio_plot_bg_white = QRadioButton("White")
-        self.radio_plot_bg_black.setChecked(True)
+        self.radio_plot_bg_white.setChecked(True)
         self._plot_background_group = QButtonGroup(self)
         self._plot_background_group.addButton(self.radio_plot_bg_black)
         self._plot_background_group.addButton(self.radio_plot_bg_white)
