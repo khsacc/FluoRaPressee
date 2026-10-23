@@ -233,6 +233,10 @@ class AcquisitionMixin:
 
     def on_em_gain_info_ready(self, exists, available, minimum, maximum, increment, current):
         """Render the EM Gain row only when PICam says the parameter exists."""
+        self._em_gain_exists = bool(exists)
+        self._em_gain_minimum = minimum if available else None
+        self._em_gain_maximum = maximum if available else None
+        self._em_gain_increment = increment if available else None
         self.label_em_gain.setVisible(exists)
         self.spin_em_gain.setVisible(exists)
         self._em_gain_available = bool(exists and available)
@@ -247,7 +251,7 @@ class AcquisitionMixin:
             self.spin_em_gain.setValue(current)
             self.spin_em_gain.setToolTip(
                 "Electron-multiplication gain reported by the connected camera.\n"
-                "Changing this value selects the Electron Multiplied ADC quality."
+                "Changing this value selects EM readout on cameras that require it."
             )
         else:
             self.spin_em_gain.setToolTip(
@@ -260,7 +264,12 @@ class AcquisitionMixin:
         )
 
     def on_em_gain_changed(self):
-        if not self._em_gain_available:
+        if not self._em_gain_available or self._ui_is_locked():
+            current = getattr(self.thread, "current_em_gain", None)
+            if current is not None:
+                self.spin_em_gain.blockSignals(True)
+                self.spin_em_gain.setValue(current)
+                self.spin_em_gain.blockSignals(False)
             return
         self.spin_em_gain.setEnabled(False)
         self._bump_instrument_state()
@@ -539,6 +548,10 @@ class AcquisitionMixin:
 
     def on_hardware_error(self, message):
         self.status_label.setText(f"Camera error: {message}")
+        if getattr(self, "_gate_owner", None) == "api":
+            # The API worker must be able to finish its GUI-thread handoff and
+            # release the gate without waiting for a modal dialog to be dismissed.
+            return
         QMessageBox.warning(self, "Camera Error", message)
 
     def on_camera_init_failed(self, reason):

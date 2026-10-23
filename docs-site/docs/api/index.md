@@ -53,7 +53,7 @@ FastAPI の対話的ドキュメント（`/docs`, `/openapi.json`）は認証を
 排他ゲートを使う操作: 取得系エンドポイント、[configurationの適用](configurations.md)、
 [`POST /calibration`](calibration.md)、
 [`GET /hardware/camera?refresh=true` と `GET /hardware/spectrometer?refresh=true`](hardware.md)の
-ライブ状態照会。
+ライブ状態照会、[`PUT /hardware/camera/em-gain`](em-gain.md)。
 `refresh=false` のキャッシュ取得と[`GET /config`](config.md) はこの排他ゲートを使用しません。
 
 ローカル側では、測定・分光器移動・構成ロード・背景の取得/読み込み・ハードウェア設定ダイアログ・
@@ -77,6 +77,7 @@ Instrument Status の更新が同じゲートを取ります。
 |---|---|
 | [`GET /status`](status.md) | 現在の状態を返す |
 | [`GET /hardware/camera` / `GET /hardware/spectrometer`](hardware.md) | 接続機器の識別情報・状態 |
+| [`GET /hardware/camera/em-gain` / `PUT /hardware/camera/em-gain`](em-gain.md) | EM Gain の対応状況・現在値の取得と変更 |
 | [`GET /config`](config.md) | 起動時設定と保存済み設定 |
 | [`GET /configurations` ほか](configurations.md) | 保存済みconfigurationの一覧・取得・適用 |
 | [`POST /calibration`（非推奨）](calibration.md) | 較正係数を直接適用する旧エンドポイント |

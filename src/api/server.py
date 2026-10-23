@@ -15,6 +15,8 @@ from src.api.schemas import (
     CalibrationRequest,
     CalibrationResponse,
     CameraInfoResponse,
+    EmGainRequest,
+    EmGainResponse,
     ConfigResponse,
     ConfigurationListResponse,
     ConfigurationRecordResponse,
@@ -35,6 +37,7 @@ from src.ui.ui_mixins.api_mixin import (
     BackgroundMismatchError,
     CameraNotReadyError,
     ExposureApplyError,
+    EmGainApplyError,
     StateTokenMismatchError,
 )
 
@@ -270,6 +273,32 @@ def create_app(gui_window, gui_bridge, expose_docs: bool = False) -> FastAPI:
             lambda: gui_window.api_get_camera_info(refresh=refresh),
             "Camera",
         )
+
+    @router.get("/hardware/camera/em-gain", response_model=EmGainResponse)
+    def get_em_gain():
+        return gui_window.api_get_em_gain()
+
+    @router.put("/hardware/camera/em-gain", response_model=EmGainResponse)
+    def set_em_gain(req: EmGainRequest):
+        try:
+            return gui_window.api_set_em_gain(
+                req.gain, expected_state_token=req.expected_state_token
+            )
+        except CameraNotReadyError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except StateTokenMismatchError as exc:
+            raise HTTPException(status_code=409, detail={
+                "code": "state_token_mismatch",
+                "message": str(exc),
+                "expected_state_token": exc.expected,
+                "instrument_state_token": exc.current,
+            })
+        except GateBusyError as exc:
+            raise HTTPException(status_code=409, detail=exc.detail)
+        except EmGainApplyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except FutureTimeoutError:
+            raise HTTPException(status_code=504, detail="EM Gain change timed out")
 
     @router.get("/hardware/spectrometer", response_model=SpectrometerInfoResponse)
     def get_spectrometer_info(refresh: bool = False):

@@ -334,6 +334,21 @@ class CameraInfoResponse(BaseModel):
     status: DeviceStatusSnapshot | None = None
 
 
+class EmGainRequest(BaseModel):
+    gain: int = Field(ge=0)
+    expected_state_token: str | None = None
+
+
+class EmGainResponse(BaseModel):
+    exists: bool
+    available: bool
+    gain: int | None = None
+    minimum: int | None = None
+    maximum: int | None = None
+    increment: int | None = None
+    instrument_state_token: str
+
+
 class SpectrometerInfoResponse(BaseModel):
     schema_version: int
     captured_at: str

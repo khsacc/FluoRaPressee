@@ -403,6 +403,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spin_em_gain.setVisible(False)
         self.spin_em_gain.setEnabled(False)
         self._em_gain_available = False
+        self._em_gain_exists = False
+        self._em_gain_minimum = None
+        self._em_gain_maximum = None
+        self._em_gain_increment = None
         
         self.spin_accumulate = CustomSpinBox()
         self.spin_accumulate.setRange(1, 99999)
