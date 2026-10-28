@@ -55,7 +55,7 @@ Raman shiftが励起波長の波数以上になる（$\lambda$ が発散・負�
 
 <img src={require('@site/static/img/usage_calibration_window.jpg').default}  />
 
-1. **較正対象のスペクトルを用意する**: **Acquire a spectrum**でデータ取得、または **Use displayed data**（メイン画面の1Dプロットに現在表示されているスペクトルをそのまま使用）のいずれかを行います。
+1. **較正対象のスペクトルを用意する**: **Acquire a spectrum**でデータ取得、または **Use displayed data**（メイン画面の1Dプロットに現在表示されているスペクトルをそのまま使用）のいずれかを行います。 **現状、較正ウィンドウでは積算などができないため、メインウィンドウで標準試料のデータを取得したのちに較正ウィンドウでUse displayed dataを行うのがおすすめです**。
 2. **ピークを検出する**: **Find peaks**（スペクトル取得後は自動実行）を押すと、中央値以下のデータ点のばらつきからノイズレベルを推定し、**Threshold** をかけたprominence / height条件でピークを検出します。各ピークの前後10 pixelをGaussianフィットしてサブピクセル精度の中心位置を求めます。ノイズなどをピークとして拾ってしまっている場合、**Threshold** を大きくしてみてください。
 3. **基準となる標準を選ぶ**: **Emission / Raman shift standards** のチェックリストで、比較に使う輝線・Raman標準を選びます。
    cyclohexaneやpolystyreneのようなRaman shift較正専用の標準物質は、そのシフト値に対応する波長が励起波長に依存するため、**Raman shift (cm⁻¹)** を選んでいる間だけリストに表示されます（**Wavelength** に切り替えても選択状態自体は内部的に保持されます）。
