@@ -60,7 +60,7 @@ Raman shiftが励起波長の波数以上になる（$\lambda$ が発散・負�
 3. **基準となる標準を選ぶ**: **Emission / Raman shift standards** のチェックリストで、比較に使う輝線・Raman標準を選びます。
    cyclohexaneやpolystyreneのようなRaman shift較正専用の標準物質は、そのシフト値に対応する波長が励起波長に依存するため、**Raman shift (cm⁻¹)** を選んでいる間だけリストに表示されます（**Wavelength** に切り替えても選択状態自体は内部的に保持されます）。
 4. **検出されたピークを文献値を対応づける**: 手動入力と自動割り当ての二つの方法があります。
-   * **自動割り当て**：**Find assignments** で、選択したピークと基準線の対応候補を自動探索できます。探索方法の詳細は[Find assignmentsのassignment探索アルゴリズム](#find-assignmentsのassignment探索アルゴリズム)を参照してください。
+   * **自動割り当て**：**Find assignments** で、選択したピークと基準線の対応候補を自動探索できます。探索方法の詳細は[Find assignmentsのassignment探索アルゴリズム](#参考find-assignmentsのassignment探索アルゴリズム)を参照してください。
    **Apply candidate** で選択中の候補を適用（すでに手動で確定した割り当ては上書きされない）。
    **Clear assignment**で個別の割り当てを解除。
    * **手動割り当て**：較正に使用するピークについて**Use**にチェックを入れたのち、**Reference**に文献値を手動で入力します。

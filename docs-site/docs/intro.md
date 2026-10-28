@@ -25,7 +25,7 @@ FluoRaPresséeは、高圧実験で使用することを念頭に置いて開発
 
 ![](../static/img/main_gui_combined.jpg)
 
-<a href="files/FRP_PF18C_manual_simpl.pdf">KEK PF BL-18C用簡易マニュアル</a>
+[KEK PF BL-18C用簡易マニュアル](pathname:///files/FRP_PF18C_manual_simple.pdf)
 
 ## 対応機種
 
