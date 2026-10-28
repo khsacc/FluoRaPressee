@@ -157,6 +157,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.current_accum_count = 0
         self.accumulated_data = None
         self.accum_frames = None
+        self._calibration_dialog_active = False
         self._accum_use_rejection = False
         # Accumulation count that overrides spin_accumulate.value(), set only for API-triggered
         # acquisitions. When None, the widget value is always used (existing GUI behaviour is unchanged).
@@ -244,6 +245,15 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.lbl_accum_status.setVisible(False)
         plot_layout.addWidget(self.lbl_accum_status)
 
+        self.lbl_saturation_warning = QLabel(
+            "Warning: detector may be saturated (3 consecutive pixels at the maximum)."
+        )
+        self.lbl_saturation_warning.setStyleSheet(
+            "color: #F03511; font-weight: bold; font-size: 14px;"
+        )
+        self.lbl_saturation_warning.setVisible(False)
+        plot_layout.addWidget(self.lbl_saturation_warning)
+
         # Shown only while displaying Ocean Optics' native (factory-calibrated) wavelength
         # axis with no FluoRaPressée calibration loaded - see
         # SpectrometerControlMixin.update_plot_labels() (work/work_OceanOptics.md Step 6).
@@ -311,7 +321,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         plot_controls_layout = QHBoxLayout()
         self.radio_plot_bg_black = QRadioButton("Black")
         self.radio_plot_bg_white = QRadioButton("White")
-        self.radio_plot_bg_black.setChecked(True)
+        self.radio_plot_bg_white.setChecked(True)
         self._plot_background_group = QButtonGroup(self)
         self._plot_background_group.addButton(self.radio_plot_bg_black)
         self._plot_background_group.addButton(self.radio_plot_bg_white)
@@ -393,6 +403,10 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spin_em_gain.setVisible(False)
         self.spin_em_gain.setEnabled(False)
         self._em_gain_available = False
+        self._em_gain_exists = False
+        self._em_gain_minimum = None
+        self._em_gain_maximum = None
+        self._em_gain_increment = None
         
         self.spin_accumulate = CustomSpinBox()
         self.spin_accumulate.setRange(1, 99999)

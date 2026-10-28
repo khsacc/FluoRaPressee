@@ -55,6 +55,45 @@ class FakeAndorCamera:
         return applied
 
 
+class FakeAndorEmCamera:
+    def __init__(self, supported=True, fail_write=False):
+        self.supported = supported
+        self.fail_write = fail_write
+        self.gain = 10
+        self.mode = SimpleNamespace(channel=0, oamp=0, hsspeed=0, preamp=0)
+        self.calls = []
+
+    def get_all_amp_modes(self):
+        conventional = SimpleNamespace(
+            channel=0, oamp=0, hsspeed=0, preamp=0, oamp_kind="Conventional"
+        )
+        em = SimpleNamespace(
+            channel=0, oamp=1, hsspeed=0, preamp=0, oamp_kind="Electron Multiplying"
+        )
+        return [conventional, em] if self.supported else [conventional]
+
+    def get_EMCCD_gain(self):
+        return self.gain, False
+
+    def get_capabilities(self):
+        return {"set_func": ["AC_SETFUNCTION_EMCCDGAIN"]}
+
+    def get_amp_mode(self, full=False):
+        return self.mode
+
+    def set_amp_mode(self, channel, oamp, hsspeed, preamp):
+        self.calls.append(("amp", oamp))
+        self.mode = SimpleNamespace(
+            channel=channel, oamp=oamp, hsspeed=hsspeed, preamp=preamp
+        )
+
+    def set_EMCCD_gain(self, gain, advanced=None):
+        self.calls.append(("gain", gain, advanced))
+        if self.fail_write:
+            raise RuntimeError("SDK rejected gain")
+        self.gain = gain
+
+
 class AndorCameraSettingsTests(unittest.TestCase):
     def make_thread(self, camera):
         thread = CameraThreadAndor(debug=False)
@@ -125,6 +164,49 @@ class AndorCameraSettingsTests(unittest.TestCase):
         self.assertEqual(metadata["roi"]["vertical_start"], 45)
         self.assertEqual(metadata["binning"]["vertical"], 20)
         self.assertFalse(metadata["software_vertical_sum"])
+
+    def test_em_gain_capability_is_reported_only_for_em_amplifier(self):
+        camera = FakeAndorEmCamera()
+        thread = self.make_thread(camera)
+        reported = []
+        thread.em_gain_info_ready = SimpleNamespace(emit=lambda *args: reported.append(args))
+
+        thread._report_em_gain_capability()
+
+        self.assertEqual(reported[-1], (True, True, 0, 300, 1, 10))
+        self.assertEqual(thread.current_em_gain, 10)
+
+        camera.supported = False
+        thread._report_em_gain_capability()
+        self.assertEqual(reported[-1], (False, False, 0, 0, 0, 0))
+
+    def test_read_only_em_gain_is_reported_but_unavailable_for_writes(self):
+        camera = FakeAndorEmCamera()
+        camera.get_capabilities = lambda: {"set_func": []}
+        thread = self.make_thread(camera)
+        reported = []
+        thread.em_gain_info_ready = SimpleNamespace(emit=lambda *args: reported.append(args))
+
+        thread._report_em_gain_capability()
+
+        self.assertEqual(reported[-1], (True, False, 0, 300, 1, 10))
+
+    def test_em_gain_write_selects_em_amplifier_without_advanced_mode(self):
+        camera = FakeAndorEmCamera()
+        thread = self.make_thread(camera)
+
+        self.assertEqual(thread._apply_em_gain(25), 25)
+        self.assertEqual(camera.calls, [("amp", 1), ("gain", 25, False)])
+
+    def test_failed_em_gain_write_restores_previous_amplifier(self):
+        camera = FakeAndorEmCamera(fail_write=True)
+        thread = self.make_thread(camera)
+
+        with self.assertRaisesRegex(RuntimeError, "SDK rejected"):
+            thread._apply_em_gain(25)
+
+        self.assertEqual(camera.mode.oamp, 0)
+        self.assertEqual(camera.calls[-1], ("amp", 0))
 
 
 if __name__ == "__main__":

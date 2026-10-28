@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QMessageBox
 
 from src.hardware.accumulation import AccumulationCombiner
 from src.core.measurement_metadata import capture_hardware_state
+from src.core.saturation import is_saturated
 
 # Cap on how many raw frames we buffer in memory for spike rejection (list of
 # individual frames instead of an O(1) running sum). ~16MB worst case for a
@@ -232,6 +233,10 @@ class AcquisitionMixin:
 
     def on_em_gain_info_ready(self, exists, available, minimum, maximum, increment, current):
         """Render the EM Gain row only when PICam says the parameter exists."""
+        self._em_gain_exists = bool(exists)
+        self._em_gain_minimum = minimum if available else None
+        self._em_gain_maximum = maximum if available else None
+        self._em_gain_increment = increment if available else None
         self.label_em_gain.setVisible(exists)
         self.spin_em_gain.setVisible(exists)
         self._em_gain_available = bool(exists and available)
@@ -246,7 +251,7 @@ class AcquisitionMixin:
             self.spin_em_gain.setValue(current)
             self.spin_em_gain.setToolTip(
                 "Electron-multiplication gain reported by the connected camera.\n"
-                "Changing this value selects the Electron Multiplied ADC quality."
+                "Changing this value selects EM readout on cameras that require it."
             )
         else:
             self.spin_em_gain.setToolTip(
@@ -259,7 +264,12 @@ class AcquisitionMixin:
         )
 
     def on_em_gain_changed(self):
-        if not self._em_gain_available:
+        if not self._em_gain_available or self._ui_is_locked():
+            current = getattr(self.thread, "current_em_gain", None)
+            if current is not None:
+                self.spin_em_gain.blockSignals(True)
+                self.spin_em_gain.setValue(current)
+                self.spin_em_gain.blockSignals(False)
             return
         self.spin_em_gain.setEnabled(False)
         self._bump_instrument_state()
@@ -538,6 +548,10 @@ class AcquisitionMixin:
 
     def on_hardware_error(self, message):
         self.status_label.setText(f"Camera error: {message}")
+        if getattr(self, "_gate_owner", None) == "api":
+            # The API worker must be able to finish its GUI-thread handoff and
+            # release the gate without waiting for a modal dialog to be dismissed.
+            return
         QMessageBox.warning(self, "Camera Error", message)
 
     def on_camera_init_failed(self, reason):
@@ -674,6 +688,8 @@ class AcquisitionMixin:
         that data collection actually halted - dangerous for unattended
         Sequential runs that may go for hours.
         """
+        if getattr(self, '_calibration_dialog_active', False):
+            return  # The calibration dialog owns this acquisition and reports its error.
         was_sequential = getattr(self, 'is_sequential_running', False)
 
         self.current_accum_count = 0
@@ -705,6 +721,8 @@ class AcquisitionMixin:
         self._bump_instrument_state()
 
     def on_data_ready(self, mode, data):
+        if getattr(self, '_calibration_dialog_active', False):
+            return  # The calibration dialog combines these frames independently.
         if not getattr(self.thread, 'is_measuring', False) and not self.is_single_shot:
             # Stray frame that arrived after the thread was told to stop measuring
             # (the camera thread may already be mid-acquisition when stop_measuring()
@@ -792,6 +810,8 @@ class AcquisitionMixin:
             self._process_completed_data(mode, final_data)
 
     def _process_completed_data(self, mode, data):
+        saturated = is_saturated(data)
+        self.lbl_saturation_warning.setVisible(saturated)
         if self.is_single_shot:
             self.is_single_shot = False
             acquiring_bg = getattr(self, '_is_acquiring_bg', False)
@@ -822,7 +842,7 @@ class AcquisitionMixin:
                 try:
                     if not pending.done():
                         raw = self.raw_1d_data if mode == "1d" else self.raw_2d_data
-                        payload = {"raw": raw, "mode": mode}
+                        payload = {"raw": raw, "mode": mode, "saturated": saturated}
                         # Captured before the gate is released, so the state reported
                         # really is the state this frame was taken under (方針9).
                         payload.update(self._api_acquire_snapshot(

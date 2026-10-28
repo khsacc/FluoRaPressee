@@ -15,7 +15,7 @@ import numpy as np
 try:
     from fastapi import HTTPException
 
-    from src.api.schemas import AcquireRequest
+    from src.api.schemas import AcquireRequest, EmGainRequest
     from src.api.server import create_app
 except (ImportError, ModuleNotFoundError):  # pragma: no cover
     HTTPException = None
@@ -24,7 +24,7 @@ except (ImportError, ModuleNotFoundError):  # pragma: no cover
 
 try:
     from src.ui.ui_mixins.acquisition_mixin import AcquisitionMixin
-    from src.ui.ui_mixins.api_mixin import ApiMixin, StateTokenMismatchError
+    from src.ui.ui_mixins.api_mixin import ApiMixin, EmGainApplyError, StateTokenMismatchError
     HAS_QT = True
 except (ImportError, ModuleNotFoundError):  # pragma: no cover
     HAS_QT = False
@@ -81,6 +81,11 @@ class FakeWidget:
 class FakeThread:
     is_measuring = False
     current_exposure = 0.1
+    current_em_gain = 10
+
+    def __init__(self):
+        self.em_gain_error = None
+        self.em_gain_requests = []
 
     def isRunning(self):
         return True
@@ -97,6 +102,18 @@ class FakeThread:
 
     def wait_for_exposure_applied(self, _seq, timeout=None):
         return True
+
+    def update_em_gain(self, gain):
+        self.em_gain_requests.append(gain)
+        if self.em_gain_error is None:
+            self.current_em_gain = gain
+        return len(self.em_gain_requests)
+
+    def wait_for_em_gain_applied(self, _seq, timeout=None):
+        return True
+
+    def get_em_gain_error(self, _seq):
+        return self.em_gain_error
 
 
 class Harness(ApiMixin, AcquisitionMixin):
@@ -117,6 +134,11 @@ class Harness(ApiMixin, AcquisitionMixin):
         self._instrument_state_counter = 0
         self.spin_accumulate = FakeWidget(1)
         self.spin_acq_time = FakeWidget(0.1)
+        self._em_gain_exists = True
+        self._em_gain_available = True
+        self._em_gain_minimum = 1
+        self._em_gain_maximum = 100
+        self._em_gain_increment = 1
         self.applied_configurations = []
 
     def _lock_ui(self, reason):
@@ -252,6 +274,49 @@ class TokenComparisonTests(unittest.TestCase):
 
         self.assertNotEqual(gui.instrument_state_token, token)
 
+    def test_api_em_gain_change_reports_applied_value_and_advances_token(self):
+        gui = Harness()
+        token = gui.instrument_state_token
+
+        result = gui.api_set_em_gain(42, expected_state_token=token)
+
+        self.assertEqual(result["gain"], 42)
+        self.assertNotEqual(result["instrument_state_token"], token)
+        self.assertFalse(gui._acquisition_gate.locked())
+
+    def test_em_gain_rejections_release_the_gate(self):
+        gui = Harness()
+        gui._em_gain_exists = False
+        with self.assertRaises(EmGainApplyError):
+            gui.api_set_em_gain(20)
+        self.assertFalse(gui._acquisition_gate.locked())
+
+        gui._em_gain_exists = True
+        with self.assertRaises(EmGainApplyError):
+            gui.api_set_em_gain(101)
+        self.assertEqual(gui.thread.em_gain_requests, [])
+
+        gui.thread.em_gain_error = "PICam rejected value"
+        with self.assertRaisesRegex(EmGainApplyError, "PICam rejected"):
+            gui.api_set_em_gain(20)
+        self.assertEqual(gui.thread.current_em_gain, 10)
+        self.assertFalse(gui._acquisition_gate.locked())
+
+        with self.assertRaises(StateTokenMismatchError):
+            gui.api_set_em_gain(20, expected_state_token="stale")
+        self.assertFalse(gui._acquisition_gate.locked())
+
+    def test_late_em_gain_completion_invalidates_token_and_releases_gate(self):
+        gui = Harness()
+        old_token = gui.instrument_state_token
+        seq = gui._api_start_em_gain_change(20, None)
+        self.assertTrue(gui._acquisition_gate.locked())
+
+        gui._api_release_em_gain_after_timeout(seq)
+
+        self.assertNotEqual(gui.instrument_state_token, old_token)
+        self.assertFalse(gui._acquisition_gate.locked())
+
 
 @unittest.skipIf(create_app is None, "FastAPI is not installed")
 class TokenResponseTests(unittest.TestCase):
@@ -277,6 +342,7 @@ class TokenResponseTests(unittest.TestCase):
         def __init__(self, raiser=None):
             self.raiser = raiser
             self.received = None
+            self.saturated = False
 
         def api_acquire(self, **kwargs):
             self.received = kwargs
@@ -287,6 +353,7 @@ class TokenResponseTests(unittest.TestCase):
                 "y_raw": np.asarray([1.0]),
                 "y": np.asarray([1.0]),
                 "mode": "1d",
+                "saturated": self.saturated,
                 "exposure_time_s": 0.1,
                 "accumulations": 1,
                 "detector_temperature_c": None,
@@ -294,6 +361,23 @@ class TokenResponseTests(unittest.TestCase):
                 "configuration": {},
                 "hardware_state": {},
                 "x_axis": {"source": "pixel", "unit": None, "calibrated": False},
+                "instrument_state_token": "epoch123:4",
+            }
+
+        def api_set_em_gain(self, gain, expected_state_token=None):
+            self.received = (gain, expected_state_token)
+            if self.raiser is not None:
+                raise self.raiser
+            return {
+                "exists": True, "available": True, "gain": gain,
+                "minimum": 1, "maximum": 100, "increment": 1,
+                "instrument_state_token": "epoch123:5",
+            }
+
+        def api_get_em_gain(self):
+            return {
+                "exists": False, "available": False, "gain": None,
+                "minimum": None, "maximum": None, "increment": None,
                 "instrument_state_token": "epoch123:4",
             }
 
@@ -306,6 +390,11 @@ class TokenResponseTests(unittest.TestCase):
         # _acquire_response_payload() lists its fields by hand, so this would silently
         # go missing if only the schema were updated.
         self.assertEqual(payload["instrument_state_token"], "epoch123:4")
+        self.assertIs(payload["saturated"], False)
+
+        gui.saturated = True
+        payload = endpoint(AcquireRequest())
+        self.assertIs(payload["saturated"], True)
 
     def test_expected_token_is_forwarded_to_the_gui(self):
         gui = self._Gui()
@@ -327,6 +416,27 @@ class TokenResponseTests(unittest.TestCase):
         self.assertEqual(
             caught.exception.detail["instrument_state_token"], "epoch123:5"
         )
+
+    def test_em_gain_route_forwards_token_and_maps_unsupported_to_422(self):
+        gui = self._Gui()
+        endpoint = self._endpoint(
+            create_app(gui, DirectBridge()), "/hardware/camera/em-gain", "PUT"
+        )
+        response = endpoint(EmGainRequest(gain=20, expected_state_token="epoch123:4"))
+        self.assertEqual(response["gain"], 20)
+        self.assertEqual(gui.received, (20, "epoch123:4"))
+
+        gui.raiser = EmGainApplyError("This camera does not support EM Gain.")
+        with self.assertRaises(HTTPException) as caught:
+            endpoint(EmGainRequest(gain=20))
+        self.assertEqual(caught.exception.status_code, 422)
+
+    def test_em_gain_get_route_reports_absence(self):
+        gui = self._Gui()
+        endpoint = self._endpoint(
+            create_app(gui, DirectBridge()), "/hardware/camera/em-gain", "GET"
+        )
+        self.assertFalse(endpoint()["exists"])
 
 
 if __name__ == "__main__":

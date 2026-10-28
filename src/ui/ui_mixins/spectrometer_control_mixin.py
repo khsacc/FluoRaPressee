@@ -154,9 +154,12 @@ class SpectrometerControlMixin:
             return
 
         calib_win = CalibrationWindow(camera_thread=self.thread, parent=self)
-        calib_win.exec()
-
-        self._release_acquisition_gate()
+        self._calibration_dialog_active = True
+        try:
+            calib_win.exec()
+        finally:
+            self._calibration_dialog_active = False
+            self._release_acquisition_gate()
 
         if was_measuring:
             # Re-acquire before resuming; if something else grabbed the gate in the brief

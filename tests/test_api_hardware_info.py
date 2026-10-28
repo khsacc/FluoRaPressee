@@ -8,12 +8,25 @@ from src.api.info_helpers import (
 )
 
 try:
-    from src.api.schemas import CameraInfoResponse, ConfigResponse, SpectrometerInfoResponse
+    from src.api.schemas import CameraInfoResponse, ConfigResponse, EmGainRequest, EmGainResponse, SpectrometerInfoResponse
 except ImportError:
-    CameraInfoResponse = ConfigResponse = SpectrometerInfoResponse = None
+    CameraInfoResponse = ConfigResponse = EmGainRequest = EmGainResponse = SpectrometerInfoResponse = None
 
 
 class ApiHardwareInfoHelperTests(unittest.TestCase):
+    @unittest.skipIf(EmGainRequest is None, "pydantic is unavailable")
+    def test_em_gain_schema_reports_absence_and_rejects_invalid_gain(self):
+        from pydantic import ValidationError
+
+        response = EmGainResponse(
+            exists=False, available=False, gain=None,
+            instrument_state_token="epoch:0",
+        )
+        self.assertIsNone(response.gain)
+        for invalid in (-1, 1.5):
+            with self.subTest(invalid=invalid), self.assertRaises(ValidationError):
+                EmGainRequest(gain=invalid)
+
     def test_camera_metadata_uses_public_exposure_name(self):
         metadata = normalize_camera_metadata({
             "identity": {"model": "DU-401", "serial_number": "CAM-1"},

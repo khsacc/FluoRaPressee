@@ -119,6 +119,7 @@ class AcquireResponse(BaseModel):
     y_raw: list
     y: list
     mode: Literal["1d", "2d"]
+    saturated: bool
     exposure_time_s: float
     accumulations: int
     detector_temperature_c: float | None = None
@@ -331,6 +332,21 @@ class CameraInfoResponse(BaseModel):
     metadata_source: Literal["cache"]
     metadata: CameraMetadata
     status: DeviceStatusSnapshot | None = None
+
+
+class EmGainRequest(BaseModel):
+    gain: int = Field(ge=0)
+    expected_state_token: str | None = None
+
+
+class EmGainResponse(BaseModel):
+    exists: bool
+    available: bool
+    gain: int | None = None
+    minimum: int | None = None
+    maximum: int | None = None
+    increment: int | None = None
+    instrument_state_token: str
 
 
 class SpectrometerInfoResponse(BaseModel):

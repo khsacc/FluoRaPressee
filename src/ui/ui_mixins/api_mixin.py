@@ -66,6 +66,11 @@ class ExposureApplyError(Exception):
     pass
 
 
+class EmGainApplyError(Exception):
+    """The requested EM Gain is unsupported, invalid, or rejected by the camera."""
+    pass
+
+
 # The three API server modes (work_API_standby.md 方針1). "locked" reproduces the
 # original "Start API Server" behaviour exactly: listening plus a UI lock held for the
 # whole run. "standby" listens just the same but locks only while a request is
@@ -249,6 +254,94 @@ class ApiMixin:
             )
         finally:
             self.gui_bridge.call(lambda: self._api_finish_camera_status_refresh(future))
+
+    def _api_em_gain_state(self):
+        """Read the capability cache and the camera thread's last applied gain."""
+        exists = bool(getattr(self, "_em_gain_exists", False))
+        available = bool(
+            exists and self.thread.isRunning()
+            and getattr(self, "_em_gain_available", False)
+        )
+        return {
+            "exists": exists,
+            "available": available,
+            "gain": getattr(self.thread, "current_em_gain", None) if exists else None,
+            "minimum": getattr(self, "_em_gain_minimum", None) if available else None,
+            "maximum": getattr(self, "_em_gain_maximum", None) if available else None,
+            "increment": getattr(self, "_em_gain_increment", None) if available else None,
+            "instrument_state_token": self.instrument_state_token,
+        }
+
+    def api_get_em_gain(self):
+        return self.gui_bridge.call(self._api_em_gain_state)
+
+    def _api_start_em_gain_change(self, gain, expected_state_token):
+        if not self.thread.isRunning():
+            raise CameraNotReadyError("The camera is not initialised.")
+        if self._instrument_status_busy() or not self._try_acquire_gate("api"):
+            raise GateBusyError(self._gate_busy_reason())
+        try:
+            self._assert_instrument_state_token(expected_state_token)
+            state = self._api_em_gain_state()
+            if not state["exists"]:
+                raise EmGainApplyError("This camera does not support EM Gain.")
+            if not state["available"]:
+                raise EmGainApplyError("EM Gain is unavailable with the current camera settings.")
+            minimum, maximum, increment = (
+                state["minimum"], state["maximum"], state["increment"]
+            )
+            if (minimum is None or maximum is None or increment is None
+                    or not minimum <= gain <= maximum
+                    or (gain - minimum) % increment):
+                raise EmGainApplyError(
+                    f"EM Gain must be within {minimum}..{maximum} in steps of {increment}."
+                )
+            return self.thread.update_em_gain(gain)
+        except Exception:
+            self._release_acquisition_gate()
+            raise
+
+    def _api_finish_em_gain_change(self):
+        self._bump_instrument_state()
+        return self._api_em_gain_state()
+
+    def _api_release_em_gain_after_timeout(self, seq):
+        """Keep the gate until the queued hardware write ends or the thread exits."""
+        try:
+            while self.thread.isRunning():
+                if self.thread.wait_for_em_gain_applied(seq, timeout=1.0):
+                    break
+        finally:
+            try:
+                # The write may have completed after HTTP returned 504. Its result
+                # can still change a later acquisition, so invalidate old tokens.
+                self.gui_bridge.call(self._bump_instrument_state)
+            finally:
+                self.gui_bridge.call(self._release_acquisition_gate)
+
+    def api_set_em_gain(self, gain, expected_state_token=None, timeout=10.0):
+        seq = self.gui_bridge.call(
+            lambda: self._api_start_em_gain_change(gain, expected_state_token)
+        )
+        release_now = True
+        try:
+            if not self.thread.wait_for_em_gain_applied(seq, timeout=timeout):
+                threading.Thread(
+                    target=self._api_release_em_gain_after_timeout,
+                    args=(seq,), name="FluoraPressee-EmGainCompletion", daemon=True,
+                ).start()
+                release_now = False
+                raise FutureTimeoutError()
+            error = self.thread.get_em_gain_error(seq)
+            if error:
+                # A failed PICam commit can leave the readout mode changed if its
+                # best-effort rollback also failed.
+                self.gui_bridge.call(self._bump_instrument_state)
+                raise EmGainApplyError(f"Failed to set EM Gain: {error}")
+            return self.gui_bridge.call(self._api_finish_em_gain_change)
+        finally:
+            if release_now:
+                self.gui_bridge.call(self._release_acquisition_gate)
 
     def _api_finish_camera_status_refresh(self, future):
         if getattr(self, "_api_camera_status_future", None) is future:
@@ -782,6 +875,7 @@ class ApiMixin:
             raise
         raw = result["raw"]
         mode = result["mode"]
+        saturated = result["saturated"]
 
         # Everything below was captured on the GUI thread while the gate was still
         # held (方針9), so no further gui_bridge round trip is needed here.
@@ -824,6 +918,7 @@ class ApiMixin:
             "y_raw": raw,
             "y": y,
             "mode": mode,
+            "saturated": saturated,
             "exposure_time_s": actual_exposure,
             "accumulations": actual_accum,
             "detector_temperature_c": _parse_temp_c(temp_text),

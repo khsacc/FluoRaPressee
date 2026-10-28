@@ -37,8 +37,7 @@ class CameraThreadAndor(QThread):
     roi_applied = pyqtSignal(dict)
 
     exposure_set_finished = pyqtSignal()
-    # Keep the camera-backend interface uniform. This backend does not expose
-    # EM Gain through the application yet, so the GUI keeps the component hidden.
+    # Report EMCCD gain only when the connected SDK2 camera exposes an EM amplifier.
     em_gain_info_ready = pyqtSignal(bool, bool, int, int, int, int)
     em_gain_set_finished = pyqtSignal(int)
     temperature_set_finished = pyqtSignal(float)
@@ -80,6 +79,10 @@ class CameraThreadAndor(QThread):
         self._hw_lock = Lock()  # Lock for exclusive access to hardware (snap / applying settings)
         self._exposure_request_seq = 0
         self._exposure_applied_seq = 0
+        self._em_gain_request_seq = 0
+        self._em_gain_applied_seq = 0
+        self._em_gain_error_seq = 0
+        self._em_gain_error_message = None
 
         self.det_width = self.DEFAULT_DETECTOR_WIDTH
         self.det_height = self.DEFAULT_DETECTOR_HEIGHT
@@ -94,12 +97,14 @@ class CameraThreadAndor(QThread):
         self.request_temp = False
         self.status_requested = False
         self.new_exposure = None
+        self.new_em_gain = None
         self.new_temperature = None
         
         # Simulated setting values used in debug mode
         self.mock_exposure = self.DEFAULT_EXPOSURE
         self.mock_temp = self.config.get("default_temperature", self.DEFAULT_TEMP)
         self.current_exposure = self.DEFAULT_EXPOSURE
+        self.current_em_gain = None
         self._metadata_identity = {"controller_model": None, "model": None, "serial_number": None}
         self._metadata_pixel_pitch_um = {"width": None, "height": None}
         self._metadata_temperature = {
@@ -165,7 +170,7 @@ class CameraThreadAndor(QThread):
                     return
                 self.temperature_set_finished.emit(float(applied_temp))
                 self._metadata_temperature["setpoint_c"] = float(applied_temp)
-                self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
+                self._report_em_gain_capability()
                 self.temperature_capability_ready.emit(True, True, float(temp_min), float(temp_max))
                 try:
                     device_info = self.cam.get_device_info()
@@ -191,6 +196,8 @@ class CameraThreadAndor(QThread):
                     # not silently overwritten by an unconditional clear afterwards.
                     new_exposure, self.new_exposure = self.new_exposure, None
                     exposure_request_seq = self._exposure_request_seq
+                    new_em_gain, self.new_em_gain = self.new_em_gain, None
+                    em_gain_request_seq = self._em_gain_request_seq
                     new_temperature, self.new_temperature = self.new_temperature, None
                     request_temp = self.request_temp
                     status_requested = self.status_requested
@@ -231,6 +238,25 @@ class CameraThreadAndor(QThread):
                     with self._lock:
                         self._exposure_applied_seq = exposure_request_seq
                         self._lock.notify_all()
+
+                if new_em_gain is not None:
+                    em_gain_error = None
+                    actual_gain = self.current_em_gain
+                    try:
+                        with self._hw_lock:
+                            actual_gain = self._apply_em_gain(int(new_em_gain))
+                        self.current_em_gain = actual_gain
+                    except Exception as exc:
+                        em_gain_error = str(exc)
+                        self.hardware_error.emit(f"Failed to set EM Gain: {exc}")
+                    with self._lock:
+                        self._em_gain_error_seq = em_gain_request_seq if em_gain_error else 0
+                        self._em_gain_error_message = em_gain_error
+                        self._em_gain_applied_seq = em_gain_request_seq
+                        self._lock.notify_all()
+                    self.em_gain_set_finished.emit(
+                        int(actual_gain) if actual_gain is not None else int(new_em_gain)
+                    )
 
                 if new_temperature is not None:
                     if self.debug:
@@ -450,6 +476,77 @@ class CameraThreadAndor(QThread):
         適用されればTrue、タイムアウトすればFalseを返す。"""
         with self._lock:
             return self._lock.wait_for(lambda: self._exposure_applied_seq >= seq, timeout=timeout)
+
+    def _report_em_gain_capability(self):
+        """Detect SDK2 EMCCD gain without changing camera settings."""
+        try:
+            em_modes = self._em_amp_modes()
+            reading = self.cam.get_EMCCD_gain()
+            if not em_modes or reading is None:
+                raise RuntimeError("No EMCCD gain or EM amplifier")
+            current = int(reading[0])
+            capabilities = self.cam.get_capabilities()
+            writable = "AC_SETFUNCTION_EMCCDGAIN" in capabilities.get("set_func", ())
+            self.current_em_gain = current
+            # The public API deliberately stays in SDK2's non-advanced 0..300
+            # range; a particular camera may reject a narrower value at write time.
+            self.em_gain_info_ready.emit(True, writable, 0, 300, 1, current)
+        except Exception as exc:
+            print(f"Andor EM Gain unavailable: {exc}")
+            self.em_gain_info_ready.emit(False, False, 0, 0, 0, 0)
+
+    def _em_amp_modes(self):
+        return [
+            mode for mode in self.cam.get_all_amp_modes()
+            if "electron" in str(mode.oamp_kind).lower()
+            or str(mode.oamp_kind).strip().lower().startswith("em")
+        ]
+
+    def _apply_em_gain(self, gain):
+        """Select an EM amplifier and apply a non-advanced EMCCD gain."""
+        previous_mode = self.cam.get_amp_mode(full=False)
+        em_modes = self._em_amp_modes()
+        if not em_modes:
+            raise RuntimeError("No EM output amplifier is available")
+        same_channel = [mode for mode in em_modes if mode.channel == previous_mode.channel]
+        selected = (same_channel or em_modes)[0]
+        switched = selected.oamp != previous_mode.oamp
+        try:
+            if switched:
+                self.cam.set_amp_mode(
+                    selected.channel, selected.oamp, selected.hsspeed, selected.preamp
+                )
+            self.cam.set_EMCCD_gain(gain, advanced=False)
+            applied = self.cam.get_EMCCD_gain()
+            if applied is None or int(applied[0]) != gain:
+                raise RuntimeError("Andor SDK did not confirm the requested EM Gain")
+            return int(applied[0])
+        except Exception:
+            if switched:
+                try:
+                    self.cam.set_amp_mode(
+                        previous_mode.channel, previous_mode.oamp,
+                        previous_mode.hsspeed, previous_mode.preamp,
+                    )
+                except Exception as rollback_exc:
+                    print(f"Failed to restore Andor amplifier mode: {rollback_exc}")
+            raise
+
+    def update_em_gain(self, gain):
+        with self._lock:
+            self.new_em_gain = int(gain)
+            self._em_gain_request_seq += 1
+            return self._em_gain_request_seq
+
+    def wait_for_em_gain_applied(self, seq, timeout=None):
+        with self._lock:
+            return self._lock.wait_for(
+                lambda: self._em_gain_applied_seq >= seq, timeout=timeout
+            )
+
+    def get_em_gain_error(self, seq):
+        with self._lock:
+            return self._em_gain_error_message if self._em_gain_error_seq == seq else None
 
     def update_temperature(self, temp: float) -> None:
         """目標温度を更新（スレッドセーフ）"""

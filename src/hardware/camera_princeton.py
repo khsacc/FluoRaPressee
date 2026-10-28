@@ -83,6 +83,10 @@ class CameraThreadPI(QThread):
         self._hw_lock = Lock()  # Lock for exclusive access to hardware (snap / applying settings)
         self._exposure_request_seq = 0
         self._exposure_applied_seq = 0
+        self._em_gain_request_seq = 0
+        self._em_gain_applied_seq = 0
+        self._em_gain_error_seq = 0
+        self._em_gain_error_message = None
 
         # Defaults matching a PIXIS: 100F (overwritten by get_detector_size() once a real camera is connected)
         self.det_width = 1340
@@ -851,6 +855,7 @@ class CameraThreadPI(QThread):
                     new_exposure, self.new_exposure = self.new_exposure, None
                     exposure_request_seq = self._exposure_request_seq
                     new_em_gain, self.new_em_gain = self.new_em_gain, None
+                    em_gain_request_seq = self._em_gain_request_seq
                     new_temperature, self.new_temperature = self.new_temperature, None
                     request_temp = self.request_temp
                     status_requested = self.status_requested
@@ -881,6 +886,7 @@ class CameraThreadPI(QThread):
 
                 if new_em_gain is not None:
                     actual_gain = self.current_em_gain
+                    em_gain_error = None
                     if self.debug:
                         self.mock_em_gain = int(new_em_gain)
                         self.current_em_gain = self.mock_em_gain
@@ -904,8 +910,14 @@ class CameraThreadPI(QThread):
                             self.current_em_gain = actual_gain
                             print(f"EM Gain set to {actual_gain}x")
                         except Exception as e:
+                            em_gain_error = str(e)
                             print(f"Failed to set EM Gain: {e}")
                             self.hardware_error.emit(f"Failed to set EM Gain: {e}")
+                    with self._lock:
+                        self._em_gain_error_seq = em_gain_request_seq if em_gain_error else 0
+                        self._em_gain_error_message = em_gain_error
+                        self._em_gain_applied_seq = em_gain_request_seq
+                        self._lock.notify_all()
                     self.em_gain_set_finished.emit(
                         int(actual_gain) if actual_gain is not None else int(new_em_gain)
                     )
@@ -1188,6 +1200,18 @@ class CameraThreadPI(QThread):
     def update_em_gain(self, gain):
         with self._lock:
             self.new_em_gain = int(gain)
+            self._em_gain_request_seq += 1
+            return self._em_gain_request_seq
+
+    def wait_for_em_gain_applied(self, seq, timeout=None):
+        with self._lock:
+            return self._lock.wait_for(
+                lambda: self._em_gain_applied_seq >= seq, timeout=timeout
+            )
+
+    def get_em_gain_error(self, seq):
+        with self._lock:
+            return self._em_gain_error_message if self._em_gain_error_seq == seq else None
 
     def update_temperature(self, temp):
         with self._lock:

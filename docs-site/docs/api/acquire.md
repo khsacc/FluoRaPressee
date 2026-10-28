@@ -49,6 +49,7 @@ description: データを1回取得するエンドポイント
   "y_raw": [1050.0, 1048.0, ...],
   "y": [1050.0, 1048.0, ...],
   "mode": "1d",
+  "saturated": false,
   "exposure_time_s": 0.5,
   "accumulations": 3,
   "detector_temperature_c": -64.8,
@@ -70,6 +71,7 @@ description: データを1回取得するエンドポイント
 - `x` は較正済みなら較正後の単位（nm または cm<sup>-1</sup>）、未較正ならpixel番号（Ocean Optics等ネイティブ波長軸を持つ機種では、FluoraPressée較正が無くてもその軸を返します）。
   GUIの"Flip X-axis" 設定には依存せず、常に昇順で返します。
 - `y_raw` は生データ、`y` はdark減算後（`dark.mode="none"` の場合は `y_raw` と同じ）。
+- `saturated` は生データ内のゼロ以外の最大値が、スペクトル方向に隣接する3ピクセル以上で同じ値になった場合に `true` となり、検出器の飽和の可能性を示します。装置ごとの上限値は設定せず、dark減算や表示設定の影響も受けません。2D画像では画像全体の最大値を使い、連続性は行ごとに判定します。
 - 2Dイメージモードで取得した場合、`x` は `null`、`y_raw`/`y` はネストした配列（行×列）になります。
 - `x_axis`は`x`列の解釈を`configuration.axis_mode`と同じ語彙で明示します:
   - `source`: `"pixel"` / `"native_wavelength"`（FluoraPressée較正なしだが機種側のfactory-calibratedな波長軸、現状Ocean Opticsのみ） / `"calibrated"`（FluoraPressée較正適用済み）。
