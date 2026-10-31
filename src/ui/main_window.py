@@ -37,6 +37,7 @@ from src.ui.ui_mixins.display_mixin import DisplayMixin
 from src.ui.ui_mixins.pressure_dialog_mixin import PressureDialogMixin
 from src.api.gui_bridge import GuiBridge
 from src.core.api_clients import LastSeenRegistry as ApiLastSeenRegistry
+from src.core.instrument_state_log import make_instrument_state_logger
 from src.ui.ui_mixins.api_mixin import API_MODES, ApiMixin, local_ip_address
 # ----------------------------------------
 
@@ -150,6 +151,13 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # equality and never interpret it - see instrument_state_token below.
         self._instrument_state_epoch = uuid.uuid4().hex[:8]
         self._instrument_state_counter = 0
+        self._instrument_state_log = make_instrument_state_logger()
+        self._last_instrument_state_change_reason = "startup"
+        if self._instrument_state_log is not None:
+            try:
+                self._instrument_state_log.info("startup token=%s", self.instrument_state_token)
+            except Exception as exc:
+                print(f"Warning: instrument-state logging failed: {exc}")
 
         self.latest_fit_res = None
         self.latest_fit_func = None
@@ -394,6 +402,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spin_acq_time.setRange(0.001, 3600)
         self.spin_acq_time.setValue(0.1)
         self.spin_acq_time.setDecimals(3)
+        self._last_committed_exposure_value = self.spin_acq_time.value()
 
         # PICam reports at runtime whether the connected camera actually has
         # an EM Gain parameter. Keep this row hidden until exists=True is received.
@@ -451,6 +460,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spin_cooler_temp = CustomSpinBox()
         self.spin_cooler_temp.setRange(-100, 20)
         self.spin_cooler_temp.setValue(self.config.get("default_temperature", -65))
+        self._last_committed_temperature_value = self.spin_cooler_temp.value()
         self.btn_read_temp = QPushButton("Read current temperature")
         self.label_current_temp = QLabel("-- °C")
         self.label_current_temp.setStyleSheet("font-weight: bold; color: #E91E63;")
@@ -765,17 +775,27 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.btn_commence.clicked.connect(self.check_bg_and_start_meas)
         self.btn_start_seq.clicked.connect(self.check_bg_and_start_seq)
         
-        self.radio_spec_mode_wl.toggled.connect(self.on_spec_mode_changed)
-        self.radio_spec_mode_raman.toggled.connect(self.on_spec_mode_changed)
+        self.radio_spec_mode_wl.toggled.connect(
+            lambda checked: self.on_spec_mode_changed() if checked else None
+        )
+        self.radio_spec_mode_raman.toggled.connect(
+            lambda checked: self.on_spec_mode_changed() if checked else None
+        )
         
         self.seq_toggle_btn.toggled.connect(self.toggle_sequential)
         self.api_toggle_btn.toggled.connect(self.toggle_api_server)
         self.btn_choose_dir.clicked.connect(self.on_choose_seq_dir)
         self.btn_stop_seq.clicked.connect(self.stop_sequential)
         
-        self.radio_2d.toggled.connect(self.apply_roi_settings)
-        self.radio_1d_full.toggled.connect(self.apply_roi_settings)
-        self.radio_1d_roi.toggled.connect(self.apply_roi_settings)
+        self.radio_2d.toggled.connect(
+            lambda checked: self.apply_roi_settings() if checked else None
+        )
+        self.radio_1d_full.toggled.connect(
+            lambda checked: self.apply_roi_settings() if checked else None
+        )
+        self.radio_1d_roi.toggled.connect(
+            lambda checked: self.apply_roi_settings() if checked else None
+        )
         self.spin_vstart.valueChanged.connect(self.on_roi_spin_changed)
         self.spin_vend.valueChanged.connect(self.on_roi_spin_changed)
         

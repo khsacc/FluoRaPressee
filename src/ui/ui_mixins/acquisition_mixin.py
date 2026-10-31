@@ -103,18 +103,22 @@ class AcquisitionMixin:
         """
         return f"{self._instrument_state_epoch}:{self._instrument_state_counter}"
 
-    def _bump_instrument_state(self):
-        """Mark the instrument state as changed.
+    def _bump_instrument_state(self, reason="unspecified"):
+        """Invalidate a token and record the change that caused it.
 
-        Only monotonicity matters, so bumping more than once for a single logical
-        change is harmless. API requests compare their expected token immediately
-        after taking the gate, then bump after any physical change; consequently the
-        response carries the post-operation token without rejecting the request's own
-        pre-operation token.
+        The API compares the expected token inside the gate before changing state.
+        Logging is diagnostic only and must never affect hardware control.
         """
-        # getattr so the mixins stay usable from the lightweight test stubs that do
-        # not build the full SpectrometerGUI state.
+        logger = getattr(self, "_instrument_state_log", None)
+        previous = self.instrument_state_token if logger is not None else None
         self._instrument_state_counter = getattr(self, "_instrument_state_counter", 0) + 1
+        self._last_instrument_state_change_reason = reason
+        if logger is not None:
+            try:
+                logger.info("token_changed previous=%s current=%s reason=%s",
+                            previous, self.instrument_state_token, reason)
+            except Exception as exc:
+                print(f"Warning: instrument-state logging failed: {exc}")
 
     def _ui_is_locked(self):
         """True while any UI lock reason stands (sequential run, API server, in-flight
@@ -192,15 +196,27 @@ class AcquisitionMixin:
 
     def on_exposure_changed(self):
         val = self.spin_acq_time.value()
+        if self._ui_is_locked():
+            # Disabling a focused editor for an API request emits editingFinished.
+            # Discard an uncommitted local edit rather than writing hardware under
+            # the API gate (or invalidating the request's token).
+            self.spin_acq_time.blockSignals(True)
+            self.spin_acq_time.setValue(self.thread.current_exposure)
+            self.spin_acq_time.blockSignals(False)
+            self._last_committed_exposure_value = self.spin_acq_time.value()
+            return
+        if val == getattr(self, "_last_committed_exposure_value", None):
+            return
+        self._last_committed_exposure_value = val
         self.spin_acq_time.setEnabled(False)
-        self._bump_instrument_state()
+        self._bump_instrument_state(f"gui_exposure value_s={val}")
         self.thread.update_exposure(val)
 
     def on_accumulations_changed(self):
-        self._bump_instrument_state()
+        self._bump_instrument_state(f"gui_accumulations value={self.spin_accumulate.value()}")
 
     def on_spike_threshold_changed(self):
-        self._bump_instrument_state()
+        self._bump_instrument_state(f"gui_spike_threshold value={self.spin_spike_threshold.value()}")
 
     def on_exposure_set_finished(self):
         """Re-enable the exposure box once the camera thread has applied the value.
@@ -216,6 +232,7 @@ class AcquisitionMixin:
         """Reflect the exposure accepted by Andor, including SDK rounding."""
         self.spin_acq_time.blockSignals(True)
         self.spin_acq_time.setValue(actual_exposure)
+        self._last_committed_exposure_value = self.spin_acq_time.value()
         self.spin_acq_time.blockSignals(False)
         if success:
             self.status_label.setText(f"Exposure set to {actual_exposure:g} s")
@@ -271,8 +288,10 @@ class AcquisitionMixin:
                 self.spin_em_gain.setValue(current)
                 self.spin_em_gain.blockSignals(False)
             return
+        # A same-number request can still select EM readout on PICam, so it is
+        # not a proven hardware no-op and must keep its existing write path.
         self.spin_em_gain.setEnabled(False)
-        self._bump_instrument_state()
+        self._bump_instrument_state(f"gui_em_gain value={self.spin_em_gain.value()}")
         self.thread.update_em_gain(self.spin_em_gain.value())
 
     def on_em_gain_set_finished(self, actual_gain):
@@ -285,14 +304,25 @@ class AcquisitionMixin:
 
     def on_temperature_changed(self):
         val = self.spin_cooler_temp.value()
+        if self._ui_is_locked():
+            self.spin_cooler_temp.blockSignals(True)
+            self.spin_cooler_temp.setValue(
+                getattr(self, "_last_committed_temperature_value", val)
+            )
+            self.spin_cooler_temp.blockSignals(False)
+            return
+        if val == getattr(self, "_last_committed_temperature_value", None):
+            return
+        self._last_committed_temperature_value = val
         self.spin_cooler_temp.setEnabled(False)
-        self._bump_instrument_state()
+        self._bump_instrument_state(f"gui_temperature_setpoint value_c={val}")
         self.thread.update_temperature(val)
 
     def on_temperature_set_finished(self, actual_temperature):
         """Reflect the set point that the camera accepted, not only the requested value."""
         self.spin_cooler_temp.blockSignals(True)
         self.spin_cooler_temp.setValue(round(actual_temperature))
+        self._last_committed_temperature_value = self.spin_cooler_temp.value()
         self.spin_cooler_temp.blockSignals(False)
         self.spin_cooler_temp.setEnabled(not self._ui_is_locked())
 
@@ -462,7 +492,8 @@ class AcquisitionMixin:
         # see work/work_OceanOptics.md review round 5).
         self.update_plot_labels()
 
-        self.apply_roi_settings()
+        # Reinitialisation may reset the camera even when the GUI ROI is unchanged.
+        self.apply_roi_settings(force=True)
 
         # Last: both this handler and on_camera_init_failed() re-enable the central
         # widget unconditionally above, so Standby must not begin listening before
@@ -610,10 +641,20 @@ class AcquisitionMixin:
             self.radio_bg_on.setEnabled(unlocked)
         return mode
 
-    def apply_roi_settings(self):
+    def apply_roi_settings(self, force=False):
         mode = self._sync_roi_widget_states()
-        self._bump_instrument_state()
-        self.thread.update_roi_settings(mode, self.spin_vstart.value(), self.spin_vend.value())
+        start, end = self.spin_vstart.value(), self.spin_vend.value()
+        # Full-frame and 2-D modes ignore the custom ROI bounds. Radio-button
+        # transitions and UI unlocks can call this repeatedly with the same
+        # effective request; do not reconfigure hardware or invalidate a token.
+        request = (mode, start, end) if mode == "1d_roi" else (mode, None, None)
+        if not force and request == getattr(self, "_last_roi_request", None):
+            return
+        self.thread.update_roi_settings(mode, start, end)
+        self._last_roi_request = request
+        self._bump_instrument_state(
+            f"roi_request mode={mode} start={request[1]} end={request[2]} force={force}"
+        )
 
     def on_roi_spin_changed(self):
         self.apply_roi_settings()
@@ -718,7 +759,7 @@ class AcquisitionMixin:
 
     def on_cosmic_ray_removal_toggled(self, checked):
         self.spin_spike_threshold.setEnabled(checked)
-        self._bump_instrument_state()
+        self._bump_instrument_state(f"gui_cosmic_ray_removal enabled={checked}")
 
     def on_data_ready(self, mode, data):
         if getattr(self, '_calibration_dialog_active', False):

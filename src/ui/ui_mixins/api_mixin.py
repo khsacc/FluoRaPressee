@@ -302,7 +302,7 @@ class ApiMixin:
             raise
 
     def _api_finish_em_gain_change(self):
-        self._bump_instrument_state()
+        self._bump_instrument_state("api_em_gain_applied")
         return self._api_em_gain_state()
 
     def _api_release_em_gain_after_timeout(self, seq):
@@ -315,7 +315,9 @@ class ApiMixin:
             try:
                 # The write may have completed after HTTP returned 504. Its result
                 # can still change a later acquisition, so invalidate old tokens.
-                self.gui_bridge.call(self._bump_instrument_state)
+                self.gui_bridge.call(
+                    lambda: self._bump_instrument_state("api_em_gain_timeout")
+                )
             finally:
                 self.gui_bridge.call(self._release_acquisition_gate)
 
@@ -336,7 +338,9 @@ class ApiMixin:
             if error:
                 # A failed PICam commit can leave the readout mode changed if its
                 # best-effort rollback also failed.
-                self.gui_bridge.call(self._bump_instrument_state)
+                self.gui_bridge.call(
+                    lambda: self._bump_instrument_state("api_em_gain_error")
+                )
                 raise EmGainApplyError(f"Failed to set EM Gain: {error}")
             return self.gui_bridge.call(self._api_finish_em_gain_change)
         finally:
@@ -419,6 +423,16 @@ class ApiMixin:
             return
         current = self.instrument_state_token
         if expected != current:
+            logger = getattr(self, "_instrument_state_log", None)
+            if logger is not None:
+                try:
+                    logger.warning(
+                        "token_mismatch expected=%s current=%s last_change=%s",
+                        expected, current,
+                        getattr(self, "_last_instrument_state_change_reason", "unknown"),
+                    )
+                except Exception as exc:
+                    print(f"Warning: instrument-state logging failed: {exc}")
             raise StateTokenMismatchError(expected, current)
 
     def _api_start_acquire(
@@ -484,7 +498,7 @@ class ApiMixin:
                 # The expected token was already checked immediately after taking the
                 # gate.  Bump now so this request's response describes the new physical
                 # exposure and later callers cannot reuse a token for the old state.
-                self._bump_instrument_state()
+                self._bump_instrument_state(f"api_exposure_applied value_s={actual_exposure}")
         else:
             actual_exposure = self.spin_acq_time.value()
 

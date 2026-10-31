@@ -140,7 +140,7 @@ class FileIOMixin:
         self.positioned_configuration_id = configuration_id
         self.positioned_configuration_slot_id = slot_id
         self.axis_source = axis_source
-        self._bump_instrument_state()
+        self._bump_instrument_state("calibration_applied")
         self.lbl_loaded_configuration.setText(f"Loaded: {label}")
         self.update_plot_labels()
         self.sync_fit_range_to_spectrum(force=True)
@@ -177,7 +177,7 @@ class FileIOMixin:
         self.active_configuration_slot_id = None
         self.positioned_configuration_id = None
         self.positioned_configuration_slot_id = None
-        self._bump_instrument_state()
+        self._bump_instrument_state("configuration_cleared")
         self.lbl_loaded_configuration.setText("Loaded: None")
         self.update_plot_labels()
         self._refresh_after_axis_change()
@@ -197,7 +197,7 @@ class FileIOMixin:
         self.calib_laser_wl = None
         self.active_configuration_id = None
         self.active_configuration_slot_id = None
-        self._bump_instrument_state()
+        self._bump_instrument_state("calibration_deactivated")
         self.configuration_label = f"{self.configuration_label} (calibration invalidated: {reason})"
         self.lbl_loaded_configuration.setText(f"Loaded: {self.configuration_label}")
         self.update_plot_labels()
@@ -418,7 +418,7 @@ class FileIOMixin:
         self.positioned_configuration_id = configuration_id
         self.positioned_configuration_slot_id = slot_id
         self.axis_source = "pixel"
-        self._bump_instrument_state()
+        self._bump_instrument_state("pixel_configuration_applied")
         self.lbl_loaded_configuration.setText(f"Loaded: {label} (pixel axis)")
         self.update_plot_labels()
         self.sync_fit_range_to_spectrum(force=True)
@@ -676,7 +676,7 @@ class FileIOMixin:
             QMessageBox.information(self, "Success", "Background saved successfully.")
             self.loaded_bg_data = bg_arr
             self.loaded_bg_metadata = bg_meta
-            self._bump_instrument_state()
+            self._bump_instrument_state("background_acquired")
             self.lbl_loaded_bg.setText(f"Loaded: {os.path.basename(file_path)}")
             self.radio_bg_on.setChecked(True)
             self.on_fit_settings_changed()
@@ -695,7 +695,7 @@ class FileIOMixin:
                     bg_arr, bg_meta = self.file_io.load_background(file_path)
                     self.loaded_bg_data = bg_arr
                     self.loaded_bg_metadata = bg_meta
-                    self._bump_instrument_state()
+                    self._bump_instrument_state("background_loaded")
                     self.lbl_loaded_bg.setText(f"Loaded: {os.path.basename(file_path)}")
                     self.radio_bg_on.setChecked(True)
                     self.on_fit_settings_changed()

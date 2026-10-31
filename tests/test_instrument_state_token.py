@@ -9,6 +9,7 @@ always mismatching - and a rejected token never leaks the gate.
 """
 import threading
 import unittest
+from unittest.mock import Mock
 
 import numpy as np
 
@@ -180,6 +181,15 @@ class TokenGenerationTests(unittest.TestCase):
         gui._bump_instrument_state()
 
         self.assertNotEqual(gui.instrument_state_token, before)
+
+    def test_state_change_records_the_reason_and_both_tokens(self):
+        gui = Harness()
+        gui._instrument_state_log = Mock()
+        gui._bump_instrument_state("gui_roi")
+        gui._instrument_state_log.info.assert_called_once_with(
+            "token_changed previous=%s current=%s reason=%s",
+            "epoch123:0", "epoch123:1", "gui_roi",
+        )
 
     def test_token_is_stable_without_a_change(self):
         gui = Harness()
