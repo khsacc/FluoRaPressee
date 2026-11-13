@@ -9,6 +9,12 @@ class PressureCalculationResult:
     pressure: Optional[float]
     pressure_err: Optional[float]
     zero_peak_at_current_t: Optional[float]
+    # The two parts of pressure_err, which is their quadrature sum: the
+    # peak-position uncertainty (independent between spectra) and the
+    # pressure-scale parameter uncertainty (shared by every measurement made
+    # with the same scale, so it does not average down over several markers).
+    pressure_err_peak: Optional[float] = None
+    pressure_err_scale: Optional[float] = None
 
 
 class PressureCalculator:
@@ -351,34 +357,43 @@ class PressureCalculator:
                 )
                 zero_peak_for_calc = zero_peak_at_current_t
 
-            if kind == "fluorescence":
-                pressure, pressure_err, zero_peak_override = PressureCalculator._calculate_fluorescence(
-                    sensor=sensor, p_scale=p_scale,
-                    wavelength=peak, wavelength0=zero_peak_for_calc,
-                    wavelength_err=peak_err,
-                )
-            elif kind == "raman":
-                pressure, pressure_err, zero_peak_override = PressureCalculator._calculate_raman(
-                    sensor=sensor, p_scale=p_scale,
-                    wavenumber=peak, wavenumber0=zero_peak_for_calc,
-                    wavenumber0_at_t0=zero_peak_at_t0,
-                    wavenumber_err=peak_err,
-                    current_t=current_t, t0=t0,
-                )
-            elif kind == "raman_edge":
-                pressure, pressure_err, zero_peak_override = PressureCalculator._calculate_diamond_edge(
-                    sensor=sensor, p_scale=p_scale, edge=peak, edge_err=peak_err
-                )
-            else:
-                return PressureCalculationResult(None, None, None)
+            def evaluate(err):
+                if kind == "fluorescence":
+                    return PressureCalculator._calculate_fluorescence(
+                        sensor=sensor, p_scale=p_scale,
+                        wavelength=peak, wavelength0=zero_peak_for_calc,
+                        wavelength_err=err,
+                    )
+                if kind == "raman":
+                    return PressureCalculator._calculate_raman(
+                        sensor=sensor, p_scale=p_scale,
+                        wavenumber=peak, wavenumber0=zero_peak_for_calc,
+                        wavenumber0_at_t0=zero_peak_at_t0,
+                        wavenumber_err=err,
+                        current_t=current_t, t0=t0,
+                    )
+                if kind == "raman_edge":
+                    return PressureCalculator._calculate_diamond_edge(
+                        sensor=sensor, p_scale=p_scale, edge=peak, edge_err=err
+                    )
+                return None, None, None
 
+            pressure, pressure_err, zero_peak_override = evaluate(peak_err)
             if pressure is None:
                 return PressureCalculationResult(None, None, None)
 
             if zero_peak_override is not None:
                 zero_peak_at_current_t = zero_peak_override
 
-            return PressureCalculationResult(pressure, pressure_err, zero_peak_at_current_t)
+            # Every scale adds the peak-position term and the scale-parameter
+            # terms in quadrature, so the same formula with a zero peak error
+            # gives the scale-parameter part exactly.
+            err_peak, err_scale = PressureCalculator._split_pressure_error(
+                pressure_err, evaluate(0.0)[1]
+            )
+            return PressureCalculationResult(
+                pressure, pressure_err, zero_peak_at_current_t, err_peak, err_scale
+            )
         except ZeroDivisionError as e:
             print(f"ZeroDivisionError in pressure calculation ({sensor}, {p_scale}): {e}")
             return PressureCalculationResult(None, None, None)
@@ -391,6 +406,25 @@ class PressureCalculator:
         except Exception as e:
             print(f"Unexpected error in pressure calculation ({sensor}, {p_scale}): {e}")
             return PressureCalculationResult(None, None, None)
+
+    @staticmethod
+    def _split_pressure_error(total, scale_only) -> Tuple[Optional[float], Optional[float]]:
+        """Return ``(peak, scale)`` parts of a quadrature-sum pressure error.
+
+        ``scale_only`` is the error the same formula gives with a zero peak
+        error. Both parts are ``None`` when either input is missing or not finite.
+        """
+        try:
+            total = abs(float(total))
+            scale = abs(float(scale_only))
+        except (TypeError, ValueError):
+            return None, None
+        if not (np.isfinite(total) and np.isfinite(scale)):
+            return None, None
+        # Rounding can leave the scale part a few ulps above the total when the
+        # peak term is zero.
+        scale = min(scale, total)
+        return float(np.sqrt(total * total - scale * scale)), scale
 
     @staticmethod
     def _calculate_diamond_edge(*, sensor: str, p_scale: str,

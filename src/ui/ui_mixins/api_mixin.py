@@ -1025,6 +1025,8 @@ class ApiMixin:
         return {
             "pressure": result.pressure,
             "pressure_err": result.pressure_err,
+            "pressure_err_peak": result.pressure_err_peak,
+            "pressure_err_scale": result.pressure_err_scale,
             "zero_pressure_peak_at_current_t": result.zero_peak_at_current_t,
             "temperature_warning": temperature_warning,
         }

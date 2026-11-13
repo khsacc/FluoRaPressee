@@ -34,15 +34,26 @@ description: 取得・フィッティングに圧力算出を追加するエン�
   温度が有効範囲外でも計算自体は続行し、`temperature_warning` に警告メッセージが入ります。
 - 圧力スケール側で `T0` が固定されている場合は、リクエスト中の `t0` よりそのスケールの固定値が優先されます。
 
-**レスポンス**: [`POST /acquire/fit`](acquire-fit.md) のフィールドに `pressure_gpa`, `pressure_err_gpa`, `zero_pressure_peak_at_current_t`, `temperature_warning` を追加。
+**レスポンス**: [`POST /acquire/fit`](acquire-fit.md) のフィールドに `pressure_gpa`, `pressure_err_gpa`, `pressure_err_peak_gpa`, `pressure_err_scale_gpa`, `zero_pressure_peak_at_current_t`, `temperature_warning` を追加。
 ```json
-"pressure_gpa": 16.91,
-"pressure_err_gpa": 8.26,
-"zero_pressure_peak_at_current_t": 694.312,
+"pressure_gpa": 10.264,
+"pressure_err_gpa": 0.0567,
+"pressure_err_peak_gpa": 0.0143,
+"pressure_err_scale_gpa": 0.0549,
+"zero_pressure_peak_at_current_t": 694.30,
 "temperature_warning": null
 ```
+（例は ruby / `ruby_shen_2020`、Peak1 = 698.000 ± 0.005 nm、`zero_pressure_peak` = 694.30 nm の場合）
+
+`pressure_err_gpa` は圧力の不確かさで、次の 2 つの成分の二乗和の平方根です。
+- `pressure_err_peak_gpa`: フィットで得たピーク位置の誤差に由来する成分。スペクトルごとに独立です。
+- `pressure_err_scale_gpa`: 圧力スケールの係数の誤差に由来する成分。同じスケールで計算したすべての測定に共通です。係数の誤差が文献で与えられていないスケールでは `0` になります。
+
+複数の圧力マーカーの平均をとる場合、`pressure_err_peak_gpa` は独立な誤差として扱えますが、`pressure_err_scale_gpa` はマーカー間で完全に相関するため、平均しても小さくなりません。
+温度補正やゼロ圧ピーク位置の不確かさは、どの成分にも含まれません。
+
 `zero_pressure_peak_at_current_t` は、現在温度でのゼロ圧ピークを明示的に計算できるスケールでのみ値が入り、そうでない場合は `null` になります。
-フィットが失敗した場合は `pressure_gpa`/`pressure_err_gpa`/ `zero_pressure_peak_at_current_t`/`temperature_warning` はすべて `null` になります。
+フィットが失敗した場合は `pressure_gpa`/`pressure_err_gpa`/`pressure_err_peak_gpa`/`pressure_err_scale_gpa`/`zero_pressure_peak_at_current_t`/`temperature_warning` はすべて `null` になります。
 ダブルピークフィットの場合、圧力計算にはPeak1（較正済みx軸で値が小さい方の主ピーク）が使われます。
 横軸がpixelの場合は圧力計算できないため`400 Bad Request`を返します。
 また、`sensor`が期待する単位（nm/cm<sup>-1</sup>）と現在有効なcalibrationの軸単位が一致しない場合（例: Wavelength calibrationが有効な状態でRaman系sensorを指定した場合）も同様に`400 Bad Request`になります。
