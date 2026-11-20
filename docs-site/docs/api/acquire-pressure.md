@@ -16,7 +16,7 @@ description: 取得・フィッティングに圧力算出を追加するエン�
   "zero_pressure_peak": 694.30,
   "temperature_correction": {
     "enabled": true,
-    "scale": "ruby_kobayashi_unpublished",
+    "scale": "ruby_kobayashi_2026",
     "current_t": 300.0,
     "t0": 298.15,
     "zero_pressure_peak_at_t0": 694.30

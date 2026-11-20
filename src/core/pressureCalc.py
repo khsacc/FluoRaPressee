@@ -205,7 +205,7 @@ class PressureCalculator:
 
     TEMPERATURE_SCALES = {
         "ruby": {
-            "ruby_kobayashi_unpublished": {"label": "Kobayashi et al. unpublished", "valid_range": (0, 300)},
+            "ruby_kobayashi_2026": {"label": "Kobayashi et al. 2026", "valid_range": (0, 300)},
             "ruby_yen_nicol_1992": {"label": "Yen and Nicol 1992", "valid_range": (0, 600)},
             "ruby_ragan_1992": {"label": "Ragan et al. 1992", "valid_range": (0.0, 600.0)},
             "ruby_datchi_2007_ht": {"label": "Datchi et al. 2007 HT", "valid_range": (296, 900)},
@@ -829,7 +829,7 @@ class PressureCalculator:
                 offset = datchi_ruby_temp(t0, a1, a2, a3) - zero_peak_at_t0
                 return datchi_ruby_temp(current_t, a1, a2, a3) - offset
 
-            elif t_scale == "ruby_kobayashi_unpublished":
+            elif t_scale == "ruby_kobayashi_2026":
                 wn_at_t0 = 10 ** 7 / zero_peak_at_t0
                 alpha = -458.9
                 theta = 794.0

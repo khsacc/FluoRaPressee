@@ -969,7 +969,7 @@ class ApiMixin:
 
         `sensor`, `pressure_scale`, and `temperature_correction["scale"]` are
         backend keys such as "ruby", "ruby_shen_2020", and
-        "ruby_kobayashi_unpublished", not GUI labels.
+        "ruby_kobayashi_2026", not GUI labels.
 
         This mirrors PressureCalculatorWindow.calculate() without any widget
         dependency. Temperature correction is performed inside
