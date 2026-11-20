@@ -9,12 +9,42 @@ class PressureCalculationResult:
     pressure: Optional[float]
     pressure_err: Optional[float]
     zero_peak_at_current_t: Optional[float]
-    # The two parts of pressure_err, which is their quadrature sum: the
-    # peak-position uncertainty (independent between spectra) and the
+    # The three parts of pressure_err, which is their quadrature sum: the
+    # peak-position uncertainty (independent between spectra), the
     # pressure-scale parameter uncertainty (shared by every measurement made
-    # with the same scale, so it does not average down over several markers).
+    # with the same scale, so it does not average down over several markers),
+    # and the zero-pressure peak uncertainty (shared by every spectrum that
+    # uses the same zero-pressure peak, but independent between markers).
     pressure_err_peak: Optional[float] = None
     pressure_err_scale: Optional[float] = None
+    pressure_err_zero_peak: Optional[float] = None
+    # Uncertainty of zero_peak_at_current_t: the zero-pressure peak uncertainty
+    # propagated through the temperature correction when one is applied, plus
+    # the temperature scale's own coefficient uncertainty where it is known
+    # (see TEMPERATURE_SCALES "debye_param_covariance"). The latter is shared
+    # by every measurement using that temperature scale, so in the pressure
+    # error it is counted in pressure_err_scale, not pressure_err_zero_peak.
+    zero_peak_at_current_t_err: Optional[float] = None
+
+
+@dataclass(frozen=True)
+class ZeroPeakCorrection:
+    """Temperature-corrected zero-pressure peak position.
+
+    ``slope`` is d(value)/d(zero_peak_at_t0). ``zero_peak_err`` is the
+    zero_peak_at_t0 uncertainty propagated through the correction
+    (``abs(slope) * err_at_t0``), ``coefficient_err`` the uncertainty from the
+    temperature scale's own coefficients (0 unless the scale publishes a usable
+    covariance), and ``err`` their quadrature sum.
+    """
+    value: float
+    slope: float
+    zero_peak_err: float
+    coefficient_err: float = 0.0
+
+    @property
+    def err(self) -> float:
+        return float(np.hypot(self.zero_peak_err, self.coefficient_err))
 
 
 class PressureCalculator:
@@ -205,7 +235,22 @@ class PressureCalculator:
 
     TEMPERATURE_SCALES = {
         "ruby": {
-            "ruby_kobayashi_2026": {"label": "Kobayashi et al. 2026", "valid_range": (0, 300)},
+            "ruby_kobayashi_2026": {
+                "label": "Kobayashi et al. 2026", "valid_range": (0, 300),
+                # R1 Debye parameters (alpha in cm^-1, theta in K) of the paper's
+                # R1+R2 global fit with a shared theta, and their covariance.
+                # Reproduced from the paper's SI data (18 spheres; mean shift
+                # in wavenumber from 300 K weighted by its standard error,
+                # scipy curve_fit with absolute_sigma=True), which gives
+                # alpha1 = -458.905(502), alpha2 = -439.038(479), theta =
+                # 793.998(421); corr(alpha1, theta) = -0.996. Ignoring that
+                # correlation would overestimate the error about tenfold.
+                "debye_params": (-458.9, 794.0),
+                "debye_param_covariance": (
+                    (0.2519919726, -0.2103469412),
+                    (-0.2103469412, 0.176978112),
+                ),
+            },
             "ruby_yen_nicol_1992": {"label": "Yen and Nicol 1992", "valid_range": (0, 600)},
             "ruby_ragan_1992": {"label": "Ragan et al. 1992", "valid_range": (0.0, 600.0)},
             "ruby_datchi_2007_ht": {"label": "Datchi et al. 2007 HT", "valid_range": (296, 900)},
@@ -329,70 +374,130 @@ class PressureCalculator:
 
 
     @staticmethod
+    def _normalize_uncertainty(value, name: str) -> float:
+        """Return ``value`` as a finite, non-negative float; ``None`` means 0."""
+        if value is None:
+            return 0.0
+        value = float(value)
+        if not np.isfinite(value) or value < 0.0:
+            raise ValueError(f"{name} must be a finite, non-negative number (got {value})")
+        return value
+
+    @staticmethod
     def calculate(*, sensor: str, p_scale: str, peak: float, zero_peak: float,
                   zero_peak_at_t0: Optional[float] = None, peak_err: float = 0.0,
                   temperature_correction_enabled: bool = False,
                   t_scale: Optional[str] = None,
-                  current_t: float = 298.15, t0: float = 298.15) -> PressureCalculationResult:
-        """圧力を計算し、明示できる場合のみ現在温度でのゼロ圧ピークも返す。"""
+                  current_t: float = 298.15, t0: float = 298.15,
+                  zero_peak_err: Optional[float] = 0.0,
+                  zero_peak_at_t0_err: Optional[float] = None) -> PressureCalculationResult:
+        """圧力を計算し、明示できる場合のみ現在温度でのゼロ圧ピークも返す。
+
+        ``zero_peak_err`` / ``zero_peak_at_t0_err`` はゼロ圧ピーク位置の標準不確かさ
+        （``None`` は 0 扱い）。``zero_peak_at_t0_err`` を省略すると ``zero_peak_err``
+        を使う（``zero_peak_at_t0`` を省略すると ``zero_peak`` を使うのと同じ）。
+        温度補正を行う場合、``zero_peak_at_t0_err`` は補正式を通して現在温度の
+        ゼロ圧ピーク位置の誤差に伝播させてから圧力の誤差に加える。
+        """
         t0 = PressureCalculator.resolve_t0(sensor=sensor, p_scale=p_scale, t0=t0)
         if zero_peak_at_t0 is None:
             zero_peak_at_t0 = zero_peak
 
         try:
+            zero_peak_err = PressureCalculator._normalize_uncertainty(
+                zero_peak_err, "zero_peak_err"
+            )
+            zero_peak_at_t0_err = (
+                zero_peak_err if zero_peak_at_t0_err is None
+                else PressureCalculator._normalize_uncertainty(
+                    zero_peak_at_t0_err, "zero_peak_at_t0_err"
+                )
+            )
             kind = PressureCalculator.SENSORS[sensor]["kind"]
             temperature_mode = PressureCalculator.get_pressure_temperature_mode(
                 sensor=sensor, p_scale=p_scale
             )
 
             zero_peak_for_calc = zero_peak
+            zero_err_for_calc = zero_peak_err
+            # Uncertainty of the zero-pressure peak from the temperature
+            # scale's coefficients; it is propagated exactly like a
+            # zero-pressure peak error but reported in the scale part.
+            zero_coefficient_err = 0.0
             zero_peak_at_current_t = zero_peak
+            zero_peak_at_current_t_err = zero_peak_err
             if temperature_mode == "embedded_pt":
                 zero_peak_for_calc = zero_peak_at_t0
+                zero_err_for_calc = zero_peak_at_t0_err
                 zero_peak_at_current_t = None
+                zero_peak_at_current_t_err = None
             elif temperature_correction_enabled:
-                zero_peak_at_current_t = PressureCalculator.get_corrected_zero_peak(
+                corrected = PressureCalculator.get_corrected_zero_peak_with_err(
                     sensor=sensor, t_scale=t_scale, current_t=current_t,
-                    t0=t0, zero_peak_at_t0=zero_peak_at_t0
+                    t0=t0, zero_peak_at_t0=zero_peak_at_t0,
+                    zero_peak_at_t0_err=zero_peak_at_t0_err,
                 )
-                zero_peak_for_calc = zero_peak_at_current_t
+                zero_peak_for_calc = corrected.value
+                zero_err_for_calc = corrected.zero_peak_err
+                zero_coefficient_err = corrected.coefficient_err
+                zero_peak_at_current_t = corrected.value
+                zero_peak_at_current_t_err = corrected.err
 
-            def evaluate(err):
+            def evaluate(err, zero_err):
                 if kind == "fluorescence":
                     return PressureCalculator._calculate_fluorescence(
                         sensor=sensor, p_scale=p_scale,
                         wavelength=peak, wavelength0=zero_peak_for_calc,
-                        wavelength_err=err,
+                        wavelength_err=err, wavelength0_err=zero_err,
                     )
                 if kind == "raman":
                     return PressureCalculator._calculate_raman(
                         sensor=sensor, p_scale=p_scale,
                         wavenumber=peak, wavenumber0=zero_peak_for_calc,
                         wavenumber0_at_t0=zero_peak_at_t0,
-                        wavenumber_err=err,
+                        wavenumber_err=err, wavenumber0_err=zero_err,
                         current_t=current_t, t0=t0,
                     )
                 if kind == "raman_edge":
+                    # The edge scales use their own literature nu0, so the
+                    # user's zero-pressure peak (and its error) never enters.
                     return PressureCalculator._calculate_diamond_edge(
                         sensor=sensor, p_scale=p_scale, edge=peak, edge_err=err
                     )
                 return None, None, None
 
-            pressure, pressure_err, zero_peak_override = evaluate(peak_err)
+            pressure, pressure_err, zero_peak_override = evaluate(
+                peak_err, float(np.hypot(zero_err_for_calc, zero_coefficient_err))
+            )
             if pressure is None:
                 return PressureCalculationResult(None, None, None)
 
             if zero_peak_override is not None:
                 zero_peak_at_current_t = zero_peak_override
+                # Only two scales report their own zero-pressure peak: the
+                # diamond edge (a fixed literature nu0, independent of the
+                # user's value) and cBN Datchi 2004 (nu0_at_T0 + a*T + b*T^2,
+                # whose slope with respect to nu0_at_T0 is exactly 1).
+                zero_peak_at_current_t_err = 0.0 if kind == "raman_edge" else zero_err_for_calc
 
-            # Every scale adds the peak-position term and the scale-parameter
-            # terms in quadrature, so the same formula with a zero peak error
-            # gives the scale-parameter part exactly.
-            err_peak, err_scale = PressureCalculator._split_pressure_error(
-                pressure_err, evaluate(0.0)[1]
+            # Every scale adds the peak-position, zero-pressure-peak and
+            # scale-parameter terms in quadrature, so re-evaluating the same
+            # formula with some of the input errors set to zero isolates each
+            # part exactly. The temperature-scale coefficient error stays in
+            # every evaluation below, so it ends up in the scale part.
+            without_zero_peak = (
+                pressure_err if zero_err_for_calc == 0.0
+                else evaluate(peak_err, zero_coefficient_err)[1]
+            )
+            err_peak, err_zero_peak, err_scale = PressureCalculator._split_pressure_error(
+                pressure_err, without_zero_peak, evaluate(0.0, zero_coefficient_err)[1]
             )
             return PressureCalculationResult(
-                pressure, pressure_err, zero_peak_at_current_t, err_peak, err_scale
+                pressure, pressure_err, zero_peak_at_current_t,
+                pressure_err_peak=err_peak,
+                pressure_err_scale=err_scale,
+                pressure_err_zero_peak=err_zero_peak,
+                zero_peak_at_current_t_err=zero_peak_at_current_t_err,
             )
         except ZeroDivisionError as e:
             print(f"ZeroDivisionError in pressure calculation ({sensor}, {p_scale}): {e}")
@@ -408,23 +513,32 @@ class PressureCalculator:
             return PressureCalculationResult(None, None, None)
 
     @staticmethod
-    def _split_pressure_error(total, scale_only) -> Tuple[Optional[float], Optional[float]]:
-        """Return ``(peak, scale)`` parts of a quadrature-sum pressure error.
+    def _split_pressure_error(total, without_zero_peak, scale_only
+                              ) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+        """Return ``(peak, zero_peak, scale)`` parts of a quadrature-sum pressure error.
 
-        ``scale_only`` is the error the same formula gives with a zero peak
-        error. Both parts are ``None`` when either input is missing or not finite.
+        ``without_zero_peak`` is the error the same formula gives with a zero
+        zero-pressure-peak error, and ``scale_only`` the error with both the
+        peak and zero-pressure-peak errors set to zero. All parts are ``None``
+        when any input is missing or not finite.
         """
         try:
             total = abs(float(total))
+            partial = abs(float(without_zero_peak))
             scale = abs(float(scale_only))
         except (TypeError, ValueError):
-            return None, None
-        if not (np.isfinite(total) and np.isfinite(scale)):
-            return None, None
-        # Rounding can leave the scale part a few ulps above the total when the
-        # peak term is zero.
-        scale = min(scale, total)
-        return float(np.sqrt(total * total - scale * scale)), scale
+            return None, None, None
+        if not (np.isfinite(total) and np.isfinite(partial) and np.isfinite(scale)):
+            return None, None, None
+        # Rounding can leave a partial sum a few ulps above the larger one when
+        # the term between them is zero.
+        partial = min(partial, total)
+        scale = min(scale, partial)
+        return (
+            float(np.sqrt(partial * partial - scale * scale)),
+            float(np.sqrt(total * total - partial * partial)),
+            scale,
+        )
 
     @staticmethod
     def _calculate_diamond_edge(*, sensor: str, p_scale: str,
@@ -471,12 +585,14 @@ class PressureCalculator:
         return pressure, float(np.sqrt(variance)), nu0
 
     @staticmethod
-    def _calc_mao_type(peak, zero_peak, peak_err, A, B, A_err, B_err):
+    def _calc_mao_type(peak, zero_peak, peak_err, A, B, A_err, B_err, zero_peak_err=0.0):
         r = peak / zero_peak
 
         p = (A / B) * (r**B - 1.0)
 
         dp_peak = (A / zero_peak) * r**(B - 1.0) * peak_err
+        # dP/d(zero_peak) = -A * r^B / zero_peak
+        dp_zero = (A / zero_peak) * r**B * zero_peak_err
         dp_A = ((r**B - 1.0) / B) * A_err
         dp_B = (
             (A / B**2)
@@ -484,32 +600,37 @@ class PressureCalculator:
             * B_err
         )
 
-        dp = np.sqrt(dp_peak**2 + dp_A**2 + dp_B**2)
+        dp = np.sqrt(dp_peak**2 + dp_zero**2 + dp_A**2 + dp_B**2)
         return p, dp
-    
+
     @staticmethod
-    def _calc_kunk_type(peak, zero_peak, peak_err, A, B, A_err, B_err):
+    def _calc_kunk_type(peak, zero_peak, peak_err, A, B, A_err, B_err, zero_peak_err=0.0):
         # Kunc et al. (2003) PRB 10.1103/PhysRevB.68.094107.
         ratio = (peak - zero_peak) / zero_peak
         p = A * ratio * (1.0 + B * ratio)
+        dp_dratio = A * (1 + 2 * B * ratio)
         dp = (
             (ratio * (1 + B * ratio) * A_err)**2
             + (A * ratio**2 * B_err)**2
-            + (A * (1 + 2 * B * ratio) / zero_peak * peak_err)**2
+            + (dp_dratio / zero_peak * peak_err)**2
+            # d(ratio)/d(zero_peak) = -peak / zero_peak^2
+            + (dp_dratio * peak / zero_peak**2 * zero_peak_err)**2
         )**0.5
         return p, dp
 
     @staticmethod
     def _calculate_fluorescence(*, sensor: str, p_scale: str, wavelength: float,
-                                wavelength0: float, wavelength_err: float):
+                                wavelength0: float, wavelength_err: float,
+                                wavelength0_err: float = 0.0):
         if sensor == "ruby":
             if p_scale == "ruby_piermarini_1975":
                 p = 2.746 * (wavelength - wavelength0)
-                return p, 2.746 * wavelength_err, None
+                return p, 2.746 * np.hypot(wavelength_err, wavelength0_err), None
 
             if p_scale == "ruby_mao_1986":
                 p, dp = PressureCalculator._calc_mao_type(
-                    wavelength, wavelength0, wavelength_err, 1904.0, 7.665, 0, 0
+                    wavelength, wavelength0, wavelength_err, 1904.0, 7.665, 0, 0,
+                    zero_peak_err=wavelength0_err,
                 )
                 return p, dp, None
 
@@ -537,12 +658,15 @@ class PressureCalculator:
                 dp_dC = -A/(B + C)**2 * (expX - 1) + (A/(B + C))*expX*dX_dC
                 dX_dwavelength = (B + C)/wavelength * r**(-C)
                 dp_dwavelength = (A/(B + C)) * expX * dX_dwavelength
+                # dX/d(wavelength0) = -(B + C) * r^(-C) / wavelength0
+                dp_dwavelength0 = -A * expX * r**(-C) / wavelength0
 
                 dp = np.sqrt(
                     (dp_dA * A_err)**2 +
                     (dp_dB * B_err)**2 +
                     (dp_dC * C_err)**2 +
-                    (dp_dwavelength * wavelength_err)**2
+                    (dp_dwavelength * wavelength_err)**2 +
+                    (dp_dwavelength0 * wavelength0_err)**2
                 )
                 return p, dp, None
 
@@ -552,30 +676,39 @@ class PressureCalculator:
                 d_wavelength = wavelength - wavelength0
                 p = A * (d_wavelength / wavelength0) * (1 + m * d_wavelength / wavelength0)
                 x = d_wavelength / wavelength0
-                dp = abs(A / wavelength0 * (1 + 2*m*x)) * wavelength_err
+                dp_dx = A * (1 + 2*m*x)
+                # dx/d(wavelength) = 1/wavelength0, dx/d(wavelength0) = -wavelength/wavelength0^2
+                dp = np.hypot(
+                    dp_dx / wavelength0 * wavelength_err,
+                    dp_dx * wavelength / wavelength0**2 * wavelength0_err,
+                )
                 return p, dp, None
 
             if p_scale == "ruby_shen_2020":
                 p, dp = PressureCalculator._calc_kunk_type(
-                    wavelength, wavelength0, wavelength_err, 1870.0, 5.63, 10, 0.03
+                    wavelength, wavelength0, wavelength_err, 1870.0, 5.63, 10, 0.03,
+                    zero_peak_err=wavelength0_err,
                 )
                 return p, dp, None
 
             if p_scale == "ruby_kraus_2016":
                 p, dp = PressureCalculator._calc_mao_type(
-                    wavelength, wavelength0, wavelength_err, 1915.1, 10.603, 0, 0
+                    wavelength, wavelength0, wavelength_err, 1915.1, 10.603, 0, 0,
+                    zero_peak_err=wavelength0_err,
                 )
                 return p, dp, None
 
             if p_scale == "ruby_jacobsen_2008":
                 p, dp = PressureCalculator._calc_mao_type(
-                    wavelength, wavelength0, wavelength_err, 1904.0, 10.32, 0, 0.07
+                    wavelength, wavelength0, wavelength_err, 1904.0, 10.32, 0, 0.07,
+                    zero_peak_err=wavelength0_err,
                 )
                 return p, dp, None
 
             if p_scale == "ruby_sokolova_2013":
                 p, dp = PressureCalculator._calc_kunk_type(
-                    wavelength, wavelength0, wavelength_err, 1870.0, 6.0, 0, 0
+                    wavelength, wavelength0, wavelength_err, 1870.0, 6.0, 0, 0,
+                    zero_peak_err=wavelength0_err,
                 )
                 return p, dp, None
 
@@ -595,9 +728,17 @@ class PressureCalculator:
                     (dp_dC * C_err)**2 +
                     (dp_da * a_err)**2 +
                     (dp_db * b_err)**2 +
-                    (dp_dwavelength * wavelength_err)**2
+                    (dp_dwavelength * wavelength_err)**2 +
+                    # d(d_wavelength)/d(wavelength0) = -1
+                    (dp_dwavelength * wavelength0_err)**2
                 )
                 return p, dp
+
+            def mao(A, B, A_err, B_err):
+                return PressureCalculator._calc_mao_type(
+                    wavelength, wavelength0, wavelength_err, A, B, A_err, B_err,
+                    zero_peak_err=wavelength0_err,
+                )
 
             if p_scale == "sm_srb4o7_datchi_1997_mxb1986":
                 p, dp = datchi_borate_calc(4.032, 9.29e-3, 2.32e-2, wavelength - wavelength0, 0, 0, 0)
@@ -606,27 +747,26 @@ class PressureCalculator:
                 p, dp = datchi_borate_calc(3.989, 0.006915, 0.0166, wavelength-wavelength0, 0.006, 0.000074, 0.001)
                 return p, dp, None
             if p_scale == "sm_srb4o7_rashchenko_2015_lam11":
-                p, dp = PressureCalculator._calc_mao_type(wavelength, wavelength0, wavelength_err, 2836, 14.3, 21, 0.9)
+                p, dp = mao(2836, 14.3, 21, 0.9)
                 return p, dp, None
             if p_scale == "sm_srb4o7_rashchenko_2015_lam12":
-                p, dp = PressureCalculator._calc_mao_type(wavelength, wavelength0, wavelength_err, 3259, -19.6, 20, 1.2)
+                p, dp = mao(3259, -19.6, 20, 1.2)
                 return p, dp, None
             if p_scale == "sm_srb4o7_rashchenko_2015_lam13":
-                p, dp = PressureCalculator._calc_mao_type(wavelength, wavelength0, wavelength_err, 2389, -0.9, 15, 0.7)
+                p, dp = mao(2389, -0.9, 15, 0.7)
                 return p, dp, None
             if p_scale == "sm_srb4o7_rashchenko_2015_lam14":
-                p, dp = PressureCalculator._calc_mao_type(wavelength, wavelength0, wavelength_err, 2988, 35.7, 36, 1.5)
+                p, dp = mao(2988, 35.7, 36, 1.5)
                 return p, dp, None
             if p_scale == "sm_srb4o7_wei_2024":
-                p, dp = PressureCalculator._calc_mao_type(
-                    wavelength, wavelength0, wavelength_err, 2761.0, -9.88, 20.02, 0.82
-                )
+                p, dp = mao(2761.0, -9.88, 20.02, 0.82)
                 return p, dp, None
 
         if sensor == "sm_yag_y1":
             if p_scale == "sm_yag_y1_wei_2024":
                 p, dp = PressureCalculator._calc_mao_type(
-                    wavelength, wavelength0, wavelength_err, 2019.2, -1.33, 22.56, 0.97
+                    wavelength, wavelength0, wavelength_err, 2019.2, -1.33, 22.56, 0.97,
+                    zero_peak_err=wavelength0_err,
                 )
                 return p, dp, None
 
@@ -639,13 +779,21 @@ class PressureCalculator:
                 A_err = 0.004
                 A_eff = A * wavelength0
                 A_eff_err = A_err * wavelength0
-                p, dp = PressureCalculator._calc_mao_type(
-                    wavelength, wavelength0, wavelength_err, A_eff, -11.6, A_eff_err, 0.7
-                )
-                if p > 10.0:
+
+                def lorenz(B, B_err):
+                    # lam0 also enters through A_eff, so the Mao-type helper's own
+                    # zero-peak term would be incomplete; use the total derivative
+                    # dP/d(lam0) = (A/B) * (r^B - 1) - A * r^B instead.
                     p, dp = PressureCalculator._calc_mao_type(
-                        wavelength, wavelength0, wavelength_err, A_eff, -13.6, A_eff_err, 0.6
+                        wavelength, wavelength0, wavelength_err, A_eff, B, A_eff_err, B_err
                     )
+                    r = wavelength / wavelength0
+                    dp_dwavelength0 = (A / B) * (r**B - 1.0) - A * r**B
+                    return p, np.hypot(dp, dp_dwavelength0 * wavelength0_err)
+
+                p, dp = lorenz(-11.6, 0.7)
+                if p > 10.0:
+                    p, dp = lorenz(-13.6, 0.6)
                 return p, dp, None
 
             if p_scale == "sm_srfcl_shen_2021":
@@ -653,14 +801,18 @@ class PressureCalculator:
                 C_err = 0.002
                 d_wavelength = wavelength - wavelength0
                 p = d_wavelength / C
-                dp = np.sqrt((wavelength_err / C) ** 2 + (d_wavelength / C**2 * C_err) ** 2)
+                dp = np.sqrt(
+                    (wavelength_err / C) ** 2
+                    + (wavelength0_err / C) ** 2
+                    + (d_wavelength / C**2 * C_err) ** 2
+                )
                 return p, dp, None
 
             if p_scale == "sm_srfcl_shen_1991":
                 C = 1.10
                 d_wavelength = wavelength - wavelength0
                 p = d_wavelength / C
-                dp = wavelength_err / C
+                dp = np.hypot(wavelength_err, wavelength0_err) / C
                 return p, dp, None
 
         return None, None, None
@@ -668,10 +820,16 @@ class PressureCalculator:
     @staticmethod
     def _calculate_raman(*, sensor: str, p_scale: str, wavenumber: float,
                          wavenumber0: float, wavenumber0_at_t0: float,
-                         wavenumber_err: float, current_t: float, t0: float):
+                         wavenumber_err: float, current_t: float, t0: float,
+                         wavenumber0_err: float = 0.0):
+        # Every Raman scale below depends on the zero-pressure peak only through
+        # the shift (wavenumber - wavenumber0), so its zero-peak term has the
+        # same coefficient as the peak term. For the embedded_pt scales
+        # wavenumber0 == wavenumber0_at_t0 and wavenumber0_err is its error.
+        shift_err = np.hypot(wavenumber_err, wavenumber0_err)
         if sensor == "diamond_13c_1st_order":
             if p_scale == "diamond_13c_schiferl_1997":
-                return (wavenumber - wavenumber0) / 2.83, wavenumber_err / 2.83, None
+                return (wavenumber - wavenumber0) / 2.83, shift_err / 2.83, None
 
             if p_scale == "diamond_13c_mysen_yamashita_2010":
                 a = 1.65e-2
@@ -682,7 +840,7 @@ class PressureCalculator:
 
                 p = ((wavenumber - wavenumber0) + a * current_t + b * current_t**2) / c
                 p_err = np.sqrt(
-                    wavenumber_err**2 +
+                    shift_err**2 +
                     (current_t * a_err)**2 +
                     (current_t**2 * b_err)**2
                 ) / c
@@ -701,7 +859,8 @@ class PressureCalculator:
                 p = -1/(2*d) * (A + np.sqrt(A**2 + 4*d*(wavenumber - B)))
 
                 X = A**2 + 4*d*(wavenumber - B)
-                dp = wavenumber_err / np.sqrt(X)
+                # dP/d(wavenumber) = -1/sqrt(X), dP/d(wavenumber0_at_t0) = dP/dB = +1/sqrt(X)
+                dp = shift_err / np.sqrt(X)
                 zero_peak_at_current_t = (
                     B
                     if PressureCalculator.PRESSURE_SCALES[sensor][p_scale].get("reports_zero_peak_at_current_t")
@@ -713,15 +872,15 @@ class PressureCalculator:
                 a = 3.45
                 a_err = 0.03
                 p = (wavenumber - wavenumber0) / a
-                dp = np.sqrt((wavenumber_err / a)**2 + ((wavenumber - wavenumber0) / a**2 * a_err)**2)
+                dp = np.sqrt((shift_err / a)**2 + ((wavenumber - wavenumber0) / a**2 * a_err)**2)
                 return p, dp, None
 
         if sensor == "zircon_b1g":
             if p_scale == "zircon_schmidt_2013":
-                return (wavenumber-wavenumber0)/5.69, wavenumber_err / 5.69, None
+                return (wavenumber-wavenumber0)/5.69, shift_err / 5.69, None
 
             if p_scale == "zircon_takahashi_2024":
-                return (wavenumber-wavenumber0)/5.48, wavenumber_err / 5.48, None
+                return (wavenumber-wavenumber0)/5.48, shift_err / 5.48, None
 
         if sensor == "quartz_464":
             if p_scale == "quartz_schmidt_ziemann_2000":
@@ -733,7 +892,7 @@ class PressureCalculator:
                 b = 110.86
                 x = wavenumber - wavenumber0
                 p = (a * x**2 + b * x) / 1000.0
-                dp = abs(2.0 * a * x + b) / 1000.0 * wavenumber_err
+                dp = abs(2.0 * a * x + b) / 1000.0 * shift_err
                 return p, dp, None
 
             if p_scale == "quartz_schmidt_ziemann_2000_linear":
@@ -743,7 +902,7 @@ class PressureCalculator:
                 a_err = 0.5
                 x = wavenumber - wavenumber0
                 p = x / a
-                dp = np.sqrt((wavenumber_err / a) ** 2 + (x / a**2 * a_err) ** 2)
+                dp = np.sqrt((shift_err / a) ** 2 + (x / a**2 * a_err) ** 2)
                 return p, dp, None
 
         if sensor == "quartz_128":
@@ -764,7 +923,7 @@ class PressureCalculator:
                 domega = wavenumber - wavenumber0
                 p_mpa = (domega - baseline) / slope
                 p = p_mpa / 1000.0
-                dp = abs(wavenumber_err / slope) / 1000.0
+                dp = abs(shift_err / slope) / 1000.0
                 return p, dp, None
 
         return None, None, None
@@ -785,6 +944,16 @@ class PressureCalculator:
         return alpha * (temperature / theta) ** 4 * integral
 
     @staticmethod
+    def _offset_in_wavenumber(zero_peak_at_t0: float, wavenumber_shift: float) -> Tuple[float, float]:
+        """Apply a wavenumber shift (cm-1) to a zero-pressure wavelength (nm).
+
+        Returns ``(corrected wavelength, d(corrected)/d(zero_peak_at_t0))``:
+        with lam = 1e7 / (1e7 / lam0 + shift), d(lam)/d(lam0) = (lam / lam0)^2.
+        """
+        corrected = 10 ** 7 / (10 ** 7 / zero_peak_at_t0 + wavenumber_shift)
+        return corrected, (corrected / zero_peak_at_t0) ** 2
+
+    @staticmethod
     def get_corrected_zero_peak(*, sensor: str, t_scale: str, current_t: float, t0: float,
                                 zero_peak_at_t0: float) -> float:
         """温度補正されたゼロ圧力ピーク位置を計算する。
@@ -801,14 +970,105 @@ class PressureCalculator:
         Returns:
             補正されたゼロ圧力ピーク位置
         """
+        value, _ = PressureCalculator._corrected_zero_peak_and_slope(
+            sensor=sensor, t_scale=t_scale, current_t=current_t,
+            t0=t0, zero_peak_at_t0=zero_peak_at_t0,
+        )
+        return value
+
+    @staticmethod
+    def get_corrected_zero_peak_with_err(*, sensor: str, t_scale: str, current_t: float,
+                                         t0: float, zero_peak_at_t0: float,
+                                         zero_peak_at_t0_err: Optional[float] = 0.0
+                                         ) -> ZeroPeakCorrection:
+        """温度補正されたゼロ圧力ピーク位置と、その誤差を計算する。
+
+        ``zero_peak_at_t0_err``（基準温度でのゼロ圧力ピーク位置の標準不確かさ、
+        ``None`` は 0 扱い）を補正式の傾き d(補正後)/d(zero_peak_at_t0) で伝播させる。
+        温度スケールの係数の誤差は、係数の共分散が使えるスケール
+        （``debye_param_covariance`` を持つもの）でのみ ``coefficient_err`` に入る。
+        温度そのものの誤差は含まない。
+        """
+        err_at_t0 = PressureCalculator._normalize_uncertainty(
+            zero_peak_at_t0_err, "zero_peak_at_t0_err"
+        )
+        value, slope = PressureCalculator._corrected_zero_peak_and_slope(
+            sensor=sensor, t_scale=t_scale, current_t=current_t,
+            t0=t0, zero_peak_at_t0=zero_peak_at_t0,
+        )
+        coefficient_err = PressureCalculator._temperature_coefficient_err(
+            sensor=sensor, t_scale=t_scale, current_t=current_t, t0=t0,
+            corrected_zero_peak=value,
+        )
+        return ZeroPeakCorrection(
+            value=float(value), slope=float(slope),
+            zero_peak_err=float(abs(slope) * err_at_t0),
+            coefficient_err=float(coefficient_err),
+        )
+
+    @staticmethod
+    def _debye_shift_gradient(alpha: float, theta: float, temperature: float) -> np.ndarray:
+        """d/d(alpha, theta) of ``_calc_debye_shift(alpha, theta, temperature)``.
+
+        With f = alpha (T/theta)^4 I(theta/T) and I(u) = integral_0^u x^3/(e^x-1) dx:
+        df/dalpha = f/alpha, df/dtheta = (alpha/theta) [1/(e^u - 1) - 4 (T/theta)^4 I(u)].
+        """
+        if temperature == 0:
+            return np.zeros(2)
+        u = theta / temperature
+        reduced = PressureCalculator._calc_debye_shift(1.0, theta, temperature)  # f / alpha
+        # 1/(e^u - 1) underflows to 0 well before u = 700 (same cutoff as the integrand)
+        bose = 0.0 if u > 700 else 1.0 / np.expm1(u)
+        return np.array([reduced, (alpha / theta) * (bose - 4.0 * reduced)])
+
+    @staticmethod
+    def _temperature_coefficient_err(*, sensor: str, t_scale: str, current_t: float, t0: float,
+                                     corrected_zero_peak: float) -> float:
+        """Uncertainty of the corrected zero-pressure peak from the temperature scale's coefficients.
+
+        Only scales that carry ``debye_param_covariance`` contribute (currently
+        ruby_kobayashi_2026, whose fit covariance was reproduced from the
+        paper's data). Every other temperature scale either publishes no
+        coefficient errors or publishes them without the covariance;
+        propagating strongly correlated polynomial or Debye coefficients as
+        independent grossly overestimates the error, so those give 0.
+        """
+        meta = PressureCalculator.TEMPERATURE_SCALES.get(sensor, {}).get(t_scale, {})
+        covariance = meta.get("debye_param_covariance")
+        if covariance is None:
+            return 0.0
+        alpha, theta = meta["debye_params"]
+        gradient = (
+            PressureCalculator._debye_shift_gradient(alpha, theta, current_t)
+            - PressureCalculator._debye_shift_gradient(alpha, theta, t0)
+        )
+        wavenumber_err = float(np.sqrt(gradient @ np.asarray(covariance, dtype=float) @ gradient))
+        if PressureCalculator.SENSORS[sensor]["unit"] == "nm":
+            # The Debye shift is in wavenumber; lam = 1e7/nu -> |dlam/dnu| = lam^2 / 1e7.
+            return corrected_zero_peak**2 / 10**7 * wavenumber_err
+        return wavenumber_err
+
+    @staticmethod
+    def _corrected_zero_peak_and_slope(*, sensor: str, t_scale: str, current_t: float,
+                                       t0: float, zero_peak_at_t0: float) -> Tuple[float, float]:
+        """Return ``(corrected zero-pressure peak, d(corrected)/d(zero_peak_at_t0))``.
+
+        Every temperature scale is an offset correction, applied either in the
+        peak's own unit (slope exactly 1) or, for a few wavelength scales, in
+        wavenumber (slope ``(lam0(T) / lam0(T0))**2``, see
+        ``_offset_in_wavenumber``). A new scale must return its slope too;
+        tests/test_zero_peak_error.py checks every scale's slope against a
+        numerical derivative.
+        """
         if sensor == "ruby":
 
             def datchi_ruby_temp(temp, a1, a2, a3):
                     # Note: this function returns the absolute wavelength reported in the literature, not the shift from the input lam0_at_t0.
+                    wl_at_296K = 694.281
                     if temp < 50:
-                        return -0.887
+                        # Below 50 K the paper gives a constant shift of -0.887 nm from 296 K.
+                        return wl_at_296K - 0.887
                     else:
-                        wl_at_296K = 694.281
                         deltat = temp - 296
                         return wl_at_296K + a1 * deltat + a2 * deltat**2 + a3 * deltat ** 3
 
@@ -817,31 +1077,29 @@ class PressureCalculator:
                     wn = 14423 + 4.49 * 10 **-2 * temp -4.81 * 10**-4 * temp ** 2 +3.71 * 10**-7 * temp ** 3
                     return 10 ** 7 / wn
                 offset = ragan_ruby_temp(t0) - zero_peak_at_t0
-                return ragan_ruby_temp(current_t) - offset
+                return ragan_ruby_temp(current_t) - offset, 1.0
             
             elif t_scale == "ruby_datchi_2007_ht":
                 a1, a2, a3 = 0.00746, -3.01e-6, 8.76e-9
                 offset = datchi_ruby_temp(t0, a1, a2, a3) - zero_peak_at_t0
-                return datchi_ruby_temp(current_t, a1, a2, a3) - offset
+                return datchi_ruby_temp(current_t, a1, a2, a3) - offset, 1.0
             
             elif t_scale == "ruby_datchi_2007_lt":
                 a1, a2, a3 = 0.00664, 6.76e-6, -2.33e-8
                 offset = datchi_ruby_temp(t0, a1, a2, a3) - zero_peak_at_t0
-                return datchi_ruby_temp(current_t, a1, a2, a3) - offset
+                return datchi_ruby_temp(current_t, a1, a2, a3) - offset, 1.0
 
             elif t_scale == "ruby_kobayashi_2026":
-                wn_at_t0 = 10 ** 7 / zero_peak_at_t0
-                alpha = -458.9
-                theta = 794.0
-                wn_at_current_t = wn_at_t0 + PressureCalculator._calc_debye_shift(alpha, theta, current_t) - PressureCalculator._calc_debye_shift(alpha, theta, t0)
-                return 10 ** 7 / wn_at_current_t
+                # Shared with _temperature_coefficient_err, which needs the same values.
+                alpha, theta = PressureCalculator.TEMPERATURE_SCALES["ruby"]["ruby_kobayashi_2026"]["debye_params"]
+                wn_shift = PressureCalculator._calc_debye_shift(alpha, theta, current_t) - PressureCalculator._calc_debye_shift(alpha, theta, t0)
+                return PressureCalculator._offset_in_wavenumber(zero_peak_at_t0, wn_shift)
 
             elif t_scale == "ruby_yen_nicol_1992":
-                wn_at_t0 = 10 ** 7 / zero_peak_at_t0
                 alpha = -419
                 theta = 760
-                wn_at_current_t = wn_at_t0 + PressureCalculator._calc_debye_shift(alpha, theta, current_t) - PressureCalculator._calc_debye_shift(alpha, theta, t0)
-                return 10 ** 7 / wn_at_current_t
+                wn_shift = PressureCalculator._calc_debye_shift(alpha, theta, current_t) - PressureCalculator._calc_debye_shift(alpha, theta, t0)
+                return PressureCalculator._offset_in_wavenumber(zero_peak_at_t0, wn_shift)
 
             elif t_scale == "ruby_wei_2024":
                 # Cubic fit to R1 wavelength shift at ambient pressure, Table I of
@@ -851,7 +1109,7 @@ class PressureCalculator:
                     b1, b2, b3 = 7.29e-3, -3.47e-6, 1.09e-8
                     return b1 * deltat + b2 * deltat**2 + b3 * deltat**3
                 offset = wei_ruby_temp(t0) - zero_peak_at_t0
-                return wei_ruby_temp(current_t) - offset
+                return wei_ruby_temp(current_t) - offset, 1.0
 
 
         if sensor == "sm_srb4o7":
@@ -860,7 +1118,7 @@ class PressureCalculator:
                     deltat = temp - 296
                     return -8.7 * 10**-5 * deltat + 4.62 * 10**-6 * deltat**2 -2.38 * 10**-9 * deltat**3
                 offset = datchi_borate_temp(t0) - zero_peak_at_t0
-                return datchi_borate_temp(current_t) - offset
+                return datchi_borate_temp(current_t) - offset, 1.0
 
             if t_scale == "sm_srb4o7_wei_2024":
                 # Linear fit to the lambda1 (0-0 line) wavelength shift at ambient
@@ -870,7 +1128,7 @@ class PressureCalculator:
                     a1 = -0.70e-4
                     return a1 * deltat
                 offset = wei_borate_temp(t0) - zero_peak_at_t0
-                return wei_borate_temp(current_t) - offset
+                return wei_borate_temp(current_t) - offset, 1.0
 
         if sensor == "sm_yag_y1":
             if t_scale == "sm_yag_y1_wei_2024":
@@ -881,7 +1139,7 @@ class PressureCalculator:
                     c1 = -2.12e-4
                     return c1 * deltat
                 offset = wei_yag_y1_temp(t0) - zero_peak_at_t0
-                return wei_yag_y1_temp(current_t) - offset
+                return wei_yag_y1_temp(current_t) - offset, 1.0
 
         if sensor == "sm_srfcl":
             if t_scale == "sm_srfcl_lorenz_1994":
@@ -909,9 +1167,8 @@ class PressureCalculator:
                 def wavenumber_shift(temperature):
                     return PressureCalculator._calc_debye_shift(alpha, theta_d, temperature) + one_phonon_shift(temperature)
 
-                wn_at_t0 = 10 ** 7 / zero_peak_at_t0
-                wn_at_current_t = wn_at_t0 + wavenumber_shift(current_t) - wavenumber_shift(t0)
-                return 10 ** 7 / wn_at_current_t
+                wn_shift = wavenumber_shift(current_t) - wavenumber_shift(t0)
+                return PressureCalculator._offset_in_wavenumber(zero_peak_at_t0, wn_shift)
             
         if sensor == "zircon_b1g":
             if t_scale == "zircon_schmidt_2013":
@@ -919,14 +1176,14 @@ class PressureCalculator:
                     return 7.53 * 10**-9 * temp**3 - 1.61 * 10**-5 * temp**2 - 2.89 * 10**-2 * temp + 1008.9
                 calc_nu_at_t0 = schmidt_zircon_temp(t0-273.15)
                 offset = calc_nu_at_t0 - zero_peak_at_t0
-                return schmidt_zircon_temp(current_t-273.15) - offset
+                return schmidt_zircon_temp(current_t-273.15) - offset, 1.0
             
             if t_scale == "zircon_takahashi_2024":
                 def takahashi_zircon_temp(temp): # in K
                     return 7.54 * 10**-9 * temp**3 - 2.23 * 10**-5 * temp**2 - 1.84 * 10**-2 * temp + 1015.44
                 calc_nu_at_t0 = takahashi_zircon_temp(t0)
                 offset = calc_nu_at_t0 - zero_peak_at_t0
-                return takahashi_zircon_temp(current_t) - offset
+                return takahashi_zircon_temp(current_t) - offset, 1.0
         if sensor == "cubic_bn_to":
             if t_scale == "cubic_bn_kawamoto_2004":
                 def kawamoto_BN_temp(temp):
@@ -936,7 +1193,7 @@ class PressureCalculator:
                     return a0 + a1*temp + a2*temp**2
                 calc_nu_at_t0 = kawamoto_BN_temp(t0)
                 offset = calc_nu_at_t0 - zero_peak_at_t0
-                return kawamoto_BN_temp(current_t) - offset
+                return kawamoto_BN_temp(current_t) - offset, 1.0
 
         if sensor == "quartz_464":
             if t_scale == "quartz_schmidt_ziemann_2000":
@@ -950,8 +1207,8 @@ class PressureCalculator:
                     )
                 calc_nu_at_t0 = schmidt_quartz464_temp(t0 - 273.15)
                 offset = calc_nu_at_t0 - zero_peak_at_t0
-                return schmidt_quartz464_temp(current_t - 273.15) - offset
-        return zero_peak_at_t0
+                return schmidt_quartz464_temp(current_t - 273.15) - offset, 1.0
+        return zero_peak_at_t0, 1.0
 
     @staticmethod
     def get_corrected_lam0(*, sensor: str, t_scale: str, current_t: float, t0: float,

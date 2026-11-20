@@ -557,6 +557,15 @@ class AcquisitionMixin:
         if is_fixed_1d_detector:
             self.radio_1d_full.setChecked(True)
 
+        # With the rows above hidden, the panel only holds the forced Full Range Binning
+        # radio and Flip X-axis. On a physical x-axis (native wavelength or calibrated),
+        # Flip X reverses x and y together and leaves the plot unchanged (see
+        # public_axis_kind()), so the whole panel is hidden. Ocean Optics never falls back
+        # to a pixel axis, because init fails without valid native wavelengths. flip_x
+        # stays editable from Hardware Configuration > Display / Defaults.
+        has_native_axis = getattr(self.thread, "native_wavelengths", None) is not None
+        self.roi_group.setVisible(not (is_fixed_1d_detector and has_native_axis))
+
     def on_camera_identity_ready(self, model, serial_number):
         """CameraThread reports the connected camera's model/serial once after connecting;
         cross-check it against spectrometerConfig.json's recorded identity (see ConfigMixin)."""

@@ -576,7 +576,9 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         bg_group.setLayout(bg_layout)
         controls_layout.addWidget(bg_group)
 
-        roi_group = QGroupBox("ROI Settings")
+        # Kept as an attribute so AcquisitionMixin._apply_hardware_capability_ui() can hide
+        # the whole panel for a fixed 1D detector with a native wavelength axis (Ocean Optics).
+        self.roi_group = QGroupBox("ROI Settings")
         roi_layout = QVBoxLayout()
         self.radio_2d = QRadioButton("2D Image View")
         self.radio_1d_full = QRadioButton("1D Spectrum (Full Range Binning)")
@@ -603,8 +605,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spin_vend.setMaximum(4000)
         roi_spin_layout.addWidget(self.spin_vend)
         roi_layout.addLayout(roi_spin_layout)
-        roi_group.setLayout(roi_layout)
-        controls_layout.addWidget(roi_group)
+        self.roi_group.setLayout(roi_layout)
+        controls_layout.addWidget(self.roi_group)
 
         spec_group = QGroupBox("Spectrometer Configurations")
         spec_layout = QGridLayout()

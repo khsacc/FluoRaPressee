@@ -84,7 +84,7 @@ description: Cr3+:Al2O3（ルビー）R1蛍光線による圧力スケールと�
 
 | スケール | 有効範囲 |
 |---|---|
-| Kobayashi et al., unpublished | 0 – 300 K |
+| Kobayashi et al. 2026 | 0 – 300 K |
 | Yen and Nicol 1992 | 0 – 600 K |
 | Ragan et al. 1992 | 0 – 600 K |
 | Datchi et al. 2007（高温域） | 296 – 900 K |
@@ -94,13 +94,22 @@ description: Cr3+:Al2O3（ルビー）R1蛍光線による圧力スケールと�
 各スケールの $f(T)$（[圧力計算の共通の考え方](index.md#圧力計算の共通の考え方表記)のオフセット補正式$\lambda_0(T) = \lambda_{0,T_0} + [f(T)-f(T_0)]$ に代入するモデル関数）は次の通りです。
 Kobayashi・Yen and Nicolの2スケールは波数 $\tilde\nu = 10^7/\lambda$（cm<sup>-1</sup>）の領域で補正を行い、最後に$\lambda = 10^7/\tilde\nu$ でnmへ戻します。
 
-- **Kobayashi et al., unpublished** — Debyeモデルによる格子シフト（$f(T)$ は $\tilde\nu$ の補正量）
+- **Kobayashi et al. 2026** — <i>J. Appl. Phys.</i>（in press）、Debyeモデルによる格子シフト（$f(T)$ は $\tilde\nu$ の補正量）
 
   $$
   f(T) = \alpha \left(\frac{T}{\Theta}\right)^{4} \int_0^{\Theta/T} \frac{x^3}{e^x - 1}\,dx
   $$
 
-  $\alpha = -458.9$ cm<sup>-1</sup>、$\Theta = 794.0$ K
+  $\alpha = -458.9$ cm<sup>-1</sup>、$\Theta = 794.0$ K（R1線とR2線を共通の $\Theta$ で同時フィットした値）
+
+  $(\alpha, \Theta)$ の共分散行列（論文の生データからフィットを再現して得たもの、単位は cm<sup>-2</sup>, cm<sup>-1</sup> K, K<sup>2</sup>）:
+
+  $$
+  C = \begin{pmatrix} 0.25199 & -0.21035 \\ -0.21035 & 0.17698 \end{pmatrix}
+  $$
+
+  対角成分の平方根が論文の誤差 $\alpha = -458.9(5)$ cm<sup>-1</sup>、$\Theta = 794.0(4)$ K に対応し、相関係数は −0.996 です。
+  このスケールでは、この共分散を使って係数の誤差を補正後のゼロ圧ピーク位置の誤差に含めます（[温度補正スケールの係数の誤差](index.md#温度補正スケールの係数の誤差)）。
 
 - **Yen and Nicol 1992** — Debyeモデルによる格子シフト（$f(T)$ は $\tilde\nu$ の補正量）
 
@@ -124,6 +133,8 @@ Kobayashi・Yen and Nicolの2スケールは波数 $\tilde\nu = 10^7/\lambda$（
 
   $a_1 = 0.00746$、$a_2 = -3.01\times10^{-6}$、$a_3 = 8.76\times10^{-9}$
 
+  $T < 50$ K では $f(T) = 694.281 - 0.887$（一定値）を使います。
+
 - **Datchi et al. 2007（低温域）** — 絶対波長モデル（単位 nm、$T \geq 50$ K、0 – 296 K）
 
   $$
@@ -131,6 +142,8 @@ Kobayashi・Yen and Nicolの2スケールは波数 $\tilde\nu = 10^7/\lambda$（
   $$
 
   $a_1 = 0.00664$、$a_2 = 6.76\times10^{-6}$、$a_3 = -2.33\times10^{-8}$
+
+  $T < 50$ K では $f(T) = 694.281 - 0.887$（一定値）を使います。
 
 - **Wei et al. 2024** — <i>J. Appl. Phys.</i>、R1線、296–773 Kの実測データに対する3次多項式フィット[DOI: 10.1063/5.0178597](https://doi.org/10.1063/5.0178597)（相対波長シフトモデル、単位 nm、296 – 773 K）
 

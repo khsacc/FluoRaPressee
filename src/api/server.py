@@ -455,26 +455,31 @@ def create_app(gui_window, gui_bridge, expose_docs: bool = False) -> FastAPI:
         fit_payload = _fit_payload(req, result)
         payload["fit"] = fit_payload
 
-        fit_res = fit_payload["fit"]
-        if not fit_payload["success"] or fit_res is None:
-            payload["pressure_gpa"] = None
-            payload["pressure_err_gpa"] = None
-            payload["pressure_err_peak_gpa"] = None
-            payload["pressure_err_scale_gpa"] = None
-            payload["zero_pressure_peak_at_current_t"] = None
+        # Response field -> api_pressure() result key.
+        pressure_fields = {
+            "pressure_gpa": "pressure",
+            "pressure_err_gpa": "pressure_err",
+            "pressure_err_peak_gpa": "pressure_err_peak",
+            "pressure_err_scale_gpa": "pressure_err_scale",
+            "pressure_err_zero_peak_gpa": "pressure_err_zero_peak",
+            "zero_pressure_peak_at_current_t": "zero_pressure_peak_at_current_t",
+            "zero_pressure_peak_at_current_t_err": "zero_pressure_peak_at_current_t_err",
+        }
+
+        def without_pressure():
+            for field in pressure_fields:
+                payload[field] = None
             payload["temperature_warning"] = None
             return payload
+
+        fit_res = fit_payload["fit"]
+        if not fit_payload["success"] or fit_res is None:
+            return without_pressure()
 
         peaks = fit_res.get("peaks") or []
         peak_idx = req.pressure_peak_index - 1
         if peak_idx < 0 or peak_idx >= len(peaks):
-            payload["pressure_gpa"] = None
-            payload["pressure_err_gpa"] = None
-            payload["pressure_err_peak_gpa"] = None
-            payload["pressure_err_scale_gpa"] = None
-            payload["zero_pressure_peak_at_current_t"] = None
-            payload["temperature_warning"] = None
-            return payload
+            return without_pressure()
         peak = peaks[peak_idx]["position"]
         peak_err = peaks[peak_idx]["position_err"]
 
@@ -485,14 +490,10 @@ def create_app(gui_window, gui_bridge, expose_docs: bool = False) -> FastAPI:
             peak, peak_err, req.sensor, req.pressure_scale, req.zero_pressure_peak,
             temperature_correction=temperature_correction,
             fit_function=req.fit_function,
+            zero_pressure_peak_err=req.zero_pressure_peak_err,
         )
-        payload["pressure_gpa"] = _jsonify(pressure_result["pressure"])
-        payload["pressure_err_gpa"] = _jsonify(pressure_result["pressure_err"])
-        payload["pressure_err_peak_gpa"] = _jsonify(pressure_result["pressure_err_peak"])
-        payload["pressure_err_scale_gpa"] = _jsonify(pressure_result["pressure_err_scale"])
-        payload["zero_pressure_peak_at_current_t"] = _jsonify(
-            pressure_result["zero_pressure_peak_at_current_t"]
-        )
+        for field, key in pressure_fields.items():
+            payload[field] = _jsonify(pressure_result[key])
         payload["temperature_warning"] = pressure_result["temperature_warning"]
         return payload
 

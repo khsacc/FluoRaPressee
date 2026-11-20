@@ -50,8 +50,16 @@ class DisplayMixin:
 
     def toggle_fitting_panel(self):
         is_on = self.radio_fit_on.isChecked()
+        was_on = getattr(self, '_fitting_was_on', False)
+        self._fitting_was_on = is_on
         self.fitting_panel.setVisible(is_on)
         self.chk_save_fitting.setEnabled(is_on)
+        # Saving fit results defaults to ON whenever fitting is switched on.
+        # Only do this on the OFF -> ON transition: _set_controls_enabled() also
+        # calls this method on every UI unlock (after a sequential run or an API
+        # request), and re-checking there would undo an operator's explicit opt-out.
+        if is_on and not was_on:
+            self.chk_save_fitting.setChecked(True)
 
         # Auto-switch default plot style when fitting mode changes
         self.radio_plot_scatter.blockSignals(True)

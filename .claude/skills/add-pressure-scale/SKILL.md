@@ -1,6 +1,6 @@
 ---
 name: add-pressure-scale
-description: Use when adding a new pressure calibration scale (or a new sensor material/line) to FluoRaPressée's PressureCalculator — e.g. "add the XYZ 2024 ruby scale", "add a new temperature-correction scale for zircon", "add support for a new pressure sensor". Covers what must change in src/core/pressureCalc.py, what does NOT need to change (UI, API, file I/O are all data-driven), the temperature-mode gotchas, the required docs-site/docs/usage/pressure-calculation/ page update (the sole place citations now live), and how to verify without an automated test suite.
+description: Use when adding a new pressure calibration scale (or a new sensor material/line) to FluoRaPressée's PressureCalculator — e.g. "add the XYZ 2024 ruby scale", "add a new temperature-correction scale for zircon", "add support for a new pressure sensor". Covers what must change in src/core/pressureCalc.py, what does NOT need to change (UI, API, file I/O are all data-driven), the temperature-mode gotchas, the required docs-site/docs/usage/pressure-calculation/ page update (the sole place citations now live), and how to verify it (the zero-pressure-peak derivative tests plus a manual --debug check).
 ---
 
 # Adding a pressure scale to PressureCalculator
@@ -19,7 +19,10 @@ migrated out to `docs-site/docs/usage/pressure-calculation/` and now just shows 
 citations there.) Don't touch the UI or API layers unless you're doing something the checklist below calls
 out explicitly.
 
-There is no test suite in this repo (see root `CLAUDE.md`) — verification is manual, via `--debug` mode.
+Automated checks live in `tests/` (see root `CLAUDE.md` for the headless command).
+`tests/test_zero_peak_error.py` checks every scale's zero-pressure-peak error term and every temperature
+scale's slope against a numerical derivative, so it catches a missing or wrong derivative automatically;
+the physics itself (step 4 of *Verify*) is still checked by hand in `--debug` mode.
 
 ## Decide which of the two cases you're in
 
@@ -80,9 +83,10 @@ Both formula methods live in `pressureCalc.py` and are dispatched by `SENSORS[se
 
 - `kind == "fluorescence"` → add a branch inside `_calculate_fluorescence`, under `if sensor == "...":`,
   matching `if p_scale == "your_new_key":`. Signature only has
-  `wavelength, wavelength0, wavelength_err` — **no `current_t`/`t0`/`wavelength0_at_t0`**.
+  `wavelength, wavelength0, wavelength_err, wavelength0_err` — **no `current_t`/`t0`/`wavelength0_at_t0`**.
 - `kind == "raman"` → same, but inside `_calculate_raman`, which *does* additionally get
-  `wavenumber0_at_t0, current_t, t0` (needed for `embedded_pt` raman formulas).
+  `wavenumber0_at_t0, current_t, t0` (needed for `embedded_pt` raman formulas) and has
+  `wavenumber0_err` plus a precomputed `shift_err = hypot(wavenumber_err, wavenumber0_err)`.
 
   > **Asymmetry gotcha**: if you need `embedded_pt` for a **fluorescence** sensor, `_calculate_fluorescence`
   > doesn't currently receive `current_t`/`t0`/`wavelength0_at_t0` at all — no existing fluorescence
@@ -93,12 +97,21 @@ Both formula methods live in `pressureCalc.py` and are dispatched by `SENSORS[se
   Return a 3-tuple: `(pressure, pressure_err, zero_peak_override)`. `zero_peak_override` is normally
   `None` — only return a real value if `reports_zero_peak_at_current_t` is set (step 1).
 
-  For error propagation (`pressure_err`), do standard partial-derivative propagation from the peak
-  position error and any literature-reported coefficient errors (pass `0` for coefficients whose error
-  isn't published — see existing branches for the pattern). Two reusable helpers exist for common
-  functional forms — check whether your formula matches one before writing bespoke derivative code:
-  - `_calc_mao_type(peak, zero_peak, peak_err, A, B, A_err, B_err)` — Mao-type `P = (A/B)((peak/zero)^B - 1)`
-  - `_calc_kunk_type(...)` — Kunc et al. (2003) form, `P = A·r·(1+B·r)` with `r=(peak-zero)/zero`
+  For error propagation (`pressure_err`), do standard partial-derivative propagation, adding in
+  quadrature (no cross terms) the peak-position error, **the zero-pressure-peak error
+  (`wavelength0_err`/`wavenumber0_err`)**, and any literature-reported coefficient errors (pass `0` for
+  coefficients whose error isn't published — see existing branches for the pattern). `calculate()`
+  splits `pressure_err` into its peak / zero-peak / scale parts by re-evaluating the formula with some
+  errors set to zero, which is only exact for a plain quadrature sum. Two reusable helpers exist for
+  common functional forms — check whether your formula matches one before writing bespoke derivative code
+  (both take the zero-peak error as the trailing `zero_peak_err=` keyword; forgetting to pass it silently
+  drops that term):
+  - `_calc_mao_type(peak, zero_peak, peak_err, A, B, A_err, B_err, zero_peak_err=0.0)` — Mao-type `P = (A/B)((peak/zero)^B - 1)`
+  - `_calc_kunk_type(..., zero_peak_err=0.0)` — Kunc et al. (2003) form, `P = A·r·(1+B·r)` with `r=(peak-zero)/zero`
+
+  > **Zero-peak gotcha**: if the zero-pressure peak also enters anywhere other than `peak/zero` or
+  > `peak - zero` (e.g. `sm_srfcl_lorenz_1994`'s `A_eff = A * wavelength0`), the helpers' zero-peak
+  > term is incomplete — use the total derivative instead (see that branch).
 
   `calculate()` already wraps the whole dispatch in try/except (`ZeroDivisionError`/`ValueError`/
   `KeyError`/generic) and prints + returns `PressureCalculationResult(None, None, None)` on failure —
@@ -114,8 +127,22 @@ with temperature, and `temperature_mode` is `"none"`. Add to
 "ruby_newauthor_2025": {"label": "Newauthor et al. 2025", "valid_range": (100, 700)},
 ```
 
-then implement it in `get_corrected_zero_peak()`, under `if sensor == "...": if t_scale == "...":`,
-returning the corrected zero-pressure peak at `current_t` given `zero_peak_at_t0` at `t0`. Note this
+then implement it in `_corrected_zero_peak_and_slope()`, under `if sensor == "...": if t_scale == "...":`,
+returning **a tuple** `(corrected zero-pressure peak at current_t, d(corrected)/d(zero_peak_at_t0))`
+given `zero_peak_at_t0` at `t0`. The slope is what propagates the zero-pressure-peak error through the
+correction: it is exactly `1.0` for an offset applied in the peak's own unit (most scales), and for a
+model defined in wavenumber but applied to a wavelength, return
+`PressureCalculator._offset_in_wavenumber(zero_peak_at_t0, wavenumber_shift)`, which gives both. The
+public `get_corrected_zero_peak()` / `get_corrected_zero_peak_with_err()` wrap it.
+
+**Coefficient uncertainties of a temperature scale**: only propagate them when their *covariance* is
+available (e.g. reproduced from the paper's data). Fitted polynomial/Debye coefficients are strongly
+correlated, and treating published standard deviations as independent overestimates the error badly
+(Wei 2024 ruby: ~0.7 nm at 773 K). Today only `ruby_kobayashi_2026` does this, via
+`"debye_params"` + `"debye_param_covariance"` in its `TEMPERATURE_SCALES` entry, read by
+`_temperature_coefficient_err()` (Debye shift in wavenumber). The result goes into
+`ZeroPeakCorrection.coefficient_err`, the corrected zero peak's error, and the **scale** part of the
+pressure error. Without a covariance, leave the scale out of this mechanism. Note this
 dict is independent of `PRESSURE_SCALES` — any pressure scale with `temperature_mode == "none"` for
 that sensor can be combined with any temperature scale for that sensor; they're not paired 1:1.
 
@@ -166,7 +193,7 @@ if you added a `TEMPERATURE_SCALES` entry).
   straight to `PressureCalculator.calculate()`. A new key works over the API the moment it's in
   `pressureCalc.py`, no schema change needed.
 - `src/core/file_io.py` — `save_fitting_results`/etc. take a generic `pressure_info` dict (`pressure`,
-  `pressure_err`, `scale`, `sensor`, `lam0`) built from whatever the UI/API already resolved; nothing
+  `pressure_err`, `scale`, `sensor`, `lam0`, `lam0_err`) built from whatever the UI/API already resolved; nothing
   sensor-specific.
 - `docs-site/docs/api/acquire-pressure.md` — intentionally doesn't enumerate individual scale keys,
   just points at `src/core/pressureCalc.py`.
@@ -212,8 +239,11 @@ Step 4's docs-site update means **creating a new page**, not editing an existing
 3. No `_category_.json` change — the `pressure-calculation/` category's own sidebar position is already
    fixed; only individual page `sidebar_position` values are per-folder.
 
-## Verify (no automated tests — this is the acceptance check)
+## Verify
 
+0. Run `QT_QPA_PLATFORM=offscreen python -m unittest discover -s tests -v`.
+   For a new sensor (Case B), first add its `(zero-pressure peak, measured peak, current T)` to `CASES`
+   in `tests/test_zero_peak_error.py` — `test_every_sensor_has_a_case` fails until you do.
 1. `python main.py --debug` (synthetic double-peak spectrum, no hardware needed).
 2. Enable peak fitting (the Pressure Calculator refuses to open otherwise), then open it.
 3. Select your sensor / new pressure scale in the combo boxes:

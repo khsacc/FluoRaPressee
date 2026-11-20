@@ -54,6 +54,10 @@ ROIの値を変更すると、現在選択中の回折格子に対する既定�
 **Flip X-axis** チェックボックスは、横軸（波長・Raman shift・pixelいずれの場合も）を反転して表示・保存します。
 ROIの行選択（縦方向）とは独立で、回折格子ごとではなく設定全体で1つの値として保存されます。
 
+Ocean Optics製分光器（1行のリニア検出器で、本体の波長軸を持つ機種）では、**ROI Settings** パネル自体が表示されず、常に **1D Spectrum (Full Range Binning)** で読み出します。
+横軸が常に波長として意味を持つため、Flip X-axisを切り替えてもプロットの見た目は変わりません。
+`flip_x` を変更したい場合は、[Hardware Configuration](menu/hardware/hardware-configuration.md#display--defaults) の **Display / Defaults** タブから行えます。
+
 ## 連続露光
 
 - **Take single spectrum**: 積算1サイクル分（Accumulationsで指定した枚数）を取得すると自動的に停止する単発測定です。
@@ -106,6 +110,7 @@ ROIの行選択（縦方向）とは独立で、回折格子ごとではなく�
 - **Save data**: 現在表示中の1Dスペクトルまたは2Dイメージを、保存ダイアログ（既定では前回保存したフォルダとタイムスタンプ付きファイル名）から書き出します。
   ファイル形式は[スペクトルデータファイル](../data-formats/spectrum-data.md)を参照してください。
 - **Save fitting results**: フィッティングがONのときだけ有効になるチェックボックスです。
+  フィッティングをONに切り替えると自動的にチェックが入ります（不要な場合は手動で外せます。外した状態はフィッティングをOFFにするまで保持されます）。
   ONにして**Save data** を実行すると、スペクトル本体と同時に同じフォルダへ[フィッティング結果ファイル](../data-formats/fitting-results.md#単発測定-_fitting_resultstxt)（`<ファイル名>_fitting_results.txt`）も書き出されます。
 
 Sequential measurement実行中は、この**Save data**ボタン自体が無効化され、前述の通りSkip framesの設定に従って自動的に保存が行われます。

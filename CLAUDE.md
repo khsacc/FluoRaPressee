@@ -134,7 +134,13 @@ dependency, so they're usable standalone or from scripts:
   can expose compatible history explicitly; it never browses arbitrary legacy configuration JSON files.
 - `pressureCalc.py` (`PressureCalculator`): static methods mapping peak shift → pressure (GPa) for
   several sensors (Ruby, Sm2+:SrB4O7, diamond, cBN, zircon) and published calibration scales, with
-  per-scale temperature-validity ranges; `src/ui/pressureCalc_ui.py` wraps it in a `QDialog`.
+  per-scale temperature-validity ranges; `src/ui/pressureCalc_ui.py` wraps it in a `QDialog`. The
+  pressure error is the quadrature sum of three parts reported separately — peak position,
+  zero-pressure peak position (propagated through the temperature correction's slope when one is
+  applied), and scale coefficients; `tests/test_zero_peak_error.py` checks every scale's analytic
+  zero-peak term against a numerical derivative. Temperature-scale coefficient errors are propagated
+  only where a covariance is known (`ruby_kobayashi_2026`'s `debye_param_covariance`) and are counted
+  in the scale part.
 - `file_io.py` (`DataFileIO`): spectrum, background, fitting-result, and sequential-result file
   I/O, deliberately isolated with **no Qt dependency**. Versioned spectrometer configuration
   persistence is the separate responsibility of `ConfigurationCatalog`.

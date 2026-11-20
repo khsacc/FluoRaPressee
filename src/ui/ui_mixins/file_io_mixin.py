@@ -773,18 +773,8 @@ class FileIOMixin:
                     fit_file_path = file_path.rsplit('.', 1)[0] + "_fitting_results.txt"
                     pressure_info = None
                     pw = self.pressure_window
-                    if pw is not None and pw.isVisible() and pw.current_pressure is not None:
-                        lam0_value = pw.current_zero_peak_at_current_t
-                        if lam0_value is None:
-                            lam0_value = pw.spin_lam0_t0.value() if pw.radio_on.isChecked() else pw.spin_lam0.value()
-                        pressure_info = {
-                            "pressure":     pw.current_pressure,
-                            "pressure_err": pw.current_pressure_err,
-                            "scale":        pw.combo_p_scale.currentText(),
-                            "sensor":       pw.combo_sensor.currentText(),
-                            "lam0":         lam0_value,
-                            "lam0_unit":    pw.unit,
-                        }
+                    if pw is not None and pw.isVisible():
+                        pressure_info = pw.pressure_info_for_save()
                     self.file_io.save_fitting_results(fit_file_path, self.latest_fit_res,
                                                       getattr(self, 'latest_fit_func', 'Unknown'),
                                                       pressure_info=pressure_info)

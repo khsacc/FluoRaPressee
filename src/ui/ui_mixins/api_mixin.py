@@ -964,7 +964,7 @@ class ApiMixin:
         return {"success": True, "x_fit": x_fit, "y_fit": y_fit_curve, "fit": res}
 
     def api_pressure(self, peak, peak_err, sensor, pressure_scale, zero_pressure_peak,
-                      temperature_correction=None, fit_function=""):
+                      temperature_correction=None, fit_function="", zero_pressure_peak_err=0.0):
         """Calculate pressure using PressureCalculator's internal keys.
 
         `sensor`, `pressure_scale`, and `temperature_correction["scale"]` are
@@ -975,12 +975,18 @@ class ApiMixin:
         dependency. Temperature correction is performed inside
         PressureCalculator.calculate(); this method only gathers request values
         and formats the API response.
+
+        `zero_pressure_peak_err` and `temperature_correction["zero_pressure_peak_at_t0_err"]`
+        are the standard uncertainties of the two zero-pressure peak positions;
+        without a `temperature_correction`, the T0 one falls back to the former
+        exactly as the T0 position falls back to `zero_pressure_peak`.
         """
         PressureCalculator.validate_fit_pressure_pair(
             fit_function=fit_function, sensor=sensor, p_scale=pressure_scale
         )
 
         zero_peak_at_t0 = None
+        zero_peak_at_t0_err = None
         current_t = 298.15
         t0 = 298.15
         t_scale = None
@@ -991,6 +997,7 @@ class ApiMixin:
             current_t = temperature_correction.get("current_t", current_t)
             t0 = temperature_correction.get("t0", t0)
             zero_peak_at_t0 = temperature_correction.get("zero_pressure_peak_at_t0", zero_pressure_peak)
+            zero_peak_at_t0_err = temperature_correction.get("zero_pressure_peak_at_t0_err", 0.0)
             temperature_enabled = temperature_correction.get("enabled", False)
 
             if temperature_enabled:
@@ -1020,6 +1027,8 @@ class ApiMixin:
             temperature_correction_enabled=temperature_enabled,
             t_scale=t_scale,
             current_t=current_t, t0=t0,
+            zero_peak_err=zero_pressure_peak_err,
+            zero_peak_at_t0_err=zero_peak_at_t0_err,
         )
 
         return {
@@ -1027,7 +1036,9 @@ class ApiMixin:
             "pressure_err": result.pressure_err,
             "pressure_err_peak": result.pressure_err_peak,
             "pressure_err_scale": result.pressure_err_scale,
+            "pressure_err_zero_peak": result.pressure_err_zero_peak,
             "zero_pressure_peak_at_current_t": result.zero_peak_at_current_t,
+            "zero_pressure_peak_at_current_t_err": result.zero_peak_at_current_t_err,
             "temperature_warning": temperature_warning,
         }
 

@@ -73,3 +73,64 @@ $f(T)$ の絶対値そのものが正確でなくても、$T_0$ での実測値 
 ただし計算そのものは止まらず、範囲外でも外挿してそのまま圧力が計算されるため、警告が出た場合は文献の適用範囲を確認したうえで結果を解釈してください。
 :::
 
+## ゼロ圧ピーク位置の誤差
+
+ゼロ圧ピーク位置の入力欄（Zero-pressure peak / Zero-pressure peak at T0）のすぐ下にある **Uncertainty** 欄に、その標準不確かさを入力できます（単位はゼロ圧ピーク位置と同じ）。
+入力した誤差は圧力の誤差に伝播されます。
+
+- 「Use the current value as zero-pressure peak position」/「Use the Current Value as the zero-pressure peak position at T0」ボタンを押すと、現在のピーク位置と一緒に、そのフィットで得たピーク位置の誤差がUncertainty欄に入ります。
+- 圧力マーカーを切り替えると、ゼロ圧ピーク位置は初期値に、Uncertaintyは0に戻ります。
+- ゼロ圧ピーク位置とその誤差は、小数点以下4桁まで扱います。
+- [Diamond Raman Edge](diamond-raman-edge.md)はスケール固有の $\nu_0$ を使うため、Uncertainty欄は表示されません。
+
+### 圧力の誤差の内訳
+
+表示・保存される圧力の誤差 $\sigma_P$ は、次の3つの成分の二乗和の平方根です（$\lambda$ と $\lambda_0$ の誤差は互いに独立として扱います）。
+
+$$
+\sigma_P = \sqrt{\left(\frac{\partial P}{\partial \lambda}\,\sigma_\lambda\right)^2 + \left(\frac{\partial P}{\partial \lambda_0}\,\sigma_{\lambda_0}\right)^2 + \sigma_{P,\mathrm{scale}}^2}
+$$
+
+- 第1項: フィットで得たピーク位置の誤差 $\sigma_\lambda$ に由来する成分
+- 第2項: ゼロ圧ピーク位置の誤差 $\sigma_{\lambda_0}$ に由来する成分
+- 第3項: 圧力スケールの係数の誤差（文献で与えられている場合のみ）に由来する成分。温度補正スケールの係数の誤差を含めるスケールでは、その分もここに入ります（下記）
+
+$\partial P/\partial \lambda_0$ の大きさは $\partial P/\partial \lambda$ とほぼ同じなので、$\sigma_{\lambda_0}$ が $\sigma_\lambda$ と同程度なら圧力の誤差への寄与も同程度になります。
+HTTP APIでは3つの成分を別々に返します（[POST /acquire/pressure](../../api/acquire-pressure.md)）。
+
+### 温度補正をOnにした場合
+
+$\lambda_{0,T_0}$ の誤差は、温度補正の式を通して現在温度でのゼロ圧ピーク位置 $\lambda_0(T)$ の誤差に伝播させてから圧力の誤差に加えます。
+
+$$
+\sigma_{\lambda_0(T)} = \left|\frac{\partial \lambda_0(T)}{\partial \lambda_{0,T_0}}\right|\,\sigma_{\lambda_{0,T_0}}
+$$
+
+- nm（Raman圧力マーカーではcm<sup>-1</sup>）のまま $f(T) - f(T_0)$ を加える補正式では、係数は1で、誤差はそのまま引き継がれます。
+- 波数 $\tilde\nu = 10^7/\lambda$ の領域で補正してnmに戻す補正式（Rubyの Kobayashi et al.・Yen and Nicol 1992、Sm<sup>2+</sup>:SrFClの Lorenz et al. 1994）では、係数は $\left(\lambda_0(T)/\lambda_{0,T_0}\right)^2$ です（1との差は1%程度以下）。
+
+伝播させた誤差は、「Zero-pressure peak at current T」欄に「値 ± 誤差」の形で表示されます。
+温度補正が**必須**なスケールでは、Zero-pressure peak at T0 の誤差がそのまま圧力の式に入ります。
+
+#### 温度補正スケールの係数の誤差
+
+Rubyの **Kobayashi et al.** スケールでは、Debyeモデルのパラメータ $(\alpha, \Theta)$ の誤差も、両者の共分散行列 $C$ を使って $\lambda_0(T)$ の誤差に加えます。
+
+$$
+\sigma_{\tilde\nu,\mathrm{coef}}^2 = \mathbf{g}^{\mathsf T} C\,\mathbf{g},\quad
+\mathbf{g} = \nabla_{(\alpha,\Theta)}\big[f(T) - f(T_0)\big],\quad
+\sigma_{\lambda_0(T),\mathrm{coef}} = \frac{\lambda_0(T)^2}{10^7}\,\sigma_{\tilde\nu,\mathrm{coef}}
+$$
+
+$C$ の値は[Rubyのページ](ruby.md)の温度シフト補正スケールの節に載せています。
+$\alpha$ と $\Theta$ は強く反相関しているため（相関係数 −0.996）、この誤差は 0 – 300 K で $10^{-4}$ nm程度（圧力で約0.0003 GPa）と小さくなります。
+
+- 「Zero-pressure peak at current T」欄の誤差は、$\lambda_{0,T_0}$ の誤差を伝播させた値と、この係数の誤差の二乗和の平方根です。
+- 圧力の誤差の内訳では、係数の誤差は同じ温度補正スケールを使うすべての測定に共通なので、第3項（圧力スケールの係数の誤差）に含めます。第2項は $\lambda_{0,T_0}$ の誤差による分だけです。
+
+ほかの温度補正スケールは、係数の誤差が文献に載っていないか、載っていても係数間の共分散がありません。
+共分散なしに係数を独立とみなして伝播させると誤差を大きく過大評価してしまうため（例えばWei et al. 2024のRubyで773 Kのとき約0.7 nm）、これらのスケールでは係数の誤差を含めていません。
+
+:::note
+現在温度 $T$・基準温度 $T_0$ そのものの誤差は、圧力の誤差に含まれません。
+:::
