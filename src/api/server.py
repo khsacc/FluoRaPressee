@@ -2,6 +2,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 
 import numpy as np
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from src.api.schemas import (
     AcquireFitRequest,
@@ -31,6 +32,7 @@ from src.core.configuration_catalog import (
     ConfigurationError,
 )
 from src.core.api_clients import find_client, ip_allowed
+from src.core.data_versions import UnsupportedDataVersionError
 from src.core.pressureCalc import PressureCalculator
 from src.ui.ui_mixins.acquisition_mixin import GateBusyError
 from src.ui.ui_mixins.api_mixin import (
@@ -496,6 +498,19 @@ def create_app(gui_window, gui_bridge, expose_docs: bool = False) -> FastAPI:
             payload[field] = _jsonify(pressure_result[key])
         payload["temperature_warning"] = pressure_result["temperature_warning"]
         return payload
+
+    @app.exception_handler(UnsupportedDataVersionError)
+    async def unsupported_data_version(_request: Request, exc: UnsupportedDataVersionError):
+        # The configuration catalog was written by a newer version and refused at
+        # start-up (work_updater.md 方針14). Not the caller's fault, and not fixable
+        # by retrying against this build: 503 with a stable code.
+        return JSONResponse(
+            status_code=503,
+            content={"detail": {
+                "code": "unsupported_data_version",
+                "message": str(exc),
+            }},
+        )
 
     app.include_router(router)
     return app

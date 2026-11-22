@@ -14,6 +14,12 @@ profiles* underneath their slot, keyed by (slot_id, axis_kind,
 excitation_wavelength_key).  Saving a new calibration only ever replaces the
 active version of its own profile; it never touches sibling profiles at the
 same slot.
+
+A catalog or record written by a newer version (a higher schema_version) is
+refused without writing anything to it (work/work_updater.md 方針14): opening the
+catalog raises UnsupportedDataVersionError before WAL mode is set or any table is
+created (reading the -wal file too, when there is one), and a newer record is
+rejected on read.
 """
 
 from __future__ import annotations
@@ -23,7 +29,6 @@ import json
 import math
 import os
 import sqlite3
-import sys
 import threading
 import uuid
 from contextlib import contextmanager
@@ -31,6 +36,9 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from src.core.app_paths import configurations_dir
+from src.core.data_versions import UnsupportedDataVersionError, check_supported_version
 
 
 CONFIGURATION_SCHEMA_VERSION = 2
@@ -58,15 +66,34 @@ class AmbiguousConfigurationProfileError(ConfigurationError):
     (axis_kind, excitation_wavelength_nm) to disambiguate which one is meant."""
 
 
+CATALOG_DESCRIPTION = "The configuration catalog (catalog.sqlite3)"
+
+
 def default_configuration_root() -> Path:
-    """Return a per-user, writable application-data directory."""
-    if sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-    else:
-        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-    return base / "FluoraPressee" / "configurations"
+    """Return a per-user, writable application-data directory (src/core/app_paths.py)."""
+    return configurations_dir()
+
+
+class UnavailableConfigurationCatalog:
+    """Stand-in used when the catalog was refused at start-up (方針14).
+
+    Every operation raises UnsupportedDataVersionError with the original reason, so
+    callers that already report errors (the calibration dialog, the API) explain
+    why instead of crashing, and nothing can write to the newer catalog.
+    """
+
+    def __init__(self, error: UnsupportedDataVersionError):
+        self.error = error
+
+    def __getattr__(self, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        error = self.error
+
+        def refuse(*_args, **_kwargs):
+            raise UnsupportedDataVersionError(error.what, error.found, error.supported)
+
+        return refuse
 
 
 def excitation_wavelength_key(value_nm: Any) -> int:
@@ -107,6 +134,86 @@ def format_configuration_label(summary: dict[str, Any]) -> str:
     )
 
 
+# Tables and indexes this build creates when they are missing. Executed one statement
+# at a time inside _initialize_database()'s transaction (not with executescript(),
+# which would commit it first).
+_BASE_SCHEMA = (
+    """
+    CREATE TABLE IF NOT EXISTS catalog_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS slots (
+        slot_id TEXT PRIMARY KEY,
+        signature TEXT NOT NULL UNIQUE,
+        spectrometer_model TEXT,
+        spectrometer_serial TEXT,
+        camera_model TEXT,
+        camera_serial TEXT,
+        grating_index INTEGER NOT NULL,
+        grating_grooves_per_mm INTEGER NOT NULL,
+        center_position_pm INTEGER NOT NULL,
+        roi_mode TEXT NOT NULL,
+        roi_start INTEGER NOT NULL,
+        roi_end INTEGER NOT NULL,
+        active_configuration_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS calibration_profiles (
+        calibration_profile_id TEXT PRIMARY KEY,
+        slot_id TEXT NOT NULL,
+        axis_kind TEXT NOT NULL CHECK(axis_kind IN ('wavelength', 'raman_shift')),
+        excitation_wavelength_key INTEGER NOT NULL,
+        active_configuration_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(slot_id) REFERENCES slots(slot_id),
+        CHECK(
+            (axis_kind = 'wavelength' AND excitation_wavelength_key = -1)
+            OR (axis_kind = 'raman_shift' AND excitation_wavelength_key > 0)
+        )
+    )
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_calibration_profiles_identity
+        ON calibration_profiles(slot_id, axis_kind, excitation_wavelength_key)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS configurations (
+        configuration_id TEXT PRIMARY KEY,
+        slot_id TEXT NOT NULL,
+        calibration_profile_id TEXT,
+        created_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('active', 'archived')),
+        calibration_unit TEXT NOT NULL,
+        relative_path TEXT NOT NULL UNIQUE,
+        sha256 TEXT NOT NULL,
+        last_used_at TEXT,
+        use_count INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY(slot_id) REFERENCES slots(slot_id),
+        FOREIGN KEY(calibration_profile_id) REFERENCES calibration_profiles(calibration_profile_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_configurations_slot_created
+        ON configurations(slot_id, created_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_configurations_status_created
+        ON configurations(status, created_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_slots_active_conditions
+        ON slots(grating_index, center_position_pm, roi_mode, roi_start, roi_end)
+    """,
+)
+
+
 class ConfigurationCatalog:
     """Persist immutable records and maintain one active version per
     calibration profile (not per slot -- see module docstring).
@@ -133,6 +240,8 @@ class ConfigurationCatalog:
         self.root = Path(root) if root is not None else default_configuration_root()
         self.records_root = self.root / "records"
         self.database_path = self.root / "catalog.sqlite3"
+        # First of all, before WAL mode or any table touches the file (方針14).
+        self._check_catalog_version()
         self.records_root.mkdir(parents=True, exist_ok=True)
         self._record_cache: dict[str, dict[str, Any]] = {}
         self._record_cache_lock = threading.Lock()
@@ -144,6 +253,63 @@ class ConfigurationCatalog:
         # resurrecting a deleted/superseded record until the process restarts.
         self._record_cache_generation = 0
         self._initialize_database()
+
+    def _check_catalog_version(self) -> None:
+        """Refuse a catalog this build does not know, before anything touches it.
+
+        Runs before WAL mode is set or any table is created. Without a -wal file the
+        main file is the whole catalog, so it is read through an immutable URI, which
+        takes no locks and creates no -wal/-shm files: a refused catalog stays
+        byte-for-byte unchanged. With a -wal file (a newer version that is running,
+        or crashed before a checkpoint) the newest version number and tables may be
+        only there, which an immutable read cannot see, so a read-only connection is
+        used instead: it reads the -wal, never checkpoints it and cannot write, and
+        leaves the main file and the -wal unchanged (it may create the -shm index).
+        """
+        if not self.database_path.exists():
+            return
+        wal_path = self.database_path.with_name(self.database_path.name + "-wal")
+        mode = "mode=ro" if wal_path.exists() else "immutable=1"
+        uri = f"{self.database_path.resolve().as_uri()}?{mode}"
+        conn = sqlite3.connect(uri, uri=True, timeout=10.0)
+        try:
+            self._read_catalog_version(conn)
+        finally:
+            conn.close()
+
+    def _read_catalog_version(self, conn: sqlite3.Connection) -> int | None:
+        """The catalog's checked schema_version; None while it has none yet.
+
+        None for a file with no tables (a new catalog), or with catalog_meta but no
+        schema_version row (a first start that was interrupted). catalog_meta has
+        been the first table of every catalog this module has created, so a file with
+        tables but no readable catalog_meta is refused like a newer one rather than
+        having this build's tables added to it.
+        """
+        tables = conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'"
+        ).fetchone()[0]
+        if not tables:
+            return None
+        try:
+            row = conn.execute(
+                "SELECT value FROM catalog_meta WHERE key = 'schema_version'"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            raise UnsupportedDataVersionError(
+                CATALOG_DESCRIPTION, None, CATALOG_SCHEMA_VERSION
+            ) from None
+        if row is None:
+            return None
+        return self._check_schema_value(row[0])
+
+    @staticmethod
+    def _check_schema_value(value) -> int:
+        try:
+            version = int(value)
+        except (TypeError, ValueError):
+            version = value
+        return check_supported_version(version, CATALOG_SCHEMA_VERSION, CATALOG_DESCRIPTION)
 
     def _invalidate_record_cache(self) -> None:
         with self._record_cache_lock:
@@ -170,72 +336,16 @@ class ConfigurationCatalog:
             conn.close()
 
     def _initialize_database(self) -> None:
+        # One transaction for the whole set-up, so that a refusal or any other
+        # failure part-way leaves no table or column behind. The write lock is taken
+        # first and the version read again under it, before any DDL, in case another
+        # process changed the catalog after _check_catalog_version(). The statements
+        # are executed one by one: executescript() would commit the transaction first.
         with self._connection() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS catalog_meta (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS slots (
-                    slot_id TEXT PRIMARY KEY,
-                    signature TEXT NOT NULL UNIQUE,
-                    spectrometer_model TEXT,
-                    spectrometer_serial TEXT,
-                    camera_model TEXT,
-                    camera_serial TEXT,
-                    grating_index INTEGER NOT NULL,
-                    grating_grooves_per_mm INTEGER NOT NULL,
-                    center_position_pm INTEGER NOT NULL,
-                    roi_mode TEXT NOT NULL,
-                    roi_start INTEGER NOT NULL,
-                    roi_end INTEGER NOT NULL,
-                    active_configuration_id TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS calibration_profiles (
-                    calibration_profile_id TEXT PRIMARY KEY,
-                    slot_id TEXT NOT NULL,
-                    axis_kind TEXT NOT NULL CHECK(axis_kind IN ('wavelength', 'raman_shift')),
-                    excitation_wavelength_key INTEGER NOT NULL,
-                    active_configuration_id TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY(slot_id) REFERENCES slots(slot_id),
-                    CHECK(
-                        (axis_kind = 'wavelength' AND excitation_wavelength_key = -1)
-                        OR (axis_kind = 'raman_shift' AND excitation_wavelength_key > 0)
-                    )
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_calibration_profiles_identity
-                    ON calibration_profiles(slot_id, axis_kind, excitation_wavelength_key);
-
-                CREATE TABLE IF NOT EXISTS configurations (
-                    configuration_id TEXT PRIMARY KEY,
-                    slot_id TEXT NOT NULL,
-                    calibration_profile_id TEXT,
-                    created_at TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK(status IN ('active', 'archived')),
-                    calibration_unit TEXT NOT NULL,
-                    relative_path TEXT NOT NULL UNIQUE,
-                    sha256 TEXT NOT NULL,
-                    last_used_at TEXT,
-                    use_count INTEGER NOT NULL DEFAULT 0,
-                    FOREIGN KEY(slot_id) REFERENCES slots(slot_id),
-                    FOREIGN KEY(calibration_profile_id) REFERENCES calibration_profiles(calibration_profile_id)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_configurations_slot_created
-                    ON configurations(slot_id, created_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_configurations_status_created
-                    ON configurations(status, created_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_slots_active_conditions
-                    ON slots(grating_index, center_position_pm, roi_mode, roi_start, roi_end);
-                """
-            )
+            conn.execute("BEGIN IMMEDIATE")
+            self._read_catalog_version(conn)
+            for statement in _BASE_SCHEMA:
+                conn.execute(statement)
             conn.execute(
                 "INSERT OR IGNORE INTO catalog_meta(key, value) VALUES('schema_version', ?)",
                 (str(CATALOG_SCHEMA_VERSION),),
@@ -276,7 +386,8 @@ class ConfigurationCatalog:
         version_row = conn.execute(
             "SELECT value FROM catalog_meta WHERE key = 'schema_version'"
         ).fetchone()
-        version = int(version_row["value"])
+        # Already checked before any DDL (_initialize_database); kept as a guard.
+        version = self._check_schema_value(version_row["value"])
         if version >= CATALOG_SCHEMA_VERSION:
             return
 

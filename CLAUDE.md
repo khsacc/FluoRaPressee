@@ -31,6 +31,20 @@ running the app in `--debug` mode and exercising the relevant UI flow.
 
 It is not required to verify screenshots once you made changes to GUI. If something is needed to be checked, ask the user. 
 
+**Distribution (Windows builds)**: users get a PyInstaller onedir build wrapped in an Inno Setup
+installer, published as a GitHub Release (design and rationale: `work/work_updater.md`).
+`packaging/build_windows.ps1 [-Installer]` is the single build procedure (CI and by hand): it writes
+the untracked `src/_build_info.py`, runs `--smoke-test` from source, runs PyInstaller with
+`packaging/FluoRaPressee.spec` (three exes sharing one `_internal`: live GUI, Analysis Mode, and the
+console `FluoRaPressee-OceanOpticsDriver.exe` from `packaging/oceanoptics_driver.py`), smoke-tests the
+built exes, then optionally runs `packaging/FluoRaPressee.iss`. `main.py --smoke-test` /
+`analysis_main.py --smoke-test` import every backend and the API server without touching hardware and
+exit 0/1. `.github/workflows/release.yml` builds a v* tag and creates a **draft** release (drafts are
+invisible to the update check). The version lives only in `src/version.py` (PEP 440; the tag must be
+`v<version>`). Development PCs never install the app; installer behaviour is tested in Windows
+Sandbox/VMs (`packaging/install_test.ps1` really installs, CI only). The installer's `AppId` GUID in
+the `.iss` must never change.
+
 ## Architecture
 
 **Directory layout**: `src/` holds only one entry-adjacent file at its top level —
@@ -43,7 +57,11 @@ concern:
   menu-bar dialogs (`src/ui/menu/`).
 - `src/api/`: the optional HTTP API layer (see below).
 
-**Entry points**: `main.py` sets `QT_OPENGL=software`, prints startup info, ensures
+**Entry points**: `main.py` first calls `src.core.app_logging.setup_stdio()` (a windowed build has
+`sys.stdout is None`; output then goes to a per-process `logs/app-<kind>-<time>-<pid>.log`), sets
+`QT_OPENGL=software`, prints startup info, migrates legacy repo-root files
+(`src.core.app_paths.prepare_user_data`), takes the installer mutex (frozen builds only) and, in
+hardware mode, the PC-wide instrument mutex (`src/core/runtime_env.py`), then ensures
 `spectrometerConfig.json` exists (prompting the user for grating grooves/mm if not — see
 `check_and_create_config()` in `src/app_bootstrap.py`), then constructs `SpectrometerGUI` from
 `src/ui/main_window.py` (`src/ui/__init__.py` re-exports it, so `from src.ui import SpectrometerGUI`
@@ -148,13 +166,21 @@ dependency, so they're usable standalone or from scripts:
   end of an acquisition cycle) without making live hardware calls, on top of
   `src/hardware/status/instrument_status.py`.
 
-**Config/state files** (generated at runtime, not checked in): `spectrometerConfig.json` (grating list,
-default ROIs, `flip_x`, hardware `model`) at the repo root, plus a local UI cache
-(`src/ui/local_cache.py`) read/written by `_load_local_cache`/`_save_local_cache` in
-`src/ui/ui_mixins/config_mixin.py` (last save/sequential directories, etc.). Versioned measurement
-configurations are stored below the user's application-data directory in
-`FluoraPressee/configurations/`: canonical records under `records/YYYY/MM/` and the query-oriented
-`catalog.sqlite3` index. Exposure, accumulation, sample/material, dark,
+**Config/state files** (generated at runtime, not checked in) all live in one per-user folder,
+`src.core.app_paths.user_data_dir()` (`%LOCALAPPDATA%\FluoraPressee\` on Windows), for source runs and
+installed builds alike; the env var `FLUORAPRESSEE_DATA_DIR` moves all of it (tests, wizard trials).
+Never write into the install folder, and never hard-code a working-directory-relative path — ask
+`app_paths` (evaluated on every call). Contents: `spectrometerConfig.json` (grating list, default ROIs,
+`flip_x`, hardware `model`), the local UI cache `local_cache.json` (`src/ui/local_cache.py`, read/written
+by `_load_local_cache`/`_save_local_cache` in `src/ui/ui_mixins/config_mixin.py` under an inter-process
+file lock, since the live GUI and Analysis Mode may run together), `api_clients.json`, user-added
+`calibrationStandards/` (loaded after the bundled ones, `app_paths.bundled_resource_path`), `logs/`,
+and versioned measurement configurations in `configurations/`: canonical records under
+`records/YYYY/MM/` and the query-oriented `catalog.sqlite3` index. Files a source checkout used to keep
+at the repo root are migrated once (copied, original renamed `*.migrated`) only when running from source
+without `FLUORAPRESSEE_DATA_DIR` (`app_paths.legacy_migration_enabled`). Data written by a newer version
+(catalog `schema_version`, `api_clients.json` `version`) is refused untouched
+(`src/core/data_versions.py`); bump a format version only for incompatible changes. Exposure, accumulation, sample/material, dark,
 fit, and pressure settings deliberately do not belong to these records.
 
 **Optional HTTP API layer** (`src/api/`, `src/ui/ui_mixins/api_mixin.py`): exposes a subset of
@@ -200,7 +226,7 @@ rather than blocking the GUI thread on `join()`.
   per paired application, optional per-client IP allow-list with CIDR support). Stored under the
   user's application-data directory (`FluoraPressee/api_clients.json`, atomic write, `0600` on POSIX);
   the legacy single-key `fluora_pressee_api_key.json` at the repo root is migrated verbatim on first
-  load and then deleted. The list is held as an immutable tuple and replaced wholesale on edit, so API
+  load and then deleted (source runs without `FLUORAPRESSEE_DATA_DIR` only). The list is held as an immutable tuple and replaced wholesale on edit, so API
   worker threads read it without a lock. `src/ui/menu/api_clients_dialog.py` is the management dialog
   (menu "API → Manage Clients").
 - `src/api/schemas.py` / `src/api/server.py` (`create_app`): Pydantic request/response models and the
@@ -246,6 +272,12 @@ rather than blocking the GUI thread on `join()`.
 
 - Comments and many log/print messages are in Japanese; the README is bilingual (`README.md` /
   `README_ja.md`). Match the existing language when editing a given file's comments.
+- **Updates**: `src/core/update_check.py` (Qt-free) reads GitHub Releases and picks the newest
+  non-draft release newer than `__version__` that carries `FluoRaPressee-Setup-<version>.exe`;
+  `src/ui/menu/help_menu.py` (`HelpMenu`, shared by the live GUI and Analysis Mode) checks at most once
+  per 24 h in the background and only adds a Help-menu item. The app never downloads or runs the
+  installer; the installer itself detects a running FluoRaPressée via the
+  `Global\FluoRaPresseeRunning:<install dir>` mutex.
 - User-facing manual content (installation, usage, API reference) lives in `docs-site/` (a Docusaurus
   site published to GitHub Pages; manual screenshots live under `docs-site/static/img/manual/`), not
   internal developer docs (those live in `work/`).

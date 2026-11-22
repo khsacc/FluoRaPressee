@@ -177,6 +177,9 @@ class StatusResponse(BaseModel):
     configuration: dict[str, Any]
     hardware_state: dict[str, Any]
     instrument_state_token: str | None = None
+    # The running FluoRaPressée, e.g. "0.1.0b1" (installed) or
+    # "0.1.0b1+dev.g1a2b3c4d" (source checkout).
+    app_version: str | None = None
 
 
 class ConfigurationListResponse(BaseModel):

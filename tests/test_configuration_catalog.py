@@ -1,4 +1,5 @@
 import hashlib
+import shutil
 import threading
 import json
 import sqlite3
@@ -6,7 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.core.data_versions import UnsupportedDataVersionError
 from src.core.configuration_catalog import (
+    CATALOG_SCHEMA_VERSION,
+    UnavailableConfigurationCatalog,
     AmbiguousConfigurationProfileError,
     ConfigurationCatalog,
     ConfigurationCompatibilityError,
@@ -1235,6 +1239,128 @@ class RecordCacheTests(unittest.TestCase):
         self.assertIsNotNone(
             self.catalog.get_configuration(newer["configuration_id"])
         )
+
+
+class NewerCatalogTests(unittest.TestCase):
+    """work_updater.md 方針14: a newer catalog is refused without being written to."""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+        catalog = ConfigurationCatalog(self.root)
+        catalog.register_configuration(draft())
+        del catalog
+        connection = sqlite3.connect(self.root / "catalog.sqlite3")
+        with connection:
+            connection.execute(
+                "UPDATE catalog_meta SET value = ? WHERE key = 'schema_version'",
+                (str(CATALOG_SCHEMA_VERSION + 1),),
+            )
+        connection.close()
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def snapshot(self):
+        return {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in self.root.iterdir() if path.is_file()
+        }
+
+    def test_newer_catalog_is_refused_and_unchanged(self):
+        before = self.snapshot()
+
+        with self.assertRaises(UnsupportedDataVersionError):
+            ConfigurationCatalog(self.root)
+
+        self.assertEqual(self.snapshot(), before, "no byte changed, no -wal/-shm created")
+
+    def test_newer_catalog_still_in_the_wal_is_refused_before_any_ddl(self):
+        # A newer version that crashed (or is still running) before a checkpoint: its
+        # version number and table layout exist only in the -wal file.
+        source = self.root / "source"
+        crashed = self.root / "crashed"
+        crashed.mkdir()
+        ConfigurationCatalog(source).register_configuration(draft())
+        writer = sqlite3.connect(source / "catalog.sqlite3")
+        try:
+            writer.execute("PRAGMA wal_autocheckpoint = 0")
+            with writer:
+                writer.execute("ALTER TABLE slots RENAME TO slots_next")
+                writer.execute(
+                    "UPDATE catalog_meta SET value = ? WHERE key = 'schema_version'",
+                    (str(CATALOG_SCHEMA_VERSION + 1),),
+                )
+            # Copied while the writer still holds the -wal: the state a crash leaves.
+            for name in ("catalog.sqlite3", "catalog.sqlite3-wal"):
+                shutil.copyfile(source / name, crashed / name)
+        finally:
+            writer.close()
+
+        main_file = crashed / "catalog.sqlite3"
+        immutable = sqlite3.connect(main_file.resolve().as_uri() + "?immutable=1", uri=True)
+        try:
+            stale = immutable.execute(
+                "SELECT value FROM catalog_meta WHERE key = 'schema_version'"
+            ).fetchone()[0]
+        finally:
+            immutable.close()
+        self.assertEqual(stale, str(CATALOG_SCHEMA_VERSION),
+                         "precondition: the newer version is only in the -wal")
+
+        def files():
+            return {
+                name: hashlib.sha256((crashed / name).read_bytes()).hexdigest()
+                for name in ("catalog.sqlite3", "catalog.sqlite3-wal")
+            }
+
+        before = files()
+        with self.assertRaises(UnsupportedDataVersionError):
+            ConfigurationCatalog(crashed)
+        # No table was created and nothing was checkpointed (the -shm index may
+        # have been created next to the -wal; it holds no data).
+        self.assertEqual(files(), before)
+        self.assertFalse((crashed / "records").exists())
+
+    def test_file_without_catalog_meta_is_refused_unchanged(self):
+        other = self.root / "other"
+        other.mkdir()
+        connection = sqlite3.connect(other / "catalog.sqlite3")
+        with connection:
+            connection.execute("CREATE TABLE something_else (x)")
+        connection.close()
+        before = (other / "catalog.sqlite3").read_bytes()
+
+        with self.assertRaises(UnsupportedDataVersionError):
+            ConfigurationCatalog(other)
+
+        self.assertEqual((other / "catalog.sqlite3").read_bytes(), before)
+
+    def test_unreadable_version_is_refused(self):
+        connection = sqlite3.connect(self.root / "catalog.sqlite3")
+        with connection:
+            connection.execute(
+                "UPDATE catalog_meta SET value = 'four' WHERE key = 'schema_version'"
+            )
+        connection.close()
+        with self.assertRaises(UnsupportedDataVersionError):
+            ConfigurationCatalog(self.root)
+
+    def test_newer_record_is_rejected(self):
+        # Already the behaviour before 方針14; pinned so it stays that way.
+        with self.assertRaises(ConfigurationError):
+            ConfigurationCatalog._normalize_record({"schema_version": 99}, None)
+
+    def test_stand_in_refuses_every_operation(self):
+        error = UnsupportedDataVersionError("catalog", 4, 3)
+        stand_in = UnavailableConfigurationCatalog(error)
+        for call in (
+            lambda: stand_in.list_selectable({}),
+            lambda: stand_in.register_configuration({}),
+            lambda: stand_in.get_configuration("x"),
+        ):
+            with self.assertRaises(UnsupportedDataVersionError):
+                call()
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ import re
 import numpy as np
 from datetime import datetime
 
+from src.core.runtime_env import display_version
+
 
 class DataFileIO:
 
@@ -27,6 +29,8 @@ class DataFileIO:
         exc_wl   = metadata.get("exc_wl", 532.0)
 
         h = f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        # ASCII on purpose: np.savetxt writes the header as latin-1.
+        h += f"Software: FluoRaPressee {display_version()}\n"
         h += f"Grating: {grating} grooves/mm\n"
         if spec_mode == "Raman shift":
             h += f"Spectrometer Mode: Raman shift\n"

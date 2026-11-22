@@ -6,6 +6,11 @@ from src.ui.menu.hardware_config_dialog import HardwareConfigDialog
 from src.ui.menu.instrument_status_dialog import InstrumentStatusDialog
 from src.ui.menu.configuration_manager_dialog import ConfigurationManagerDialog
 from src.core.api_clients import load_clients, remove_legacy_key_file, save_clients
+from src.core.app_paths import (
+    legacy_api_key_path,
+    spectrometer_config_path,
+    write_json_atomic,
+)
 from src.ui.local_cache import load_local_cache, save_local_cache
 from src.ui.ui_mixins.acquisition_mixin import GateBusyError
 
@@ -53,6 +58,8 @@ class ConfigMixin:
         self.instrument_status_window.activateWindow()
 
     def on_open_configuration_manager_clicked(self):
+        if self._configuration_catalog_unavailable():
+            return
         dialog = ConfigurationManagerDialog(
             self.configuration_catalog,
             active_configuration_id=self.active_configuration_id,
@@ -63,6 +70,14 @@ class ConfigMixin:
         dialog.exec()
         if dialog.active_configuration_was_deleted:
             self.clear_active_configuration()
+
+    def _configuration_catalog_unavailable(self):
+        """Explain and return True if the catalog was refused at start-up (方針14)."""
+        error = getattr(self, "configuration_catalog_error", None)
+        if not error:
+            return False
+        QMessageBox.warning(self, "Configuration catalog unavailable", error)
+        return True
 
     def on_open_analysis_mode_clicked(self):
         # Lazy import: Analysis Mode's widgets aren't needed until this menu action is
@@ -119,8 +134,7 @@ class ConfigMixin:
 
     def save_config_to_file(self):
         try:
-            with open("spectrometerConfig.json", "w", encoding="utf-8") as f:
-                json.dump(self.config, f, indent=4)
+            write_json_atomic(spectrometer_config_path(), self.config, ensure_ascii=True)
         except Exception as e:
             print(f"Failed to save config: {e}")
 
@@ -187,8 +201,16 @@ class ConfigMixin:
         The legacy plaintext key at the repository root is read once, carried over as
         a client named "default" with no IP restriction (so an already-paired client
         keeps working with no reconfiguration), then deleted.
+
+        Migration obeys the same rule as every other move out of the repository root
+        (src.core.app_paths.legacy_migration_enabled, work/work_updater.md 方針4): with
+        FLUORAPRESSEE_DATA_DIR set the real key file is never read, moved or deleted.
+
+        UnsupportedDataVersionError (a file written by a newer version) propagates
+        untouched: nothing is saved and no key is generated (方針14).
         """
-        clients, needs_save, migrated_legacy = load_clients()
+        legacy_path = legacy_api_key_path()
+        clients, needs_save, migrated_legacy = load_clients(legacy_path=legacy_path)
         persisted = not needs_save
         if needs_save:
             try:
@@ -199,7 +221,7 @@ class ConfigMixin:
                 # legacy source unless its replacement was durably written.
                 print(f"Failed to persist API clients: {exc}")
         if migrated_legacy and persisted:
-            remove_legacy_key_file()
+            remove_legacy_key_file(legacy_path)
         return clients
 
     def save_api_clients(self, clients):
@@ -209,7 +231,7 @@ class ConfigMixin:
         save_clients(clients)
 
     def load_spectrometer_config(self):
-        config_path = "spectrometerConfig.json"
+        config_path = spectrometer_config_path()
         default_config = {
             "model": "Andor",
             "com_port": "COM3",
@@ -253,9 +275,8 @@ class ConfigMixin:
                     data["grating"] = new_grating
 
                     try:
-                        with open(config_path, "w", encoding="utf-8") as fw:
-                            json.dump(data, fw, indent=4)
-                    except:
+                        write_json_atomic(config_path, data, ensure_ascii=True)
+                    except Exception:
                         pass
 
                 for key, val in default_config.items():

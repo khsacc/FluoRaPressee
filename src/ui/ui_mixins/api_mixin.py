@@ -16,7 +16,10 @@ from src.api.info_helpers import (
     normalize_camera_metadata,
     normalize_spectrometer_metadata,
 )
+from src.core.app_paths import spectrometer_config_path
+from src.core.runtime_env import display_version
 from src.core.configuration_catalog import format_configuration_label
+from src.core.data_versions import UnsupportedDataVersionError
 from src.hardware.status.instrument_status import legacy_camera_snapshot, unavailable_device
 from src.core.measurement_metadata import capture_hardware_state, public_axis_kind, public_axis_unit
 from src.core.pressureCalc import PressureCalculator
@@ -400,7 +403,7 @@ class ApiMixin:
     def api_get_config(self):
         """GUI-thread helper for GET /config."""
         try:
-            with open("spectrometerConfig.json", "r", encoding="utf-8") as handle:
+            with open(spectrometer_config_path(), "r", encoding="utf-8") as handle:
                 stored = json.load(handle)
         except Exception:
             stored = self.config
@@ -1095,6 +1098,7 @@ class ApiMixin:
                 "loaded": self.loaded_bg_data is not None,
                 "metadata": self.loaded_bg_metadata,
             },
+            "app_version": display_version(),
             **configuration_state,
         }
 
@@ -1199,6 +1203,12 @@ class ApiMixin:
         port = self.spin_api_port.value()
         try:
             self.start_api_server(host=host, port=port)
+        except UnsupportedDataVersionError as exc:
+            # api_clients.json was written by a newer version (work_updater.md 方針14).
+            # Do not listen, but leave the saved mode alone: once the newer version
+            # is back, the operator's choice should still be in place.
+            self._api_failed_to_start(str(exc), persist_off=False)
+            return
         except Exception as exc:
             self._api_failed_to_start(str(exc))
             return
@@ -1236,7 +1246,7 @@ class ApiMixin:
                   "it may still be starting.")
             self._on_api_state_changed()
 
-    def _api_failed_to_start(self, message):
+    def _api_failed_to_start(self, message, persist_off=True):
         self._api_start_timer.stop()
         self._api_server = None
         self._api_server_thread = None
@@ -1245,7 +1255,8 @@ class ApiMixin:
         self._unlock_ui("api_server")
         self._set_api_mode_widget("off")
         self._api_mode = "off"
-        self._save_local_cache("api_mode", "off")
+        if persist_off:
+            self._save_local_cache("api_mode", "off")
         self._on_api_state_changed()
         QMessageBox.critical(
             self, "API server could not start",
@@ -1351,6 +1362,21 @@ class ApiMixin:
         self._api_clients = tuple(self.load_api_clients())
         return self._api_clients
 
+    def load_api_client_list_at_startup(self):
+        """The window-construction variant: never stops the GUI from starting.
+
+        A client list written by a newer version (work_updater.md 方針14) leaves the
+        API unusable, not the instrument: no client is authorised, and starting the
+        server (including a persisted standby/locked mode resuming) or opening
+        Manage Clients reads the file again and shows the reason there.
+        """
+        try:
+            return self.load_api_client_list()
+        except UnsupportedDataVersionError as exc:
+            print(f"API clients unavailable: {exc}")
+            self._api_clients = ()
+            return self._api_clients
+
     def set_api_clients(self, clients):
         """Replace the client list wholesale.
 
@@ -1375,8 +1401,14 @@ class ApiMixin:
     def on_manage_api_clients_clicked(self):
         from src.ui.menu.api_clients_dialog import ApiClientsDialog
 
+        try:
+            clients = self.load_api_client_list()
+        except UnsupportedDataVersionError as exc:
+            # Editing would write the newer file back in this version's format.
+            QMessageBox.warning(self, "API clients unavailable", str(exc))
+            return
         dialog = ApiClientsDialog(
-            self.load_api_client_list(),
+            clients,
             last_seen=self._api_last_seen,
             parent=self,
         )

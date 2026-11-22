@@ -9,6 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from src.core.data_versions import UnsupportedDataVersionError
 from src.core.api_clients import (
     CLIENTS_FILE_VERSION,
     LastSeenRegistry,
@@ -222,6 +223,74 @@ class LastSeenTests(unittest.TestCase):
 
         self.assertEqual(registry.get("press")["ip"], "192.168.1.42")
         self.assertIsNone(registry.get("unknown"))
+
+
+class LegacyPathTests(unittest.TestCase):
+    def test_no_legacy_path_means_no_legacy_read(self):
+        """work_updater.md 方針4: never guess a legacy file from the working directory."""
+        with tempfile.TemporaryDirectory() as tmp:
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                Path("fluora_pressee_api_key.json").write_text(
+                    json.dumps({"api_key": "real-secret"}), encoding="utf-8"
+                )
+                clients, _needs_save, migrated = load_clients(Path(tmp) / "new.json")
+            finally:
+                os.chdir(old_cwd)
+
+        self.assertFalse(migrated)
+        self.assertNotEqual(clients[0]["key"], "real-secret")
+
+
+class FormatVersionTests(unittest.TestCase):
+    """work_updater.md 方針14: a newer file is refused and left exactly as it was."""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.path = Path(self.tempdir.name) / "api_clients.json"
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def assert_refused_untouched(self, payload):
+        self.path.write_text(json.dumps(payload), encoding="utf-8")
+        before = self.path.read_bytes()
+
+        with self.assertRaises(UnsupportedDataVersionError):
+            load_clients(self.path)
+        with self.assertRaises(UnsupportedDataVersionError):
+            save_clients([new_client("x")], self.path)
+
+        self.assertEqual(self.path.read_bytes(), before)
+
+    def test_newer_version_is_refused(self):
+        self.assert_refused_untouched({
+            "version": CLIENTS_FILE_VERSION + 1,
+            "apps": [{"label": "press", "secret": "k"}],
+        })
+
+    def test_version_that_is_not_an_integer_is_refused(self):
+        for value in ("3", 2.5, None, True):
+            with self.subTest(value=value):
+                self.assert_refused_untouched({"version": value, "clients": []})
+
+    def test_unknown_keys_survive_a_save(self):
+        payload = {
+            "version": CLIENTS_FILE_VERSION,
+            "future_top_level": {"x": 1},
+            "clients": [{"name": "press", "key": "k1", "allowed_ips": [], "scopes": ["read"]}],
+        }
+        self.path.write_text(json.dumps(payload), encoding="utf-8")
+
+        clients, _needs_save, _migrated = load_clients(self.path)
+        edited = [dict(clients[0], name="renamed")]
+        save_clients(edited, self.path)
+
+        saved = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(saved["future_top_level"], {"x": 1})
+        self.assertEqual(saved["clients"][0]["scopes"], ["read"])
+        self.assertEqual(saved["clients"][0]["name"], "renamed")
 
 
 if __name__ == "__main__":

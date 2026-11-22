@@ -364,6 +364,8 @@ class FileIOMixin:
             self._release_acquisition_gate()
 
     def on_load_configuration(self):
+        if self._configuration_catalog_unavailable():
+            return
         # Keep the dialog itself outside the gate: otherwise every API request would
         # get 409 for as long as the operator is still deciding
         # (work_API_standby.md Step 0 手順3).

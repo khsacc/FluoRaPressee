@@ -30,6 +30,7 @@ from src.ui.fitting_config_widget import FittingConfigWidget
 from src.ui.fit_range_context_menu import FitRangeContextMenu
 from src.ui.pressureCalc_ui import PressureCalculatorWindow
 from src.ui.local_cache import load_local_cache, save_local_cache
+from src.ui.menu.help_menu import HelpMenu
 
 _LAST_DIR_CACHE_KEY = "last_analysis_dir"
 
@@ -90,6 +91,11 @@ class AnalysisWindow(QMainWindow):
         last_dir = cache.get(_LAST_DIR_CACHE_KEY, "")
         if last_dir and os.path.isdir(last_dir):
             self._set_watched_directory(last_dir)
+
+        # The same Help menu as the live GUI (work_updater.md 方針7/9), so a
+        # standalone Analysis Mode also learns about updates.
+        self.help_menu = HelpMenu(self)
+        self.help_menu.schedule_startup_check()
 
     # ---- left: file browser -------------------------------------------------
     def _build_left_panel(self):

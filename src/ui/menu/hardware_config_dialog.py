@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import pyqtSignal
 
+from src.ui.oceanoptics_driver_launcher import make_driver_button
 from src.ui.ui_widgets import CustomSpinBox
 from src.ui.config_wizard import (
     _PathField, SUPPLIER_ANDOR, SUPPLIER_PI, SUPPLIER_OCEANOPTICS,
@@ -124,6 +125,11 @@ class _HardwareTab(QWidget):
         self._oo_backend.addItems(["", "cseabreeze", "pyseabreeze"])
         gl.addWidget(self._oo_backend)
         v.addWidget(grp)
+        # The SeaBreeze USB driver is needed once per PC (work_updater.md 方針12).
+        driver_row = QHBoxLayout()
+        driver_row.addWidget(make_driver_button())
+        driver_row.addStretch()
+        v.addLayout(driver_row)
         return w
 
     @staticmethod
@@ -168,6 +174,14 @@ class _HardwareTab(QWidget):
             result["serial_number"] = self._oo_serial.text().strip() or None
             result["seabreeze_backend"] = self._oo_backend.currentText() or None
         return result
+
+    def relative_path_error(self) -> str | None:
+        """Blocking: a relative path cannot be saved (work_updater.md 方針4)."""
+        model = self._combo_model.currentText()
+        if model == SUPPLIER_OCEANOPTICS:
+            return None
+        field = self._andor_dll if model == SUPPLIER_ANDOR else self._pi_picam
+        return field.relative_path_error()
 
     def validation_warning(self) -> str | None:
         """Non-blocking: the active model's path field, if invalid."""
@@ -394,6 +408,11 @@ class HardwareConfigDialog(QDialog):
         )
         if grating_errors:
             QMessageBox.warning(self, "Invalid input", "\n".join(grating_errors))
+            return None
+
+        relative = self._tab_hardware.relative_path_error()
+        if relative:
+            QMessageBox.warning(self, "Absolute path required", relative)
             return None
 
         hw_warning = self._tab_hardware.validation_warning()

@@ -1,0 +1,118 @@
+name: Release build
+
+# Pushing a v* tag builds the Windows installer and creates a DRAFT release
+# (work/work_updater.md Step 5). Drafts are invisible to the in-app update check, so
+# nothing reaches users until the draft has been checked on real hardware and
+# published by hand. Write the release notes into the draft before publishing:
+# they are shown in the app's update dialog.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-oceanoptics.txt -r requirements-build.txt
+
+      - name: Check that the tag matches src/version.py
+        id: version
+        shell: pwsh
+        run: |
+          $version = (python -c "from src.version import __version__; print(__version__)").Trim()
+          $tag = "${{ github.ref_name }}"
+          if ($tag -ne "v$version") { throw "Tag $tag does not match src/version.py ($version)" }
+          $prerelease = (python -c "from packaging.version import Version; print(str(Version('$version').is_prerelease).lower())").Trim()
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "prerelease=$prerelease" >> $env:GITHUB_OUTPUT
+
+      - name: Unit tests
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $env:FLUORAPRESSEE_DATA_DIR = Join-Path $env:RUNNER_TEMP "frp-test-data"
+          python -m unittest discover -s tests -v
+          if ($LASTEXITCODE -ne 0) { throw "unit tests failed" }
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+
+      - name: Build application and installer
+        shell: pwsh
+        run: ./packaging/build_windows.ps1 -Installer
+
+      - name: Fetch the latest published installer (for the update test)
+        id: previous
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releases = gh api "repos/${{ github.repository }}/releases?per_page=20" | ConvertFrom-Json
+          $previous = $releases | Where-Object { -not $_.draft -and $_.tag_name -ne "${{ github.ref_name }}" } | Select-Object -First 1
+          $path = ""
+          if ($previous) {
+            $asset = $previous.assets | Where-Object { $_.name -like "FluoRaPressee-Setup-*.exe" } | Select-Object -First 1
+            if ($asset) {
+              New-Item -ItemType Directory -Force -Path previous | Out-Null
+              gh release download $previous.tag_name --repo "${{ github.repository }}" --pattern $asset.name --dir previous
+              $path = (Resolve-Path (Join-Path previous $asset.name)).Path
+            }
+          }
+          if (-not $path) { Write-Host "No published release yet: testing a fresh installation only." }
+          "path=$path" >> $env:GITHUB_OUTPUT
+
+      - name: Install / update test
+        shell: pwsh
+        run: |
+          $installer = (Resolve-Path "packaging/Output/FluoRaPressee-Setup-${{ steps.version.outputs.version }}.exe").Path
+          ./packaging/install_test.ps1 -Installer $installer -PreviousInstaller "${{ steps.previous.outputs.path }}"
+
+      - name: Create draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $file = "FluoRaPressee-Setup-$version.exe"
+          $notes = @"
+          **Download:** ``$file`` (below, under *Assets*). Do not download "Source code".
+
+          **Close FluoRaPressée before running the installer.** If it is still running, the installer asks you to close it. Windows may show a SmartScreen warning: choose *More info* → *Run anyway*.
+
+          **ダウンロード:** 下の *Assets* にある ``$file`` です。「Source code」ではありません。
+
+          **インストーラーは FluoRaPressée を終了してから実行してください。** 起動したまま実行すると、インストーラーが終了を求めます。SmartScreen の警告が出た場合は「詳細情報」→「実行」を選んでください。
+
+          ## Changes / 変更点
+
+          (Write the release notes here before publishing. / 公開する前にここに変更点を書く。)
+          "@
+          Set-Content -Path release-notes.md -Value $notes -Encoding utf8
+          $ghArgs = @("release", "create", "${{ github.ref_name }}", "packaging/Output/$file",
+                      "--draft", "--title", "FluoRaPressée $version", "--notes-file", "release-notes.md")
+          if ("${{ steps.version.outputs.prerelease }}" -eq "true") { $ghArgs += "--prerelease" }
+          gh @ghArgs
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }

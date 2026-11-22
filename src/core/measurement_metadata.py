@@ -4,10 +4,24 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import datetime
 
+from src.core.runtime_env import display_version, runtime_kind
 from src.hardware.status.instrument_status import json_value
 
 
 METADATA_SCHEMA_VERSION = 1
+
+
+def software_metadata():
+    """Which FluoRaPressée produced the data (work_updater.md Step 8).
+
+    An added key, so the schema version is unchanged: older readers ignore it
+    (方針14 - bump only for incompatible changes).
+    """
+    return {
+        "name": "FluoRaPressée",
+        "version": display_version(),
+        "runtime": runtime_kind(),
+    }
 
 
 def capture_hardware_state(window, accumulations=None):
@@ -32,6 +46,7 @@ def build_hardware_metadata(window, captured=None, include_background=True):
         "camera": captured.get("camera", {}),
         "spectrometer": captured.get("spectrometer", {}),
         "axis": _axis_state(window),
+        "software": software_metadata(),
     }
     if include_background:
         result["background"] = _background_state(window, result)

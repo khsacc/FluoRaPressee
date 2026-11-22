@@ -18,6 +18,7 @@ description: 1Dスペクトル・2Dイメージ本体を保存するテキスト
 
 ```
 # Timestamp: 2026-07-22 15:30:00
+# Software: FluoRaPressee 0.1.0b1
 # Grating: 1200 grooves/mm
 # Spectrometer Mode: Wavelength
 # Centre Wavelength: 694.0 nm
@@ -34,6 +35,8 @@ description: 1Dスペクトル・2Dイメージ本体を保存するテキスト
 ...
 ```
 
+- `Software` は保存した FluoRaPressée のバージョンです（ソースから起動した場合は `0.1.0b1+dev.g1a2b3c4d` のようにコミットが付きます）。
+  ASCIIで書くため、名前は `FluoRaPressee` と表記されます。この行がない古いファイルもそのまま読み込めます。
 - `Spectrometer Mode` が `Raman shift` の場合、`Centre Wavelength` の代わりに `Excitation Wavelength`（nm）と `Centre Raman shift`（cm<sup>-1</sup>）の2行が挿入されます。
 - `Calibration Coefficients` は横軸較正が未適用の場合 `# Calibration Coefficients: None` になります。
 - `ROI Start` / `ROI End` は、その時点でROIスピンボックス（Vertical Start/End）に入力されている値をそのまま記録します。
@@ -104,6 +107,7 @@ Analysis Modeのファイル選択は、この最後のヘッダー行が `2D Im
     "calibration_coefficients": {"c0": 673.34, "c1": 0.0210, "c2": -2.89e-07},
     "calibration_unit": "Wavelength"
   },
+  "software": {"name": "FluoRaPressée", "version": "0.1.0b1", "runtime": "frozen"},
   "background": {
     "loaded": true,
     "used": true,
@@ -116,5 +120,7 @@ Analysis Modeのファイル選択は、この最後のヘッダー行が `2D Im
 ```
 
 - `axis.source` は横軸較正の由来を表し、`neon_polynomial`（ネオン較正）、`emission_standard_polynomial`（較正ダイアログの標準線較正）、`loaded_configuration`（Load Configurationで読み込んだ較正）、`api_inline_calibration`（APIの非推奨インラインcalibration）、もしくは較正未適用時の `pixel` / `hardware_shamrock` / `oceanoptics_native`（Ocean Opticsの工場較正済み波長軸）のいずれかを取ります。
+- `software` は取得した FluoRaPressée のバージョンと実行形態（`frozen` = インストール版、`source` = ソースから起動）です。
+  あとから追加した項目のため、`schema_version` は変えていません。この項目がないデータもあります。
 - `background` セクションは、この測定でバックグラウンドがロード・使用されていたか、および現在の取得条件とロード済みバックグラウンドの条件が一致していたか（`mismatched_fields`に不一致項目名を列挙）を記録します。
   バックグラウンドファイル自体（`background`セクションを持たない）ではこのセクションは省略されます。

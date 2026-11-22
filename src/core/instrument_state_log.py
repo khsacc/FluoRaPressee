@@ -3,7 +3,7 @@
 import logging
 from logging.handlers import RotatingFileHandler
 
-from src.core.api_clients import default_api_clients_path
+from src.core.app_paths import logs_dir
 
 
 def make_instrument_state_logger():
@@ -12,7 +12,7 @@ def make_instrument_state_logger():
     A logging failure must never prevent the spectrometer from starting or changing
     settings. The log records state reasons and tokens, never API credentials.
     """
-    path = default_api_clients_path().parent / "logs" / "instrument_state.log"
+    path = logs_dir() / "instrument_state.log"
     logger = logging.getLogger("fluorapressee.instrument_state")
     if logger.handlers:
         return logger

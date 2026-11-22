@@ -11,3 +11,8 @@ ShamrockCIF.dll
 .DS_Store
 /offline_packages/
 /scripts/
+# Windows build (work/work_updater.md 方針10)
+/build/
+/dist/
+/packaging/Output/
+src/_build_info.py

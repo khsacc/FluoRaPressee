@@ -14,6 +14,7 @@ add the GigE-specific keys to the wizard's _PagePaths._build_pi_gige().
 """
 from __future__ import annotations
 
+import json
 import os
 from typing import Optional
 
@@ -25,6 +26,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
+from src.core.app_paths import normalize_hardware_paths
+from src.ui.oceanoptics_driver_launcher import make_driver_button
 from src.ui.ui_widgets import CustomSpinBox
 
 # Default cooler target temperature (°C) pre-filled in the wizard and used as the
@@ -251,9 +254,28 @@ class _PathField(QWidget):
 
     # ── validation ───────────────────────────────────────────────────────────
 
+    def is_relative(self) -> bool:
+        """A non-empty path that is not absolute (work_updater.md 方針4).
+
+        Relative paths used to resolve against the working directory; in an
+        installed build that is the install folder, so they are no longer accepted.
+        """
+        path = self.value()
+        return bool(path) and path != self._SEARCHING and not os.path.isabs(path)
+
+    def relative_path_error(self) -> Optional[str]:
+        if not self.is_relative():
+            return None
+        return (
+            f"{self._validation_desc}: please enter an absolute path "
+            f"(for example C:\\...), not\n  {self.value()}"
+        )
+
     def is_valid(self) -> bool:
         path = self.value()
         if not path or path == self._SEARCHING:
+            return False
+        if not os.path.isabs(path):
             return False
         if not os.path.isdir(path):
             return False
@@ -277,6 +299,9 @@ class _PathField(QWidget):
         """Return a human-readable error string if invalid, else None."""
         if self.is_valid():
             return None
+        relative = self.relative_path_error()
+        if relative:
+            return relative
         path = self.value() or "(empty)"
         if self._expected_files:
             files = " / ".join(self._expected_files)
@@ -446,6 +471,11 @@ class _PagePaths(QWidget):
         gv.addWidget(self._oo_backend)
 
         vbox.addWidget(grp)
+        # The SeaBreeze USB driver is needed once per PC (work_updater.md 方針12).
+        driver_row = QHBoxLayout()
+        driver_row.addWidget(make_driver_button())
+        driver_row.addStretch()
+        vbox.addLayout(driver_row)
         vbox.addWidget(QLabel(
             '<span style="color: gray; font-size: small;">'
             "Ocean Optics has no grating or movable centre wavelength to configure; "
@@ -561,17 +591,28 @@ class _PagePaths(QWidget):
 
     # ── validation ───────────────────────────────────────────────────────────
 
+    def _path_fields(self, supplier: str) -> list:
+        if supplier == SUPPLIER_ANDOR:
+            return [self._andor_dll]
+        if supplier == SUPPLIER_OCEANOPTICS:
+            return []  # nothing to validate: serial number is optional, backend defaults to auto
+        # When GigE is added, branch here on supplier == SUPPLIER_PI_GIGE
+        # and check additional GigE-specific fields.
+        return [self._pi_picam]
+
     def get_validation_errors(self, supplier: str) -> list[str]:
         """Return list of human-readable error strings for the active supplier's fields."""
-        if supplier == SUPPLIER_ANDOR:
-            fields = [self._andor_dll]
-        elif supplier == SUPPLIER_OCEANOPTICS:
-            fields = []  # nothing to validate: serial number is optional, backend defaults to auto
-        else:
-            # When GigE is added, branch here on supplier == SUPPLIER_PI_GIGE
-            # and check additional GigE-specific fields.
-            fields = [self._pi_picam]
-        return [e for f in fields if (e := f.validation_error()) is not None]
+        return [
+            e for f in self._path_fields(supplier)
+            if (e := f.validation_error()) is not None
+        ]
+
+    def get_relative_path_errors(self, supplier: str) -> list[str]:
+        """Errors that must be fixed before continuing (not just warned about)."""
+        return [
+            e for f in self._path_fields(supplier)
+            if (e := f.relative_path_error()) is not None
+        ]
 
     # ── result collection ─────────────────────────────────────────────────────
 
@@ -816,12 +857,15 @@ class ConfigWizard(QDialog):
         self._btn_back   = QPushButton("< Back")
         self._btn_next   = QPushButton("Next >")
         self._btn_cancel = QPushButton("Cancel")
+        self._btn_import = QPushButton("Load existing spectrometerConfig.json…")
         self._btn_back.clicked.connect(self._go_back)
         self._btn_next.clicked.connect(self._go_next)
         self._btn_cancel.clicked.connect(self.reject)
+        self._btn_import.clicked.connect(self._import_existing_config)
 
         btn_row = QHBoxLayout()
         btn_row.addWidget(self._btn_cancel)
+        btn_row.addWidget(self._btn_import)
         btn_row.addStretch()
         btn_row.addWidget(self._btn_back)
         btn_row.addWidget(self._btn_next)
@@ -851,6 +895,10 @@ class ConfigWizard(QDialog):
 
         elif page == 1:
             supplier = self._p_supplier.supplier()
+            relative = self._p_paths.get_relative_path_errors(supplier)
+            if relative:
+                QMessageBox.warning(self, "Absolute path required", "\n\n".join(relative))
+                return
             errors = self._p_paths.get_validation_errors(supplier)
             if errors:
                 detail = "\n\n".join(errors)
@@ -901,6 +949,8 @@ class ConfigWizard(QDialog):
         self._btn_back.setEnabled(False)
         self._btn_next.setEnabled(False)
         self._btn_cancel.setEnabled(False)
+        # Accepting the dialog would destroy the probe thread while it runs.
+        self._btn_import.setEnabled(False)
         self._probe_thread = _HardwareProbeThread(supplier, config)
         self._probe_thread.detected.connect(self._on_hardware_probed)
         self._probe_thread.start()
@@ -908,6 +958,7 @@ class ConfigWizard(QDialog):
     def _on_hardware_probed(self, result: dict):
         self._p_paths.set_probe_busy(False)
         self._btn_cancel.setEnabled(True)
+        self._btn_import.setEnabled(True)
         self._refresh_buttons()
         self._p_paths.apply_probe_result(result)
         self._p_paths.show_probe_result(result)
@@ -963,8 +1014,41 @@ class ConfigWizard(QDialog):
             self._result["default_fan_mode"] = self._p_grating.fan_mode()
         self.accept()
 
+    def _import_existing_config(self):
+        """Take over a spectrometerConfig.json from an older git checkout.
+
+        For a PC whose checkout never ran a version that migrates settings by
+        itself (work_updater.md 方針4). Paths are corrected with the same function
+        as the automatic migration, relative to the folder the file was chosen from.
+        """
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load existing spectrometerConfig.json", "",
+            "spectrometerConfig.json (spectrometerConfig.json);;JSON files (*.json)",
+        )
+        if not path:
+            return
+        try:
+            config = load_existing_config(path)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Cannot load configuration", str(exc))
+            return
+        self._result = config
+        self.accept()
+
     def result_config(self) -> Optional[dict]:
         return self._result
+
+
+def load_existing_config(path) -> dict:
+    """Read a spectrometerConfig.json chosen by the user and correct its paths."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            config = json.load(handle)
+    except Exception as exc:
+        raise ValueError(f"{path} could not be read as JSON:\n{exc}") from exc
+    if not isinstance(config, dict):
+        raise ValueError(f"{path} does not contain a configuration object.")
+    return normalize_hardware_paths(config, os.path.dirname(os.path.abspath(path)))
 
 
 def _merge_dict(target: dict, source: dict) -> dict:

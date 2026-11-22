@@ -6,6 +6,7 @@ import numpy as np
 from threading import RLock
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from src.core.app_paths import spectrometer_config_path
 from src.hardware.status.andor_spectrometer_status import (
     collect_shamrock_status,
     configure_status_prototypes,
@@ -38,7 +39,7 @@ class SpectrometerControllerAndor:
         print("Spectrometer initialisation...")
 
         dll_path = self.config.get("dll_path") or "ShamrockCIF.dll"
-        config_path = "spectrometerConfig.json"
+        config_path = spectrometer_config_path()
 
         if not self.config and os.path.exists(config_path):
             try:
@@ -76,6 +77,13 @@ class SpectrometerControllerAndor:
             
         except OSError as e:
             print(f"[Warning] Failed to load Shamrock DLL. Running in dummy mode. Error: {e}")
+            if not os.path.isabs(dll_path):
+                # A bare/relative name resolves against the working directory, which
+                # is the install folder in a built version - not where the DLL is.
+                print(
+                    "[Hint] dll_path is not an absolute path. Set the folder containing "
+                    "ShamrockCIF.dll under Hardware > Hardware Configuration."
+                )
             self.is_initialized = False
             return False
         except Exception as e:
