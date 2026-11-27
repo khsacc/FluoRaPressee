@@ -21,9 +21,18 @@ description: このリポジトリ（khsacc/FluoRaPressee）の Windows イン�
 ## ビルドと公開
 
 - タグの push またはビルドを依頼されたら、確認した SHA に `git tag -a "$tag" "$release_commit" -m "FluoRaPressée $version"` で注釈付きタグを作り、`git push origin "refs/tags/$tag"` で対象タグだけを送る。PR のマージとブランチの push ではこの CI は起動しない。
-- GitHub Actions の **Release build** で、対象タグと SHA の実行を確認する。例は `gh run list --repo khsacc/FluoRaPressee --workflow release.yml --branch "$tag" --event push`。CLI に認証がない場合、公開リポジトリの Actions 実行は GitHub REST API でも確認できる。開始だけの依頼ならステータスと実行 URL を返す。完了や公開までの依頼なら CI の結果まで追う。
-- CI は Windows でテストとインストーラー作成を行い、成功すると `FluoRaPressee-Setup-<version>.exe` を添付した下書きを作る。ビルドの依頼では下書きまでを扱う。
-- 公開の依頼があるときは、対象タグ、下書きのプレリリース設定、添付ファイル名を確認する。**Changes / 変更点** を実際の変更点に置き換え、配布するインストーラーの Windows 実機確認が済んでいることを確認してから公開する。Web の **Publish release** または認証済みの `gh release edit "$tag" --repo khsacc/FluoRaPressee --draft=false` を使える。公開後はリリース URL と添付ファイルを確認する。
+- GitHub Actions の **Release build** で、対象タグと SHA の実行が開始されたことを確認する。例は `gh run list --repo khsacc/FluoRaPressee --workflow release.yml --branch "$tag" --event push`。CLI に認証がない場合、公開リポジトリの Actions 実行は GitHub REST API でも確認できる。
+- 通常のリリース依頼はビルド開始の確認で作業を終了してよい。対象バージョン、コミット SHA、実行 URL、確認時点のステータスと、下記のビルド完了後の手順を案内する。CI の完了を待ったり、繰り返し進捗を監視したりする必要はない。ユーザーが明示的に完了までの監視を依頼した場合のみ、結果まで追う。
+- CI は Windows でテストとインストーラー作成を行い、成功すると `FluoRaPressee-Setup-<version>.exe` を添付した下書きを自動作成する。開始確認時点では、ビルド成功・下書き作成・公開が済んだとは報告しない。
+
+## ビルド完了後に案内する手順
+
+1. 実行 URL で CI の成功を確認し、GitHub Releases の対象タグの下書きを開く。失敗した場合はログを確認し、下記の「失敗時」に従う。
+2. タグ、プレリリース設定、添付ファイル `FluoRaPressee-Setup-<version>.exe` を確認する。
+3. **Changes / 変更点** を実際の変更点に置き換え、配布するインストーラーを Windows 実機で確認する。
+4. 確認後、Web の **Publish release** または認証済みの `gh release edit "$tag" --repo khsacc/FluoRaPressee --draft=false` で公開し、リリース URL と添付ファイルを確認する。
+
+CI 完了後に下書きの編集・公開を依頼された場合は、この手順に沿って作業する。
 
 ## 失敗時
 
