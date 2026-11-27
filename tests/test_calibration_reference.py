@@ -314,7 +314,9 @@ class PatternMatcherTests(unittest.TestCase):
 
     def test_three_peak_pattern_ranking_is_not_replaced_by_center_outwards_order(self):
         pixels = [0.0, 10.0, 20.0]
-        lines = _lines("Ne-I", [500.0, 509.0, 510.0, 511.0, 520.0])
+        # The closest three lines have unequal spacing. The wider triplet
+        # is the exact match for the evenly spaced measured peaks.
+        lines = _lines("Ne-I", [500.0, 509.0, 510.0, 512.0, 520.0])
 
         candidates = find_match_candidates(
             pixels,

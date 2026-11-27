@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 
 from src.core.data_versions import UnsupportedDataVersionError
@@ -270,7 +271,9 @@ class ConfigurationCatalogTests(unittest.TestCase):
             draft(spectrometer_serial=None, camera_serial=None)
         )
         database_path = Path(self.tempdir.name) / "catalog.sqlite3"
-        with sqlite3.connect(database_path) as conn:
+        # The connection context handles transactions. closing also releases
+        # the SQLite file handle before Windows removes the temp directory.
+        with closing(sqlite3.connect(database_path)) as conn, conn:
             conn.execute(
                 "UPDATE catalog_meta SET value = '1' WHERE key = 'schema_version'"
             )
@@ -286,7 +289,7 @@ class ConfigurationCatalogTests(unittest.TestCase):
         result = migrated.list_selectable(
             hardware_context(spectrometer_serial=None, camera_serial=None)
         )
-        with sqlite3.connect(database_path) as conn:
+        with closing(sqlite3.connect(database_path)) as conn, conn:
             schema_version = conn.execute(
                 "SELECT value FROM catalog_meta WHERE key = 'schema_version'"
             ).fetchone()[0]
@@ -307,7 +310,7 @@ class ConfigurationCatalogTests(unittest.TestCase):
     def test_v1_catalog_migrates_straight_through_v2_and_v3_in_one_open(self):
         record = self.catalog.register_configuration(draft())
         database_path = Path(self.tempdir.name) / "catalog.sqlite3"
-        with sqlite3.connect(database_path) as conn:
+        with closing(sqlite3.connect(database_path)) as conn, conn:
             conn.execute(
                 "UPDATE catalog_meta SET value = '1' WHERE key = 'schema_version'"
             )
@@ -315,7 +318,7 @@ class ConfigurationCatalogTests(unittest.TestCase):
         migrated = ConfigurationCatalog(self.tempdir.name)
         item = migrated.list_all()["items"][0]
 
-        with sqlite3.connect(database_path) as conn:
+        with closing(sqlite3.connect(database_path)) as conn, conn:
             schema_version = conn.execute(
                 "SELECT value FROM catalog_meta WHERE key = 'schema_version'"
             ).fetchone()[0]
@@ -326,7 +329,7 @@ class ConfigurationCatalogTests(unittest.TestCase):
     def test_v2_catalog_migrates_to_v3_alone(self):
         record = self.catalog.register_configuration(draft())
         database_path = Path(self.tempdir.name) / "catalog.sqlite3"
-        with sqlite3.connect(database_path) as conn:
+        with closing(sqlite3.connect(database_path)) as conn, conn:
             conn.execute(
                 "UPDATE catalog_meta SET value = '2' WHERE key = 'schema_version'"
             )
@@ -405,7 +408,7 @@ class ConfigurationCatalogTests(unittest.TestCase):
                 camera_model TEXT,
                 camera_serial TEXT,
             """
-        with sqlite3.connect(database_path) as conn:
+        with closing(sqlite3.connect(database_path)) as conn, conn:
             conn.executescript(
                 f"""
                 CREATE TABLE catalog_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -872,7 +875,7 @@ class ConfigurationCatalogTests(unittest.TestCase):
             draft(unit="Raman shift", excitation_wavelength_nm=532.0)
         )
         database_path = Path(self.tempdir.name) / "catalog.sqlite3"
-        with sqlite3.connect(database_path) as conn:
+        with closing(sqlite3.connect(database_path)) as conn, conn:
             # Simulate the pre-migration (v2, no profiles) shape: the buggy
             # archiving already ran, and there is no calibration_profiles data.
             conn.execute("UPDATE catalog_meta SET value = '2' WHERE key = 'schema_version'")
@@ -906,7 +909,7 @@ class ConfigurationCatalogTests(unittest.TestCase):
         )
         bad_path.write_text("not valid json", encoding="utf-8")
         database_path = Path(self.tempdir.name) / "catalog.sqlite3"
-        with sqlite3.connect(database_path) as conn:
+        with closing(sqlite3.connect(database_path)) as conn, conn:
             conn.execute(
                 "INSERT INTO configurations("
                 "configuration_id, slot_id, calibration_profile_id, created_at, "
@@ -954,7 +957,7 @@ class ConfigurationCatalogTests(unittest.TestCase):
         )
         bad_path.write_text(json.dumps(record, allow_nan=True), encoding="utf-8")
         database_path = Path(self.tempdir.name) / "catalog.sqlite3"
-        with sqlite3.connect(database_path) as conn:
+        with closing(sqlite3.connect(database_path)) as conn, conn:
             conn.execute(
                 "INSERT INTO configurations("
                 "configuration_id, slot_id, calibration_profile_id, created_at, "
@@ -1102,7 +1105,7 @@ class RecordCacheTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def _record_path(self):
-        with sqlite3.connect(self.catalog.database_path) as conn:
+        with closing(sqlite3.connect(self.catalog.database_path)) as conn, conn:
             row = conn.execute(
                 "SELECT relative_path FROM configurations WHERE configuration_id = ?",
                 (self.configuration_id,),
@@ -1250,13 +1253,11 @@ class NewerCatalogTests(unittest.TestCase):
         catalog = ConfigurationCatalog(self.root)
         catalog.register_configuration(draft())
         del catalog
-        connection = sqlite3.connect(self.root / "catalog.sqlite3")
-        with connection:
+        with closing(sqlite3.connect(self.root / "catalog.sqlite3")) as connection, connection:
             connection.execute(
                 "UPDATE catalog_meta SET value = ? WHERE key = 'schema_version'",
                 (str(CATALOG_SCHEMA_VERSION + 1),),
             )
-        connection.close()
 
     def tearDown(self):
         self.tempdir.cleanup()
@@ -1325,10 +1326,8 @@ class NewerCatalogTests(unittest.TestCase):
     def test_file_without_catalog_meta_is_refused_unchanged(self):
         other = self.root / "other"
         other.mkdir()
-        connection = sqlite3.connect(other / "catalog.sqlite3")
-        with connection:
+        with closing(sqlite3.connect(other / "catalog.sqlite3")) as connection, connection:
             connection.execute("CREATE TABLE something_else (x)")
-        connection.close()
         before = (other / "catalog.sqlite3").read_bytes()
 
         with self.assertRaises(UnsupportedDataVersionError):
@@ -1337,12 +1336,10 @@ class NewerCatalogTests(unittest.TestCase):
         self.assertEqual((other / "catalog.sqlite3").read_bytes(), before)
 
     def test_unreadable_version_is_refused(self):
-        connection = sqlite3.connect(self.root / "catalog.sqlite3")
-        with connection:
+        with closing(sqlite3.connect(self.root / "catalog.sqlite3")) as connection, connection:
             connection.execute(
                 "UPDATE catalog_meta SET value = 'four' WHERE key = 'schema_version'"
             )
-        connection.close()
         with self.assertRaises(UnsupportedDataVersionError):
             ConfigurationCatalog(self.root)
 
