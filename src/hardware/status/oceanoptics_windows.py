@@ -116,7 +116,10 @@ def _load_setupapi():
 
 @contextmanager
 def _device_set(api, flags, interface=None):
-    handle = api.SetupDiGetClassDevsW(interface, "USB", None, _DIGCF_PRESENT | flags)
+    # With DIGCF_DEVICEINTERFACE, Enumerator must be a full device instance ID
+    # or NULL for all devices. The bus name "USB" is only used for device sets.
+    enumerator = None if flags & _DIGCF_DEVICEINTERFACE else "USB"
+    handle = api.SetupDiGetClassDevsW(interface, enumerator, None, _DIGCF_PRESENT | flags)
     if handle == _INVALID_HANDLE:
         raise ctypes.WinError(ctypes.get_last_error())
     try:

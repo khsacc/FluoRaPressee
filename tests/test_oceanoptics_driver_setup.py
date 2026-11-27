@@ -1,5 +1,6 @@
 """Driver setup decisions without downloading or changing Windows USB drivers."""
 
+import ctypes
 import importlib.util
 import io
 from pathlib import Path
@@ -125,6 +126,44 @@ class DriverPackageTests(unittest.TestCase):
             ))
         run.assert_not_called()
         confirm.assert_not_called()
+
+
+class WindowsDeviceEnumerationTests(unittest.TestCase):
+    def test_seabreeze_interface_lookup_uses_null_enumerator(self):
+        windows = driver.oceanoptics_windows
+        api = Mock()
+
+        def get_devices(guid, enumerator, parent, flags):
+            # Windows rejects a bus name such as "USB" in interface mode.
+            if enumerator is not None:
+                raise OSError(13, "The data is invalid")
+            self.assertEqual(
+                bytes(ctypes.cast(guid, ctypes.POINTER(windows._Guid)).contents),
+                windows._SEABREEZE_INTERFACE.bytes_le,
+            )
+            self.assertEqual(flags, windows._DIGCF_PRESENT | windows._DIGCF_DEVICEINTERFACE)
+            return "interfaces"
+
+        api.SetupDiGetClassDevsW.side_effect = get_devices
+        info = windows._DeviceInfo()
+        with patch.object(windows, "_device_infos", return_value=[info]), \
+                patch.object(windows, "_instance_id", return_value="USB\\VID_2457&PID_101E\\TEST"):
+            self.assertEqual(windows.seabreeze_interfaces(api), {"USB\\VID_2457&PID_101E\\TEST"})
+        api.SetupDiDestroyDeviceInfoList.assert_called_once_with("interfaces")
+
+    def test_connected_device_lookup_still_filters_by_usb_bus(self):
+        windows = driver.oceanoptics_windows
+        api = Mock()
+        api.SetupDiGetClassDevsW.return_value = "devices"
+        with patch.object(windows, "_load_setupapi", return_value=api), \
+                patch.object(windows, "_device_infos", return_value=[]):
+            with windows.connected_devices() as (_, handle, devices):
+                self.assertEqual(handle, "devices")
+                self.assertEqual(devices, [])
+        api.SetupDiGetClassDevsW.assert_called_once_with(
+            None, "USB", None, windows._DIGCF_PRESENT | windows._DIGCF_ALLCLASSES
+        )
+        api.SetupDiDestroyDeviceInfoList.assert_called_once_with("devices")
 
 
 class SeaBreezeAdapterTests(unittest.TestCase):
