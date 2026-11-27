@@ -21,8 +21,8 @@ _SW_SHOWNORMAL = 1
 def make_driver_button(parent=None) -> QPushButton:
     button = QPushButton("Install Ocean Optics driver… (administrator)")
     button.setToolTip(
-        "Installs the SeaBreeze USB driver. Needed once per PC; requires "
-        "administrator rights."
+        "Checks SeaBreeze device detection and installs the USB driver only if "
+        "no instrument is detected. Requires administrator rights."
     )
     button.clicked.connect(lambda: launch_oceanoptics_driver_installer(button.window()))
     return button
