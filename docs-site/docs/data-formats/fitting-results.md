@@ -16,8 +16,8 @@ description: ピークフィッティング・圧力計算の結果を保存す�
 ヘッダー行1行 + データ行1行のCSVです。
 
 ```
-Function,R2,Peak1_Pos,Peak1_Err,Peak1_Width,Peak1_WErr,Baseline_Requested,Baseline_Selected,Baseline_b0,Baseline_b0_Err,Baseline_b1,Baseline_b1_Err,Baseline_b2,Baseline_b2_Err,Pressure_GPa,Pressure_Err_GPa,Scale,Sensor,Lambda0_nm
-PseudoVoigt,0.998765,694.123456,0.000321,0.452000,0.001200,Linear,Linear,102.300000,0.015000,-0.005000,0.000210,nan,nan,12.345678,0.021000,Shen2020,Ruby,694.220000
+Function,R2,Peak1_Pos,Peak1_Err,Peak1_Width,Peak1_WErr,Baseline_Requested,Baseline_Selected,Baseline_b0,Baseline_b0_Err,Baseline_b1,Baseline_b1_Err,Baseline_b2,Baseline_b2_Err,Pressure_GPa,Pressure_Err_GPa,Scale,Sensor,Lambda0_nm,Lambda0_Err_nm
+PseudoVoigt,0.998765,694.123456,0.000321,0.452000,0.001200,Linear,Linear,102.300000,0.015000,-0.005000,0.000210,nan,nan,12.345678,0.021000,Shen2020,Ruby,694.220000,0.000300
 ```
 
 - `Peak{i}_Pos` / `Peak{i}_Err` / `Peak{i}_Width` / `Peak{i}_WErr` の4列組が、実際にフィットしたピーク数（最大5）だけ並びます。
@@ -25,6 +25,9 @@ PseudoVoigt,0.998765,694.123456,0.000321,0.452000,0.001200,Linear,Linear,102.300
   `Baseline_b0/b1/b2` の3組は常に出力されますが、実際の次数より高い係数は未使用のため `nan` になります。
 - `Pressure_GPa` 以降の列は、保存時に圧力計算ウィンドウが開いていて圧力が算出済みの場合のみ付加されます。
   `Lambda0_nm` は横軸が波長モードのとき、Raman shiftモードのときは代わりに `Nu0_cm-1` になります。
+- `Lambda0_nm`（`Nu0_cm-1`）は圧力計算に使ったゼロ圧ピーク位置です。温度補正がOnのときは、補正後の現在温度での値になります。
+- `Lambda0_Err_nm`（Raman shiftモードでは `Nu0_Err_cm-1`）はその誤差です。温度補正がOnのときは、Zero-pressure peak at T0 の誤差を補正式で伝播させた値になり、Rubyの Kobayashi et al. スケールでは温度補正スケールの係数の誤差も含みます（[ゼロ圧ピーク位置の誤差](../usage/pressure-calculation/index.md#ゼロ圧ピーク位置の誤差)）。
+  `Pressure_Err_GPa` にはこの誤差による成分も含まれています。
 
 ## 連続測定サマリ: `fitting_seq_summary_<開始日時>.txt`
 
@@ -45,4 +48,5 @@ seq_00000_20260722_153005_012.txt,2026-07-22T15:30:05.012,694.123456,0.000321,0.
 - `Peak{i}` / `Width{i}` の単位（`(nm)` または `(cm-1)`）は、そのフレームの実際の較正状態ではなく、実行開始時点のRaman shift表示切り替えの状態で決まります。
 - `Pressure (GPa)` / `Pressure_Err (GPa)` の2列は、連続測定の開始時点で圧力計算ウィンドウが表示されていた場合のみヘッダーに含まれます。
   個々の行への出力も各フレーム保存時点でのウィンドウの表示状態に応じて行われるため、実行中に圧力計算ウィンドウの開閉を切り替えると、行によって列数がヘッダーとずれる場合があります。
+  ゼロ圧ピーク位置とその誤差の列はありませんが、`Pressure_Err (GPa)` にはゼロ圧ピーク位置の誤差による成分も含まれています。
 - そのフレームのフィッティングが失敗した場合、ピーク・幅・R2の列は数値ではなく文字列 `NaN` になります（単発測定側の未使用ベースライン係数が `nan`（小文字）になるのとは表記が異なります）。

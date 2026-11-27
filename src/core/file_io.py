@@ -11,6 +11,8 @@ import re
 import numpy as np
 from datetime import datetime
 
+from src.core.runtime_env import display_version
+
 
 class DataFileIO:
 
@@ -27,6 +29,8 @@ class DataFileIO:
         exc_wl   = metadata.get("exc_wl", 532.0)
 
         h = f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        # ASCII on purpose: np.savetxt writes the header as latin-1.
+        h += f"Software: FluoRaPressee {display_version()}\n"
         h += f"Grating: {grating} grooves/mm\n"
         if spec_mode == "Raman shift":
             h += f"Spectrometer Mode: Raman shift\n"
@@ -206,6 +210,7 @@ class DataFileIO:
             pressure, pressure_err  — float, GPa
             scale, sensor           — str
             lam0                    — float, zero-pressure peak position
+            lam0_err                — float or None, its uncertainty (written as nan if None)
             lam0_unit               — "nm" or "cm-1"
         """
         peaks = fit_res.get("peaks") or []
@@ -251,14 +256,18 @@ class DataFileIO:
         fit_header = ",".join(header_cols)
 
         if pressure_info is not None:
-            lam0_col = "Lambda0_nm" if pressure_info.get("lam0_unit") == "nm" else "Nu0_cm-1"
-            fit_header += f",Pressure_GPa,Pressure_Err_GPa,Scale,Sensor,{lam0_col}"
+            is_nm = pressure_info.get("lam0_unit") == "nm"
+            lam0_col = "Lambda0_nm" if is_nm else "Nu0_cm-1"
+            lam0_err_col = "Lambda0_Err_nm" if is_nm else "Nu0_Err_cm-1"
+            lam0_err = pressure_info.get("lam0_err")
+            fit_header += f",Pressure_GPa,Pressure_Err_GPa,Scale,Sensor,{lam0_col},{lam0_err_col}"
             vals += [
                 f"{pressure_info['pressure']:.6f}",
                 f"{pressure_info['pressure_err']:.6f}",
                 pressure_info['scale'],
                 pressure_info['sensor'],
                 f"{pressure_info['lam0']:.6f}",
+                f"{lam0_err:.6f}" if lam0_err is not None else "nan",
             ]
 
         with open(fit_file_path, "w", encoding="utf-8") as f:

@@ -58,11 +58,11 @@ class SpectrometerControlMixin:
             if new_unit != self.calib_unit:
                 self.deactivate_axis_calibration("display mode changed")
 
-        self._bump_instrument_state()
+        self._bump_instrument_state("gui_axis_mode")
         self._sync_controls_to_display_mode()
 
     def on_exc_wl_changed(self):
-        self._bump_instrument_state()
+        self._bump_instrument_state("gui_excitation_wavelength")
         if self.calib_coeffs is not None and self.calib_unit == "Raman shift":
             if (
                 self.calib_laser_wl is None
@@ -322,7 +322,7 @@ class SpectrometerControlMixin:
                     break
             self.physical_grating = self.combo_grating.currentText()
             self.physical_center_wl = actual_wl
-            self._bump_instrument_state()
+            self._bump_instrument_state("spectrometer_move_cancelled")
             if self.radio_spec_mode_raman.isChecked():
                 ex_wl = self.spin_exc_wl.value()
                 shown_value = (1e7 / ex_wl) - (1e7 / actual_wl) if ex_wl > 0 and actual_wl > 0 else 0.0
@@ -379,7 +379,7 @@ class SpectrometerControlMixin:
         else:
             self.physical_center_wl = val
 
-        self._bump_instrument_state()
+        self._bump_instrument_state("spectrometer_move_applied")
         self.btn_apply_spec.setEnabled(False)
 
         if getattr(self, '_loading_config', False):

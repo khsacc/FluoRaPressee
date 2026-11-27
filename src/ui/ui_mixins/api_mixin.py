@@ -16,7 +16,10 @@ from src.api.info_helpers import (
     normalize_camera_metadata,
     normalize_spectrometer_metadata,
 )
+from src.core.app_paths import spectrometer_config_path
+from src.core.runtime_env import display_version
 from src.core.configuration_catalog import format_configuration_label
+from src.core.data_versions import UnsupportedDataVersionError
 from src.hardware.status.instrument_status import legacy_camera_snapshot, unavailable_device
 from src.core.measurement_metadata import capture_hardware_state, public_axis_kind, public_axis_unit
 from src.core.pressureCalc import PressureCalculator
@@ -302,7 +305,7 @@ class ApiMixin:
             raise
 
     def _api_finish_em_gain_change(self):
-        self._bump_instrument_state()
+        self._bump_instrument_state("api_em_gain_applied")
         return self._api_em_gain_state()
 
     def _api_release_em_gain_after_timeout(self, seq):
@@ -315,7 +318,9 @@ class ApiMixin:
             try:
                 # The write may have completed after HTTP returned 504. Its result
                 # can still change a later acquisition, so invalidate old tokens.
-                self.gui_bridge.call(self._bump_instrument_state)
+                self.gui_bridge.call(
+                    lambda: self._bump_instrument_state("api_em_gain_timeout")
+                )
             finally:
                 self.gui_bridge.call(self._release_acquisition_gate)
 
@@ -336,7 +341,9 @@ class ApiMixin:
             if error:
                 # A failed PICam commit can leave the readout mode changed if its
                 # best-effort rollback also failed.
-                self.gui_bridge.call(self._bump_instrument_state)
+                self.gui_bridge.call(
+                    lambda: self._bump_instrument_state("api_em_gain_error")
+                )
                 raise EmGainApplyError(f"Failed to set EM Gain: {error}")
             return self.gui_bridge.call(self._api_finish_em_gain_change)
         finally:
@@ -396,7 +403,7 @@ class ApiMixin:
     def api_get_config(self):
         """GUI-thread helper for GET /config."""
         try:
-            with open("spectrometerConfig.json", "r", encoding="utf-8") as handle:
+            with open(spectrometer_config_path(), "r", encoding="utf-8") as handle:
                 stored = json.load(handle)
         except Exception:
             stored = self.config
@@ -419,6 +426,16 @@ class ApiMixin:
             return
         current = self.instrument_state_token
         if expected != current:
+            logger = getattr(self, "_instrument_state_log", None)
+            if logger is not None:
+                try:
+                    logger.warning(
+                        "token_mismatch expected=%s current=%s last_change=%s",
+                        expected, current,
+                        getattr(self, "_last_instrument_state_change_reason", "unknown"),
+                    )
+                except Exception as exc:
+                    print(f"Warning: instrument-state logging failed: {exc}")
             raise StateTokenMismatchError(expected, current)
 
     def _api_start_acquire(
@@ -484,7 +501,7 @@ class ApiMixin:
                 # The expected token was already checked immediately after taking the
                 # gate.  Bump now so this request's response describes the new physical
                 # exposure and later callers cannot reuse a token for the old state.
-                self._bump_instrument_state()
+                self._bump_instrument_state(f"api_exposure_applied value_s={actual_exposure}")
         else:
             actual_exposure = self.spin_acq_time.value()
 
@@ -950,23 +967,29 @@ class ApiMixin:
         return {"success": True, "x_fit": x_fit, "y_fit": y_fit_curve, "fit": res}
 
     def api_pressure(self, peak, peak_err, sensor, pressure_scale, zero_pressure_peak,
-                      temperature_correction=None, fit_function=""):
+                      temperature_correction=None, fit_function="", zero_pressure_peak_err=0.0):
         """Calculate pressure using PressureCalculator's internal keys.
 
         `sensor`, `pressure_scale`, and `temperature_correction["scale"]` are
         backend keys such as "ruby", "ruby_shen_2020", and
-        "ruby_kobayashi_unpublished", not GUI labels.
+        "ruby_kobayashi_2026", not GUI labels.
 
         This mirrors PressureCalculatorWindow.calculate() without any widget
         dependency. Temperature correction is performed inside
         PressureCalculator.calculate(); this method only gathers request values
         and formats the API response.
+
+        `zero_pressure_peak_err` and `temperature_correction["zero_pressure_peak_at_t0_err"]`
+        are the standard uncertainties of the two zero-pressure peak positions;
+        without a `temperature_correction`, the T0 one falls back to the former
+        exactly as the T0 position falls back to `zero_pressure_peak`.
         """
         PressureCalculator.validate_fit_pressure_pair(
             fit_function=fit_function, sensor=sensor, p_scale=pressure_scale
         )
 
         zero_peak_at_t0 = None
+        zero_peak_at_t0_err = None
         current_t = 298.15
         t0 = 298.15
         t_scale = None
@@ -977,6 +1000,7 @@ class ApiMixin:
             current_t = temperature_correction.get("current_t", current_t)
             t0 = temperature_correction.get("t0", t0)
             zero_peak_at_t0 = temperature_correction.get("zero_pressure_peak_at_t0", zero_pressure_peak)
+            zero_peak_at_t0_err = temperature_correction.get("zero_pressure_peak_at_t0_err", 0.0)
             temperature_enabled = temperature_correction.get("enabled", False)
 
             if temperature_enabled:
@@ -1006,12 +1030,18 @@ class ApiMixin:
             temperature_correction_enabled=temperature_enabled,
             t_scale=t_scale,
             current_t=current_t, t0=t0,
+            zero_peak_err=zero_pressure_peak_err,
+            zero_peak_at_t0_err=zero_peak_at_t0_err,
         )
 
         return {
             "pressure": result.pressure,
             "pressure_err": result.pressure_err,
+            "pressure_err_peak": result.pressure_err_peak,
+            "pressure_err_scale": result.pressure_err_scale,
+            "pressure_err_zero_peak": result.pressure_err_zero_peak,
             "zero_pressure_peak_at_current_t": result.zero_peak_at_current_t,
+            "zero_pressure_peak_at_current_t_err": result.zero_peak_at_current_t_err,
             "temperature_warning": temperature_warning,
         }
 
@@ -1068,6 +1098,7 @@ class ApiMixin:
                 "loaded": self.loaded_bg_data is not None,
                 "metadata": self.loaded_bg_metadata,
             },
+            "app_version": display_version(),
             **configuration_state,
         }
 
@@ -1172,6 +1203,12 @@ class ApiMixin:
         port = self.spin_api_port.value()
         try:
             self.start_api_server(host=host, port=port)
+        except UnsupportedDataVersionError as exc:
+            # api_clients.json was written by a newer version (work_updater.md 方針14).
+            # Do not listen, but leave the saved mode alone: once the newer version
+            # is back, the operator's choice should still be in place.
+            self._api_failed_to_start(str(exc), persist_off=False)
+            return
         except Exception as exc:
             self._api_failed_to_start(str(exc))
             return
@@ -1209,7 +1246,7 @@ class ApiMixin:
                   "it may still be starting.")
             self._on_api_state_changed()
 
-    def _api_failed_to_start(self, message):
+    def _api_failed_to_start(self, message, persist_off=True):
         self._api_start_timer.stop()
         self._api_server = None
         self._api_server_thread = None
@@ -1218,7 +1255,8 @@ class ApiMixin:
         self._unlock_ui("api_server")
         self._set_api_mode_widget("off")
         self._api_mode = "off"
-        self._save_local_cache("api_mode", "off")
+        if persist_off:
+            self._save_local_cache("api_mode", "off")
         self._on_api_state_changed()
         QMessageBox.critical(
             self, "API server could not start",
@@ -1324,6 +1362,21 @@ class ApiMixin:
         self._api_clients = tuple(self.load_api_clients())
         return self._api_clients
 
+    def load_api_client_list_at_startup(self):
+        """The window-construction variant: never stops the GUI from starting.
+
+        A client list written by a newer version (work_updater.md 方針14) leaves the
+        API unusable, not the instrument: no client is authorised, and starting the
+        server (including a persisted standby/locked mode resuming) or opening
+        Manage Clients reads the file again and shows the reason there.
+        """
+        try:
+            return self.load_api_client_list()
+        except UnsupportedDataVersionError as exc:
+            print(f"API clients unavailable: {exc}")
+            self._api_clients = ()
+            return self._api_clients
+
     def set_api_clients(self, clients):
         """Replace the client list wholesale.
 
@@ -1348,8 +1401,14 @@ class ApiMixin:
     def on_manage_api_clients_clicked(self):
         from src.ui.menu.api_clients_dialog import ApiClientsDialog
 
+        try:
+            clients = self.load_api_client_list()
+        except UnsupportedDataVersionError as exc:
+            # Editing would write the newer file back in this version's format.
+            QMessageBox.warning(self, "API clients unavailable", str(exc))
+            return
         dialog = ApiClientsDialog(
-            self.load_api_client_list(),
+            clients,
             last_seen=self._api_last_seen,
             parent=self,
         )

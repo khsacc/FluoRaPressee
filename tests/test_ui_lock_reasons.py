@@ -70,6 +70,14 @@ class FakeWidget:
 class FakeCamera:
     def __init__(self):
         self.roi_pushes = []
+        self.exposure_updates = []
+        self.temperature_updates = []
+
+    def update_exposure(self, value):
+        self.exposure_updates.append(value)
+
+    def update_temperature(self, value):
+        self.temperature_updates.append(value)
 
     def update_roi_settings(self, mode, start, end):
         self.roi_pushes.append((mode, start, end))
@@ -233,6 +241,82 @@ class LockBreakingPathTests(unittest.TestCase):
 
         self.assertTrue(self.window.widget("spin_vstart").isEnabled())
         self.assertTrue(self.window.widget("radio_bg_on").isEnabled())
+
+    def test_repeated_roi_request_keeps_the_token_and_skips_hardware(self):
+        self.window._instrument_state_epoch = "test"
+        self.window._instrument_state_counter = 0
+        self.window.apply_roi_settings()
+        token = self.window.instrument_state_token
+        push_count = len(self.window.thread.roi_pushes)
+
+        self.window.apply_roi_settings()
+        self.assertEqual(self.window.instrument_state_token, token)
+        self.assertEqual(len(self.window.thread.roi_pushes), push_count)
+
+    def test_roi_mode_change_advances_token_once(self):
+        self.window._instrument_state_epoch = "test"
+        self.window._instrument_state_counter = 0
+        self.window.apply_roi_settings()
+        token = self.window.instrument_state_token
+        self.window.widget("radio_1d_full").setChecked(False)
+        self.window.widget("radio_1d_roi").setChecked(True)
+
+        self.window.apply_roi_settings()
+        self.assertNotEqual(self.window.instrument_state_token, token)
+        self.assertEqual(self.window._instrument_state_counter, 2)
+
+    def test_locked_exposure_focus_loss_does_not_write_or_bump(self):
+        self.window._instrument_state_epoch = "test"
+        self.window._instrument_state_counter = 0
+        self.window.thread.current_exposure = 0.1
+        self.window._last_committed_exposure_value = 0.1
+        self.window.widget("spin_acq_time").setValue(0.2)
+        token = self.window.instrument_state_token
+
+        self.window.on_exposure_changed()
+
+        self.assertEqual(self.window.instrument_state_token, token)
+        self.assertEqual(self.window.widget("spin_acq_time").value(), 0.1)
+        self.assertEqual(self.window.thread.exposure_updates, [])
+
+    def test_real_exposure_edit_still_writes_and_advances_token(self):
+        self.window._instrument_state_epoch = "test"
+        self.window._instrument_state_counter = 0
+        self.window._unlock_ui("api_active", reapply_hardware=False)
+        self.window._last_committed_exposure_value = 0.1
+        self.window.widget("spin_acq_time").setValue(0.2)
+        token = self.window.instrument_state_token
+
+        self.window.on_exposure_changed()
+
+        self.assertNotEqual(self.window.instrument_state_token, token)
+        self.assertEqual(self.window.thread.exposure_updates, [0.2])
+
+    def test_unchanged_exposure_focus_loss_does_not_bump(self):
+        self.window._instrument_state_epoch = "test"
+        self.window._instrument_state_counter = 0
+        self.window._unlock_ui("api_active", reapply_hardware=False)
+        self.window._last_committed_exposure_value = 0.1
+        self.window.widget("spin_acq_time").setValue(0.1)
+        token = self.window.instrument_state_token
+
+        self.window.on_exposure_changed()
+
+        self.assertEqual(self.window.instrument_state_token, token)
+        self.assertEqual(self.window.thread.exposure_updates, [])
+
+    def test_unchanged_temperature_focus_loss_does_not_bump(self):
+        self.window._instrument_state_epoch = "test"
+        self.window._instrument_state_counter = 0
+        self.window._unlock_ui("api_active")
+        self.window._last_committed_temperature_value = -65
+        self.window.widget("spin_cooler_temp").setValue(-65)
+        token = self.window.instrument_state_token
+
+        self.window.on_temperature_changed()
+
+        self.assertEqual(self.window.instrument_state_token, token)
+        self.assertEqual(self.window.thread.temperature_updates, [])
 
     def test_stopping_a_measurement_does_not_re_enable_start_buttons(self):
         self.window.thread.stop_measuring = lambda: None

@@ -1,0 +1,6 @@
+# Build-only tools (work/work_updater.md 方針10). Not installed by setup.bat.
+# Pinned so that a build is reproducible; update deliberately and re-run the
+# smoke tests and the hardware checklist in Step 3.
+-r requirements.txt
+# Includes the collection hooks required by NumPy >=2.3 and SciPy >=1.18.
+pyinstaller==6.22.3

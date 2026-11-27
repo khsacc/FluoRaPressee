@@ -19,7 +19,11 @@ from src.hardware.camera import CameraThread
 from src.hardware.spectrometer import SpectrometerController, SpectrometerMoveThread
 from src.core.analysis import DataAnalyzer
 from src.ui.calibration_ui import CalibrationWindow
-from src.core.configuration_catalog import ConfigurationCatalog
+from src.core.configuration_catalog import (
+    ConfigurationCatalog,
+    UnavailableConfigurationCatalog,
+)
+from src.core.data_versions import UnsupportedDataVersionError
 from src.core.pressureCalc import PressureCalculator
 from src.ui.pressureCalc_ui import PressureCalculatorWindow
 from src.core.file_io import DataFileIO
@@ -37,7 +41,9 @@ from src.ui.ui_mixins.display_mixin import DisplayMixin
 from src.ui.ui_mixins.pressure_dialog_mixin import PressureDialogMixin
 from src.api.gui_bridge import GuiBridge
 from src.core.api_clients import LastSeenRegistry as ApiLastSeenRegistry
+from src.core.instrument_state_log import make_instrument_state_logger
 from src.ui.ui_mixins.api_mixin import API_MODES, ApiMixin, local_ip_address
+from src.ui.menu.help_menu import HelpMenu
 # ----------------------------------------
 
 BUTTON_STYLE_BLUE = "background-color: #2196F3; color: white; font-weight: bold;"
@@ -150,6 +156,13 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # equality and never interpret it - see instrument_state_token below.
         self._instrument_state_epoch = uuid.uuid4().hex[:8]
         self._instrument_state_counter = 0
+        self._instrument_state_log = make_instrument_state_logger()
+        self._last_instrument_state_change_reason = "startup"
+        if self._instrument_state_log is not None:
+            try:
+                self._instrument_state_log.info("startup token=%s", self.instrument_state_token)
+            except Exception as exc:
+                print(f"Warning: instrument-state logging failed: {exc}")
 
         self.latest_fit_res = None
         self.latest_fit_func = None
@@ -214,7 +227,23 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spec_ctrl = SpectrometerController(config=self.config, debug=self.debug)
         self.analyzer = DataAnalyzer()
         self.file_io = DataFileIO()
-        self.configuration_catalog = ConfigurationCatalog()
+        # A catalog written by a newer version is refused untouched (work_updater.md
+        # 方針14). Start anyway: only the features that use the catalog stop, each
+        # with the reason, instead of the whole instrument becoming unusable.
+        self.configuration_catalog_error = None
+        try:
+            self.configuration_catalog = ConfigurationCatalog()
+        except UnsupportedDataVersionError as exc:
+            # `exc` is unbound once this block ends, so keep the text for the timer.
+            message = str(exc)
+            print(f"Configuration catalog refused: {message}")
+            self.configuration_catalog_error = message
+            self.configuration_catalog = UnavailableConfigurationCatalog(exc)
+            QTimer.singleShot(0, lambda: QMessageBox.warning(
+                self, "Configuration catalog unavailable",
+                f"{message}\n\nLoading and saving calibration configurations is "
+                "disabled in this session.",
+            ))
         self._last_save_dir = _cache.get("last_save_dir", "")
 
         first_grating = self.config.get("grating", [{}])[0].get("grooves", 600)
@@ -394,6 +423,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spin_acq_time.setRange(0.001, 3600)
         self.spin_acq_time.setValue(0.1)
         self.spin_acq_time.setDecimals(3)
+        self._last_committed_exposure_value = self.spin_acq_time.value()
 
         # PICam reports at runtime whether the connected camera actually has
         # an EM Gain parameter. Keep this row hidden until exists=True is received.
@@ -451,6 +481,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spin_cooler_temp = CustomSpinBox()
         self.spin_cooler_temp.setRange(-100, 20)
         self.spin_cooler_temp.setValue(self.config.get("default_temperature", -65))
+        self._last_committed_temperature_value = self.spin_cooler_temp.value()
         self.btn_read_temp = QPushButton("Read current temperature")
         self.label_current_temp = QLabel("-- °C")
         self.label_current_temp.setStyleSheet("font-weight: bold; color: #E91E63;")
@@ -566,7 +597,9 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         bg_group.setLayout(bg_layout)
         controls_layout.addWidget(bg_group)
 
-        roi_group = QGroupBox("ROI Settings")
+        # Kept as an attribute so AcquisitionMixin._apply_hardware_capability_ui() can hide
+        # the whole panel for a fixed 1D detector with a native wavelength axis (Ocean Optics).
+        self.roi_group = QGroupBox("ROI Settings")
         roi_layout = QVBoxLayout()
         self.radio_2d = QRadioButton("2D Image View")
         self.radio_1d_full = QRadioButton("1D Spectrum (Full Range Binning)")
@@ -593,8 +626,8 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.spin_vend.setMaximum(4000)
         roi_spin_layout.addWidget(self.spin_vend)
         roi_layout.addLayout(roi_spin_layout)
-        roi_group.setLayout(roi_layout)
-        controls_layout.addWidget(roi_group)
+        self.roi_group.setLayout(roi_layout)
+        controls_layout.addWidget(self.roi_group)
 
         spec_group = QGroupBox("Spectrometer Configurations")
         spec_layout = QGridLayout()
@@ -765,17 +798,27 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.btn_commence.clicked.connect(self.check_bg_and_start_meas)
         self.btn_start_seq.clicked.connect(self.check_bg_and_start_seq)
         
-        self.radio_spec_mode_wl.toggled.connect(self.on_spec_mode_changed)
-        self.radio_spec_mode_raman.toggled.connect(self.on_spec_mode_changed)
+        self.radio_spec_mode_wl.toggled.connect(
+            lambda checked: self.on_spec_mode_changed() if checked else None
+        )
+        self.radio_spec_mode_raman.toggled.connect(
+            lambda checked: self.on_spec_mode_changed() if checked else None
+        )
         
         self.seq_toggle_btn.toggled.connect(self.toggle_sequential)
         self.api_toggle_btn.toggled.connect(self.toggle_api_server)
         self.btn_choose_dir.clicked.connect(self.on_choose_seq_dir)
         self.btn_stop_seq.clicked.connect(self.stop_sequential)
         
-        self.radio_2d.toggled.connect(self.apply_roi_settings)
-        self.radio_1d_full.toggled.connect(self.apply_roi_settings)
-        self.radio_1d_roi.toggled.connect(self.apply_roi_settings)
+        self.radio_2d.toggled.connect(
+            lambda checked: self.apply_roi_settings() if checked else None
+        )
+        self.radio_1d_full.toggled.connect(
+            lambda checked: self.apply_roi_settings() if checked else None
+        )
+        self.radio_1d_roi.toggled.connect(
+            lambda checked: self.apply_roi_settings() if checked else None
+        )
         self.spin_vstart.valueChanged.connect(self.on_roi_spin_changed)
         self.spin_vend.valueChanged.connect(self.on_roi_spin_changed)
         
@@ -870,6 +913,12 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         self.action_analysis_mode = tools_menu.addAction("Analysis Mode…")
         self.action_analysis_mode.triggered.connect(self.on_open_analysis_mode_clicked)
 
+        # About / Check for Updates / Open Log Folder (work_updater.md 方針7/9). The
+        # start-up check runs in the background a few seconds after the window
+        # appears and never shows a modal dialog.
+        self.help_menu = HelpMenu(self)
+        self.help_menu.schedule_startup_check()
+
         self.seq_timer = QTimer(self)
         self.seq_timer.timeout.connect(self.update_seq_progress)
 
@@ -898,7 +947,7 @@ class SpectrometerGUI(QMainWindow, ConfigMixin, FileIOMixin, SpectrometerControl
         # Reflect the persisted mode/bind host without firing the change handlers -
         # the server itself is only started once the hardware has settled
         # (ApiMixin.maybe_autostart_api_server, called from the camera init handlers).
-        self.load_api_client_list()
+        self.load_api_client_list_at_startup()
         self._set_api_mode_widget(self._api_mode)
         bind_index = self.combo_api_bind.findData(_cache.get("api_bind_host", "0.0.0.0"))
         if bind_index >= 0:

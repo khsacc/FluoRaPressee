@@ -14,6 +14,12 @@ Threading: the client list is handed out as an immutable tuple and replaced whol
 on edit, so a worker thread reading it never sees a half-written list and needs no
 lock (rebinding a name is atomic). Only the last-seen bookkeeping is mutable, and it
 carries its own lock.
+
+Forward compatibility (work/work_updater.md 方針14): a file whose "version" is newer
+than CLIENTS_FILE_VERSION is refused before anything else happens - it is neither
+rewritten nor replaced by a freshly generated key. Keys this build does not know (at
+the top level and inside each client) are kept when the file is written back, so a
+later version can add optional fields without bumping the version.
 """
 
 from __future__ import annotations
@@ -22,27 +28,28 @@ import ipaddress
 import json
 import os
 import secrets
-import sys
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-CLIENTS_FILE_VERSION = 2
+from src.core.app_paths import LEGACY_API_KEY_NAME, api_clients_path
+from src.core.data_versions import check_supported_version
 
-# Where the single-key file used to live: the repository working directory.
-LEGACY_KEY_FILENAME = "fluora_pressee_api_key.json"
+CLIENTS_FILE_VERSION = 2
+CLIENTS_FILE_DESCRIPTION = "api_clients.json"
+
+# Where the single-key file used to live: the repository root. Which path (if any)
+# to migrate from is decided by src.core.app_paths.legacy_api_key_path().
+LEGACY_KEY_FILENAME = LEGACY_API_KEY_NAME
+
+# Top-level keys this build writes itself; everything else is preserved verbatim.
+_KNOWN_TOP_LEVEL_KEYS = ("version", "clients", "api_key")
 
 
 def default_api_clients_path() -> Path:
-    """Per-user application-data location, matching default_configuration_root()."""
-    if sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-    else:
-        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-    return base / "FluoraPressee" / "api_clients.json"
+    """Per-user application-data location (src/core/app_paths.py)."""
+    return api_clients_path()
 
 
 def new_client(name: str, allowed_ips: list[str] | None = None) -> dict[str, Any]:
@@ -63,12 +70,26 @@ def _normalize_client(entry: Any) -> dict[str, Any] | None:
     allowed = entry.get("allowed_ips") or []
     if not isinstance(allowed, list):
         allowed = []
-    return {
+    # Start from the entry itself so fields a newer version added survive a save.
+    client = dict(entry)
+    client.update({
         "name": str(entry.get("name") or "unnamed"),
         "key": str(key),
         "allowed_ips": [str(value) for value in allowed],
         "created": entry.get("created"),
-    }
+    })
+    return client
+
+
+def _check_payload_version(payload: dict) -> None:
+    """Raise UnsupportedDataVersionError for a version this build cannot use.
+
+    A missing "version" is the v1 single-key shape, which is still understood.
+    """
+    if "version" in payload:
+        check_supported_version(
+            payload["version"], CLIENTS_FILE_VERSION, CLIENTS_FILE_DESCRIPTION
+        )
 
 
 def load_clients(
@@ -77,6 +98,15 @@ def load_clients(
     """Read the client list, migrating older shapes and locations on the way.
 
     Returns (clients, needs_save, migrated_legacy_file).
+
+    `legacy_path` is the old single-key file to migrate, or None (the default) to
+    leave any such file alone. Only the caller knows whether migration is allowed
+    (src.core.app_paths.legacy_api_key_path); this function never guesses a path
+    from the working directory.
+
+    Raises UnsupportedDataVersionError, before anything else, when the file was
+    written in a newer format (方針14). The caller must then neither save nor
+    generate a key.
 
     `needs_save` is True when the caller should persist the result, either because it
     was migrated or because a first client was generated. Distinguishing "no file at
@@ -89,9 +119,7 @@ def load_clients(
     the only copy of a key the operator can repair by hand.
     """
     path = Path(path) if path is not None else default_api_clients_path()
-    legacy_path = (
-        Path(legacy_path) if legacy_path is not None else Path(LEGACY_KEY_FILENAME)
-    )
+    legacy_path = Path(legacy_path) if legacy_path is not None else None
 
     payload = None
     migrated = False
@@ -105,7 +133,13 @@ def load_clients(
             # effectively a fresh install, but never silently: say so loudly.
             print(f"Failed to read API client file {path}: {exc}")
             payload = None
-    elif legacy_path.exists():
+        if payload is not None and not isinstance(payload, dict):
+            print(f"Failed to read API client file {path}: not a JSON object")
+            payload = None
+        if payload is not None:
+            # Before anything that could lead to a save or a regenerated key.
+            _check_payload_version(payload)
+    elif legacy_path is not None and legacy_path.exists():
         try:
             with open(legacy_path, "r", encoding="utf-8") as handle:
                 legacy = json.load(handle)
@@ -147,16 +181,40 @@ def load_clients(
     return clients, migrated, migrated_legacy
 
 
+def _preserved_top_level_keys(path: Path) -> dict[str, Any]:
+    """Top-level keys of the existing file that this build does not write itself.
+
+    Also refuses to overwrite a file a newer version wrote in the meantime. An
+    unreadable file is replaced, as before.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            existing = json.load(handle)
+    except Exception:
+        return {}
+    if not isinstance(existing, dict):
+        return {}
+    _check_payload_version(existing)
+    return {
+        key: value for key, value in existing.items()
+        if key not in _KNOWN_TOP_LEVEL_KEYS
+    }
+
+
 def save_clients(clients, path: Path | None = None) -> None:
     """Write the client list atomically, owner-readable only where that means anything.
 
     Written to a temporary file and renamed, so an interrupted write can never leave a
     half-written file where the keys used to be. chmod is close to meaningless on
     Windows; there the protection is the location itself, under the user's profile.
+
+    Unknown keys are written back unchanged (方針14), and a file in a newer format is
+    never overwritten (UnsupportedDataVersionError).
     """
     path = Path(path) if path is not None else default_api_clients_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        **_preserved_top_level_keys(path),
         "version": CLIENTS_FILE_VERSION,
         "clients": [dict(client) for client in clients],
     }
@@ -172,10 +230,11 @@ def save_clients(clients, path: Path | None = None) -> None:
     os.replace(temp_path, path)
 
 
-def remove_legacy_key_file(legacy_path: Path | None = None) -> None:
-    legacy_path = (
-        Path(legacy_path) if legacy_path is not None else Path(LEGACY_KEY_FILENAME)
-    )
+def remove_legacy_key_file(legacy_path: Path | None) -> None:
+    """Delete the migrated single-key file. None means "nothing to delete"."""
+    if legacy_path is None:
+        return
+    legacy_path = Path(legacy_path)
     try:
         legacy_path.unlink()
     except FileNotFoundError:

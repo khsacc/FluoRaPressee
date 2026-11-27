@@ -13,9 +13,10 @@ from PyQt6.QtCore import QEvent, Qt
 import pyqtgraph as pg
 
 from src.core.calibration import CalibrationCore
+from src.core.app_paths import bundled_resource_path, user_calibration_standards_dir
 from src.core.calibration_reference import (
     find_match_candidates,
-    load_reference_standards,
+    load_reference_standards_from,
     match_from_seed_axis,
     resolve_standard_for_laser,
 )
@@ -94,14 +95,18 @@ class CalibrationWindow(QDialog):
         self.reference_candidate_menu.aboutToHide.connect(
             lambda: self._set_hovered_reference_line(None)
         )
-        standards_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "calibrationStandards"
+        # Shipped catalogues first, then the user's own (work_updater.md 方針5):
+        # the install folder is replaced on every update, so local additions live
+        # in the user-data folder.
+        standards_dirs = (
+            bundled_resource_path("calibrationStandards"),
+            user_calibration_standards_dir(),
         )
         # Raman-shift-native standards (e.g. cyclohexane, polystyrene) store a
         # laser-independent shift; resolve it to a wavelength for the laser in
         # use once here. This dialog is modal, so the excitation wavelength on
         # the main window cannot change underneath it while it's open.
-        raw_standards = load_reference_standards(standards_dir)
+        raw_standards = load_reference_standards_from(standards_dirs)
         self.reference_standards = {
             standard_id: resolve_standard_for_laser(standard, self._laser_wavelength())
             for standard_id, standard in raw_standards.items()

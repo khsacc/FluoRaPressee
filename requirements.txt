@@ -14,3 +14,5 @@ pythonnet>=3.0
 fastapi
 uvicorn
 pydantic
+# Version comparison for the update check (src/core/update_check.py)
+packaging

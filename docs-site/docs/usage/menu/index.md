@@ -7,15 +7,16 @@ description: メイン画面上部のメニューバー（Hardware / API / Tools
 # メニューバー
 
 メイン画面の上部には、常設のツールバー・パネルには収まらない設定・診断・補助機能をまとめたメニューバーがあります。
-**Analysis Mode**（`analysis_main.py` またはTools → Analysis Modeで開くウィンドウ）にはこのメニューバーはありません。
+**Analysis Mode**（`analysis_main.py` またはTools → Analysis Modeで開くウィンドウ）には、Helpメニューだけがあります。
 
-メニューは次の3つです。
+メニューは次の4つです。
 
 | メニュー | 項目 | 内容 |
 |---|---|---|
 | [Hardware](hardware/index.md) | Hardware Configuration... / Instrument Status... / Manage Configuration Files... | 接続機器の設定編集、状態診断、保存済みConfigurationの管理 |
 | [API](api.md) | Manage Clients... | HTTP APIのクライアント（名前付きキー）の管理 |
 | [Tools](tools.md) | Analysis Mode… | 装置接続なしでスペクトルを解析するAnalysis Modeを開く |
+| [Help](help.md) | Check for Updates… / Open Log Folder / About FluoRaPressée | 更新の確認、ログフォルダ、バージョン情報 |
 
 :::note
 Hardwareメニューの **Hardware Configuration...** のみ、連続測定中やAPIによるロック中はグレーアウトして操作できません（`spectrometerConfig.json`の書き換えを、実行中の測定やAPI経由の操作と競合させないためです）。

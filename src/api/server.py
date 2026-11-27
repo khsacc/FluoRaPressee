@@ -2,6 +2,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 
 import numpy as np
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from src.api.schemas import (
     AcquireFitRequest,
@@ -31,6 +32,7 @@ from src.core.configuration_catalog import (
     ConfigurationError,
 )
 from src.core.api_clients import find_client, ip_allowed
+from src.core.data_versions import UnsupportedDataVersionError
 from src.core.pressureCalc import PressureCalculator
 from src.ui.ui_mixins.acquisition_mixin import GateBusyError
 from src.ui.ui_mixins.api_mixin import (
@@ -455,22 +457,31 @@ def create_app(gui_window, gui_bridge, expose_docs: bool = False) -> FastAPI:
         fit_payload = _fit_payload(req, result)
         payload["fit"] = fit_payload
 
-        fit_res = fit_payload["fit"]
-        if not fit_payload["success"] or fit_res is None:
-            payload["pressure_gpa"] = None
-            payload["pressure_err_gpa"] = None
-            payload["zero_pressure_peak_at_current_t"] = None
+        # Response field -> api_pressure() result key.
+        pressure_fields = {
+            "pressure_gpa": "pressure",
+            "pressure_err_gpa": "pressure_err",
+            "pressure_err_peak_gpa": "pressure_err_peak",
+            "pressure_err_scale_gpa": "pressure_err_scale",
+            "pressure_err_zero_peak_gpa": "pressure_err_zero_peak",
+            "zero_pressure_peak_at_current_t": "zero_pressure_peak_at_current_t",
+            "zero_pressure_peak_at_current_t_err": "zero_pressure_peak_at_current_t_err",
+        }
+
+        def without_pressure():
+            for field in pressure_fields:
+                payload[field] = None
             payload["temperature_warning"] = None
             return payload
+
+        fit_res = fit_payload["fit"]
+        if not fit_payload["success"] or fit_res is None:
+            return without_pressure()
 
         peaks = fit_res.get("peaks") or []
         peak_idx = req.pressure_peak_index - 1
         if peak_idx < 0 or peak_idx >= len(peaks):
-            payload["pressure_gpa"] = None
-            payload["pressure_err_gpa"] = None
-            payload["zero_pressure_peak_at_current_t"] = None
-            payload["temperature_warning"] = None
-            return payload
+            return without_pressure()
         peak = peaks[peak_idx]["position"]
         peak_err = peaks[peak_idx]["position_err"]
 
@@ -481,14 +492,25 @@ def create_app(gui_window, gui_bridge, expose_docs: bool = False) -> FastAPI:
             peak, peak_err, req.sensor, req.pressure_scale, req.zero_pressure_peak,
             temperature_correction=temperature_correction,
             fit_function=req.fit_function,
+            zero_pressure_peak_err=req.zero_pressure_peak_err,
         )
-        payload["pressure_gpa"] = _jsonify(pressure_result["pressure"])
-        payload["pressure_err_gpa"] = _jsonify(pressure_result["pressure_err"])
-        payload["zero_pressure_peak_at_current_t"] = _jsonify(
-            pressure_result["zero_pressure_peak_at_current_t"]
-        )
+        for field, key in pressure_fields.items():
+            payload[field] = _jsonify(pressure_result[key])
         payload["temperature_warning"] = pressure_result["temperature_warning"]
         return payload
+
+    @app.exception_handler(UnsupportedDataVersionError)
+    async def unsupported_data_version(_request: Request, exc: UnsupportedDataVersionError):
+        # The configuration catalog was written by a newer version and refused at
+        # start-up (work_updater.md 方針14). Not the caller's fault, and not fixable
+        # by retrying against this build: 503 with a stable code.
+        return JSONResponse(
+            status_code=503,
+            content={"detail": {
+                "code": "unsupported_data_version",
+                "message": str(exc),
+            }},
+        )
 
     app.include_router(router)
     return app

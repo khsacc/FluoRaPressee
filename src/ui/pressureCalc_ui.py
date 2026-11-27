@@ -1,13 +1,28 @@
+import math
+
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QComboBox,
                              QLabel, QDoubleSpinBox, QAbstractSpinBox, QWidget,
                              QRadioButton, QHBoxLayout, QGroupBox, QPushButton)
 from PyQt6.QtCore import Qt
 from src.core.pressureCalc import PressureCalculator
 
+# ゼロ圧ピーク位置とその誤差の表示桁数。フィットのピーク位置誤差（ルビーで ~3e-4 nm）を
+# 丸めで失わないよう、ピーク位置側も同じ桁数にそろえている。
+ZERO_PEAK_DECIMALS = 4
+
+
 class CustomDoubleSpinBox(QDoubleSpinBox):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+
+
+def _zero_peak_err_spinbox(tooltip):
+    spin = CustomDoubleSpinBox()
+    spin.setRange(0.0, 99999.0)
+    spin.setDecimals(ZERO_PEAK_DECIMALS)
+    spin.setToolTip(tooltip)
+    return spin
 
 class PressureCalculatorWindow(QDialog):
     def __init__(self, parent=None, mode="nm", embedded=False, fit_controls_owner=None):
@@ -27,6 +42,7 @@ class PressureCalculatorWindow(QDialog):
         self.current_pressure = None       
         self.current_pressure_err = None
         self.current_zero_peak_at_current_t = None
+        self.current_zero_peak_at_current_t_err = None
         self.current_fit_peaks = []
         self.fit_peak_count = 1
         self.peak_selection_for_pressure_calc = 1
@@ -74,9 +90,16 @@ class PressureCalculatorWindow(QDialog):
         form.addRow(self.btn_apply_current)
 
         self.spin_lam0 = CustomDoubleSpinBox()
-        self.spin_lam0.setRange(-99999, 99999); self.spin_lam0.setDecimals(3)
+        self.spin_lam0.setRange(-99999, 99999); self.spin_lam0.setDecimals(ZERO_PEAK_DECIMALS)
         self.lbl_lam0_tag = QLabel(f"Zero-pressure peak ({self.unit}):")
         form.addRow(self.lbl_lam0_tag, self.spin_lam0)
+
+        self.spin_lam0_err = _zero_peak_err_spinbox(
+            "Standard uncertainty of the zero-pressure peak position. "
+            "It is propagated into the pressure uncertainty."
+        )
+        self.lbl_lam0_err_tag = QLabel(f"Uncertainty ({self.unit}):")
+        form.addRow(self.lbl_lam0_err_tag, self.spin_lam0_err)
 
         self.lbl_zero_peak_current_t_tag = QLabel(f"Zero-pressure peak at current T ({self.unit}):")
         self.lbl_zero_peak_current_t = QLabel("")
@@ -127,9 +150,16 @@ class PressureCalculatorWindow(QDialog):
         self.lbl_t0_fixed_note.hide()
 
         self.spin_lam0_t0 = CustomDoubleSpinBox()
-        self.spin_lam0_t0.setRange(-99999, 99999); self.spin_lam0_t0.setDecimals(3)
+        self.spin_lam0_t0.setRange(-99999, 99999); self.spin_lam0_t0.setDecimals(ZERO_PEAK_DECIMALS)
         self.lbl_lam0_t0_tag = QLabel(f"Zero-pressure peak at T0 ({self.unit}):")
         self.t_form.addRow(self.lbl_lam0_t0_tag, self.spin_lam0_t0)
+
+        self.spin_lam0_t0_err = _zero_peak_err_spinbox(
+            "Standard uncertainty of the zero-pressure peak position at T0. "
+            "It is propagated through the temperature correction into the pressure uncertainty."
+        )
+        self.lbl_lam0_t0_err_tag = QLabel(f"Uncertainty ({self.unit}):")
+        self.t_form.addRow(self.lbl_lam0_t0_err_tag, self.spin_lam0_t0_err)
 
         self.btn_set_lam0_t0 = QPushButton("Use the Current Value as the zero-pressure peak position at T0")
         self.btn_set_lam0_t0.setAutoDefault(False)  # Prevent the button from being triggered by pressing Enter
@@ -160,6 +190,8 @@ class PressureCalculatorWindow(QDialog):
         self.combo_pressure_peak.currentIndexChanged.connect(self.on_pressure_peak_selection_changed)
         self.spin_lam0.valueChanged.connect(self.calculate)
         self.spin_lam0_t0.valueChanged.connect(self.calculate)
+        self.spin_lam0_err.valueChanged.connect(self.calculate)
+        self.spin_lam0_t0_err.valueChanged.connect(self.calculate)
         self.spin_t.valueChanged.connect(self.calculate)
         self.spin_t0.valueChanged.connect(self.calculate)
         self.radio_on.toggled.connect(self.toggle_temp_ui)
@@ -176,20 +208,46 @@ class PressureCalculatorWindow(QDialog):
         self.lbl_lam0_tag.setVisible(not is_on)
         self.btn_apply_current.setEnabled(not is_on)
         self.btn_apply_current.setVisible(not is_on)
+        self._sync_zero_peak_err_widgets()
         if not is_on:
             self._set_zero_peak_at_current_t(None)
         self._apply_t0_constraint()
         self.calculate()
 
+    def _sync_zero_peak_err_widgets(self):
+        """λ0 誤差欄の表示/有効状態を λ0 欄にそろえる (λ0 at T0 側は温度補正グループごと切り替わる)"""
+        is_edge = PressureCalculator.is_diamond_edge_scale(
+            sensor=self.combo_sensor.currentData(), p_scale=self.combo_p_scale.currentData()
+        )
+        # Diamond edge のスケールは固有の ν0 を使い、ユーザーの λ0 もその誤差も計算に入らない
+        show = not self.radio_on.isChecked() and not is_edge
+        self.lbl_lam0_err_tag.setVisible(show)
+        self.spin_lam0_err.setVisible(show)
+        self.spin_lam0_err.setEnabled(show)
+
     def apply_current_to_lam0(self):
-        """現在のピーク値を λ0 に適用 (温度補正OFF用)"""
+        """現在のピーク値とそのフィット誤差を λ0 とその誤差に適用 (温度補正OFF用)"""
         if self.current_peak_val != 0:
-            self.spin_lam0.setValue(self.current_peak_val)
+            self._apply_current_peak_to(self.spin_lam0, self.spin_lam0_err)
 
     def apply_current_to_lam0_t0(self):
-        """現在のピーク値を λ0 at T0 に適用 (温度補正ON用)"""
+        """現在のピーク値とそのフィット誤差を λ0 at T0 とその誤差に適用 (温度補正ON用)"""
         if self.current_peak_val != 0:
-            self.spin_lam0_t0.setValue(self.current_peak_val)
+            self._apply_current_peak_to(self.spin_lam0_t0, self.spin_lam0_t0_err)
+
+    def _apply_current_peak_to(self, value_spin, err_spin):
+        try:
+            err = abs(float(self.current_peak_err))
+        except (TypeError, ValueError):
+            err = 0.0
+        if not math.isfinite(err):
+            err = 0.0
+        # 値と誤差を両方入れてから1回だけ再計算する (新しい値と古い誤差の組み合わせで計算しない)
+        for spin, value in ((value_spin, self.current_peak_val), (err_spin, err)):
+            spin.blockSignals(True)
+            spin.setValue(value)
+            spin.blockSignals(False)
+        self.calculate()
 
     def calculate(self):
         sensor = self.combo_sensor.currentData()
@@ -237,9 +295,13 @@ class PressureCalculatorWindow(QDialog):
             peak_err=self.current_peak_err,
             temperature_correction_enabled=self.radio_on.isChecked(),
             t_scale=t_scale,
-            current_t=curr_t, t0=self._current_t0()
+            current_t=curr_t, t0=self._current_t0(),
+            zero_peak_err=self.spin_lam0_err.value(),
+            zero_peak_at_t0_err=self.spin_lam0_t0_err.value(),
         )
-        self._set_zero_peak_at_current_t(result.zero_peak_at_current_t)
+        self._set_zero_peak_at_current_t(
+            result.zero_peak_at_current_t, result.zero_peak_at_current_t_err
+        )
         if result.pressure is not None:
             self.current_pressure = result.pressure
             self.current_pressure_err = result.pressure_err
@@ -252,8 +314,10 @@ class PressureCalculatorWindow(QDialog):
     def update_mode(self, mode):
         self.unit = mode
         self.lbl_lam0_tag.setText(f"Zero-pressure peak ({mode}):")
+        self.lbl_lam0_err_tag.setText(f"Uncertainty ({mode}):")
         self.lbl_zero_peak_current_t_tag.setText(f"Zero-pressure peak at current T ({mode}):")
         self.lbl_lam0_t0_tag.setText(f"Zero-pressure peak at T0 ({mode}):")
+        self.lbl_lam0_t0_err_tag.setText(f"Uncertainty ({mode}):")
         self.combo_sensor.blockSignals(True); self.combo_sensor.clear()
         for sensor_key in PressureCalculator.get_sensors_for_unit(mode):
             self.combo_sensor.addItem(PressureCalculator.SENSORS[sensor_key]["label"], sensor_key)
@@ -268,6 +332,11 @@ class PressureCalculatorWindow(QDialog):
         default_val = PressureCalculator.SENSORS[sensor]["initial_value"]
         self.spin_lam0.setValue(default_val)
         self.spin_lam0_t0.setValue(default_val)
+        # 初期値は文献値の目安なので、誤差は付けない (このメソッドの最後で再計算される)
+        for spin in (self.spin_lam0_err, self.spin_lam0_t0_err):
+            spin.blockSignals(True)
+            spin.setValue(0.0)
+            spin.blockSignals(False)
         self._set_zero_peak_at_current_t(None)
         self.reset_peak_selection_for_pressure_calc()
 
@@ -333,6 +402,7 @@ class PressureCalculatorWindow(QDialog):
             self.spin_lam0_t0.setEnabled(True)
             self.btn_apply_current.setVisible(not self.radio_on.isChecked())
             self.temp_group.setVisible(True)
+        self._sync_zero_peak_err_widgets()
         self.calculate()
 
     def _apply_recommended_fit_peak_count(self):
@@ -394,15 +464,44 @@ class PressureCalculatorWindow(QDialog):
         self.lbl_t0_fixed_note.setText(PressureCalculator.get_fixed_t0_note(sensor=sensor, p_scale=p_scale))
         self.lbl_t0_fixed_note.show()
 
-    def _set_zero_peak_at_current_t(self, value):
+    def _set_zero_peak_at_current_t(self, value, err=None):
         self.current_zero_peak_at_current_t = value
+        self.current_zero_peak_at_current_t_err = err if value is not None else None
         should_show = self.radio_on.isChecked() and value is not None
         self.lbl_zero_peak_current_t_tag.setVisible(should_show)
         self.lbl_zero_peak_current_t.setVisible(should_show)
         if value is not None:
-            self.lbl_zero_peak_current_t.setText(f"{value:.3f}")
+            text = f"{value:.{ZERO_PEAK_DECIMALS}f}"
+            if err:
+                text += f" ± {err:.{ZERO_PEAK_DECIMALS}f}"
+            self.lbl_zero_peak_current_t.setText(text)
         else:
             self.lbl_zero_peak_current_t.setText("")
+
+    def pressure_info_for_save(self):
+        """フィット結果ファイル用の圧力情報 (DataFileIO.save_fitting_results の pressure_info)。
+
+        圧力が算出されていなければ None。λ0 は現在温度での値を明示できる場合はそれを、
+        できない場合は入力欄の値を使い、誤差も同じ方から取る。
+        """
+        if self.current_pressure is None:
+            return None
+        lam0 = self.current_zero_peak_at_current_t
+        lam0_err = self.current_zero_peak_at_current_t_err
+        if lam0 is None:
+            if self.radio_on.isChecked():
+                lam0, lam0_err = self.spin_lam0_t0.value(), self.spin_lam0_t0_err.value()
+            else:
+                lam0, lam0_err = self.spin_lam0.value(), self.spin_lam0_err.value()
+        return {
+            "pressure": self.current_pressure,
+            "pressure_err": self.current_pressure_err,
+            "scale": self.combo_p_scale.currentText(),
+            "sensor": self.combo_sensor.currentText(),
+            "lam0": lam0,
+            "lam0_err": lam0_err,
+            "lam0_unit": self.unit,
+        }
 
     def _refresh_pressure_peak_combo(self):
         count = max(1, int(self.fit_peak_count))

@@ -22,7 +22,14 @@ FluoRaPressée は、装置との堅牢な通信を実現するため、接続�
    読み取りに失敗した項目があっても手入力にフォールバックするだけで、ウィザードが停止することはありません。
 3. **Grating・検出器設定**: gratingのgrooves/mm（カンマ区切り）、`flip_x`（左右反転表示）、冷却器の目標温度初期値などを設定します。回折格子に関する情報は、分光器から自動で取得されます。
 
-ウィザードを最後まで完了する（Finish）と、入力内容が `spectrometerConfig.json` としてリポジトリルートに書き込まれます。
+ウィザードを最後まで完了する（Finish）と、入力内容が `spectrometerConfig.json` として[ユーザーデータの保存場所](data-formats/index.md#アプリが自動で保存するファイル)に書き込まれます。
+
+DLL/Runtimeのパスは絶対パス（`C:\...`）で指定します。相対パスを入力すると、先に進めません。
+
+以前ソースから起動していたPCで、既存の `spectrometerConfig.json` をそのまま使いたい場合は、ウィザード下部の **Load existing spectrometerConfig.json…** でそのファイルを選びます。
+ファイル内の相対パスは、選んだファイルのフォルダを基準にした絶対パスに直されます。
+
+Ocean Optics を選んだ場合は、接続設定の画面にUSBドライバーを導入する **Install Ocean Optics driver…** ボタンが表示されます（[インストール](installation.md#ocean-optics-のドライバー)参照）。
 
 :::caution
 ウィザードを**キャンセル**すると、`spectrometerConfig.json` は作成されず、アプリケーションはそのまま終了します。

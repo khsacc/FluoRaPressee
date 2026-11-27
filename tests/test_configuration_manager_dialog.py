@@ -135,12 +135,13 @@ class ConfigurationManagerDialogTests(unittest.TestCase):
 
     def test_table_has_checkbox_column_and_expected_columns(self):
         self.assertEqual(self.dialog.table.columnCount(), 9)
+        self.assertIsInstance(self._checkbox(self._row_of("cfg-active")), QCheckBox)
         self.assertEqual(
             [
                 self.dialog.table.horizontalHeaderItem(i).text()
                 for i in range(1, 9)
             ],
-            ["Hardware", "Grating", "Centre (nm)", "ROI", "Axis",
+            ["Hardware", "Grating", "Centre", "ROI", "Axis",
              "Status", "Created", "Last used"],
         )
 

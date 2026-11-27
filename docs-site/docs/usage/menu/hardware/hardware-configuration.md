@@ -18,7 +18,8 @@ description: spectrometerConfig.jsonをGUI上で編集するダイアログ（Ha
 
 - **Andor**: `ShamrockCIF.dll` を含むディレクトリのパス
 - **Princeton Instruments**: グレーティングコントローラのCOMポート、PICam Runtimeディレクトリ（`picam.dll` / `picam64.dll`）、カメラのシリアル番号（空欄なら1台のみ接続時に自動選択）
-- **Ocean Optics**: シリアル番号（空欄なら先頭のデバイスを自動選択）、seabreezeバックエンド（Auto / cseabreeze / pyseabreeze）
+- **Ocean Optics**: シリアル番号（空欄なら先頭のデバイスを自動選択）、seabreezeバックエンド（Auto / cseabreeze / pyseabreeze）。
+  **Install Ocean Optics driver…** ボタンでUSBドライバーを導入できます（管理者権限が必要。[インストール](../../../installation.md#ocean-optics-のドライバー)参照）。
 
 各項目の詳しい意味は[spectrometerConfig.jsonの仕様](../../../data-formats/spectrometer-config.md)を参照してください。
 
@@ -42,9 +43,11 @@ Index はスロットの並び順ではなく分光器へ送信する物理タ�
 
 ## 保存時の挙動
 
+DLL/Runtimeのパスが相対パスの場合は保存できません。絶対パス（`C:\...`）で指定してください。
+
 Andor/Princeton InstrumentsのDLL/COMポート設定が検証に失敗した場合、警告ダイアログで「そのまま保存すると次回起動時にdebugモードへフォールバックする」旨が表示され、続行するか選べます。
 
-保存が成功すると `spectrometerConfig.json` に書き込まれます。
+保存が成功すると `spectrometerConfig.json`（[保存場所](../../../data-formats/index.md#アプリが自動で保存するファイル)）に書き込まれます。
 ただし `model` / `com_port` / `dll_path` / `PIcam_dll_path` / `camera_serial_number` / `serial_number` / `seabreeze_backend` はカメラ／分光器スレッドの構築時に一度だけ読み込まれる値のため、変更を反映するには**アプリの再起動が必要**です（保存後にその旨のメッセージが表示されます）。
 グレーティング一覧・`flip_x`・既定温度の変更は再起動なしで即座に反映されます。
 

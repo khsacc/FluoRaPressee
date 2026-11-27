@@ -22,9 +22,9 @@ GUIのセットアップウィザードや設定変更ダイアログからの�
 | キー | 型 | 対象 | 説明 |
 |---|---|---|---|
 | `model` | string | 共通 | `"Andor"` / `"PrincetonInstruments"` / `"OceanOptics"`。`src/hardware/camera.py`・`src/hardware/spectrometer.py` のファクトリ関数がこの値でドライバ実装を選び分けます。 |
-| `dll_path` | string | Andor | `ShamrockCIF.dll` の場所。ディレクトリ・ファイルへのフルパスのどちらでも構いません（ディレクトリを指定した場合は内部で自動的に `ShamrockCIF.dll` が結合されます）。 |
+| `dll_path` | string | Andor | `ShamrockCIF.dll` の場所。ディレクトリ・ファイルへのフルパスのどちらでも構いません（ディレクトリを指定した場合は内部で自動的に `ShamrockCIF.dll` が結合されます）。ウィザードとHardware Configurationでは絶対パスだけを受け付けます。 |
 | `com_port` | string | Princeton Instruments | 分光器のシリアルポート。例: `"COM3"` |
-| `PIcam_dll_path` | string | Princeton Instruments | PICam Runtimeのディレクトリ。 |
+| `PIcam_dll_path` | string | Princeton Instruments | PICam Runtimeのディレクトリ。ウィザードとHardware Configurationでは絶対パスだけを受け付けます。 |
 | `camera_serial_number` | string | Princeton Instruments | カメラのシリアル番号。空文字（または省略）の場合、接続カメラが1台のみであれば自動選択されます。 |
 | `serial_number` | string \| null | Ocean Optics | デバイスのシリアル番号。`null`（または省略）の場合、最初に見つかったデバイスを使用します。 |
 | `seabreeze_backend` | string \| null | Ocean Optics | `"cseabreeze"` / `"pyseabreeze"`。通常は `null` のままでよい。 |

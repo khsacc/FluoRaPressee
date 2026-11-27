@@ -59,6 +59,14 @@ This software was developed in the Geochemical Research Center (GcRC), Graduate 
 
 ## 📥 Installation
 
+A Windows installer that needs no Python is published on
+[GitHub Releases](https://github.com/khsacc/FluoraPressee/releases): download and run
+`FluoRaPressee-Setup-<version>.exe` (no administrator rights needed). The app announces new
+versions in its Help menu; running the new installer updates in place. See the
+[online manual](https://khsacc.github.io/FluoRaPressee/installation) (Japanese).
+
+To run from source instead (developers):
+
 1. Clone the repository. Andor and Princeton Instruments users should double-click `setup.bat`
    (or run it from Command Prompt / PowerShell). Ocean Optics users should instead run
    `setup_oceanoptics.bat` as Administrator; see below.

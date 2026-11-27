@@ -146,6 +146,27 @@ def load_reference_standards(directory: str | Path) -> dict[str, ReferenceStanda
     return standards
 
 
+def load_reference_standards_from(
+    directories: Iterable[str | Path],
+) -> dict[str, ReferenceStandard]:
+    """Load several catalogue folders; a later folder wins on a duplicate standard_id.
+
+    The calibration dialog passes the bundled catalogues first and the user's own
+    folder second (work/work_updater.md 方針5), so a locally edited copy of a
+    shipped standard replaces it - and says so, since that is easy to forget.
+    """
+    standards: dict[str, ReferenceStandard] = {}
+    for directory in directories:
+        for standard_id, standard in load_reference_standards(directory).items():
+            if standard_id in standards:
+                print(
+                    f"Reference-line catalogue {standard_id!r} in {directory} overrides "
+                    "the one loaded earlier."
+                )
+            standards[standard_id] = standard
+    return standards
+
+
 def resolve_standard_for_laser(
     standard: ReferenceStandard, laser_wavelength_nm: float
 ) -> ReferenceStandard:

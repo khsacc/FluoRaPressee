@@ -17,8 +17,19 @@ description: HTTPエラーコード一覧とAPIの既知の制限事項
 | 409 | 他の操作が進行中（`code: "busy"`、`reason` で内訳を区別）、`expected_state_token` が現在の状態と一致しない（`code: "state_token_mismatch"`）、configurationが装置と非互換、またはbareな`slot_id`に対応する calibration profileが2つ以上あり曖昧（`code: "ambiguous_configuration_profile"`、[Configuration関連エンドポイント](configurations.md)参照） |
 | 422 | リクエストボディのバリデーションエラー（Pydantic）、または `dark.mode="reuse_loaded"` の設定ミスマッチ |
 | 500 | 予期しないサーバーエラー |
-| 503 | カメラが初期化されていない（`code: "camera_not_ready"`）、またはサーバーが停止処理中で新規リクエストを受け付けていない（`code: "shutting_down"`、[動作モード](standby.md)参照） |
+| 503 | カメラが初期化されていない（`code: "camera_not_ready"`）、サーバーが停止処理中で新規リクエストを受け付けていない（`code: "shutting_down"`、[動作モード](standby.md)参照）、または構成カタログが新しい版の FluoRaPressée で作られているため使えない（`code: "unsupported_data_version"`。configuration関連の操作のみ） |
 | 504 | configuration適用、取得またはライブ状態照会がタイムアウトした |
+
+### `state_token_mismatch` の調査
+
+FRP はトークンが変わるたびに変更理由・変更前後のトークン・時刻を、ユーザーの
+アプリケーションデータにある `FluoraPressee/logs/instrument_state.log` に記録します。
+409 が起きた場合も、受信したトークンと直近の変更理由を記録します。Windows では通常
+`%LOCALAPPDATA%\FluoraPressee\logs\instrument_state.log` です。ログは最大 2 MB の
+ファイルを3世代保持し、APIキーは書き込みません。トークンの形式やカウンター差には
+意味を持たせず、変更理由と時刻で原因を確認してください。
+値が変わらない露光時間・温度設定の入力確定や、同じROI設定の再通知では
+トークンを更新しません。
 
 ### 409 の `reason`
 

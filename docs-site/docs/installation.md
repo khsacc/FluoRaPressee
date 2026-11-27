@@ -1,38 +1,121 @@
 ---
 sidebar_position: 2
 title: インストール
-description: FluoRaPresséeの動作環境とインストール手順
+description: FluoRaPresséeの動作環境、インストール・更新・アンインストールの手順
 ---
 
 # インストール
 
-本アプリケーションは開発中のため、現段階ではスタンドアロンで起動できるビルド版は配布しておりません。
-折を見てビルド版をGitHubでリリースする予定です。
+FluoRaPressée は、Pythonを必要としない**インストール版**（Windows用）を[GitHub Releases](https://github.com/khsacc/FluoraPressee/releases)で配布しています。
+実験用PCでは、通常はインストール版を使ってください。
+開発者向けに、ソースコードから起動する方法も[後述](#ソースから起動する開発者向け)します。
 
 ## 必須環境
 
-- Windows 10またはWindows 11
-- Python 3.9以上、3.13以下
-- 使用する装置に対応したSDKまたはドライバー
+- Windows 10またはWindows 11（64ビット）
+- 使用する装置に対応したSDKまたはドライバー（次の節を参照）
 
-## リポジトリの取得
+## インストール版
+
+### 装置メーカーのランタイム
+
+装置メーカーのSDK・ランタイムは、ライセンスの都合でインストーラーに含まれていません。
+使用する装置に応じて、先にインストールしてください。
+
+- Andor：Andor SDK（装置に付属のCD-ROMにインストーラーが入っている）
+- Princeton Instruments：PICam Runtime（オンラインでダウンロード可能）
+- Ocean Optics：USBドライバー。FluoRaPresséeのインストーラーから導入できます（[後述](#ocean-optics-のドライバー)）。
+
+### インストールの手順
+
+1. [Releases](https://github.com/khsacc/FluoraPressee/releases)で最新版を開き、*Assets* にある `FluoRaPressee-Setup-<バージョン>.exe` をダウンロードします。
+   「Source code (zip)」ではありません。
+2. ダウンロードしたファイルを実行します。**管理者権限は不要**です（ユーザーごとに `%LOCALAPPDATA%\Programs\FluoRaPressee` へインストールされます）。
+
+:::caution[SmartScreen の警告]
+インストーラーにはコード署名がないため、実行時に「Windows によって PC が保護されました」と表示されます。
+「**詳細情報**」を押し、表示された「**実行**」を押すと続行できます。
+ブラウザによっては、ダウンロードの時点でも「一般的にダウンロードされていません」などの警告が出ます。その場合は、保存を選び直してください。
+この警告は、新しい版をダウンロードして実行するたびに表示されます。
+:::
+
+スタートメニューには次の項目が登録されます。
+
+| 項目 | 内容 |
+|---|---|
+| FluoRaPressée | 装置を制御するメイン画面 |
+| FluoRaPressée Analysis | 装置を接続せずに保存済みスペクトルを解析するAnalysis Mode |
+| FluoRaPressée（デバッグモード） | 装置なしで動作を確認する `--debug` モード |
+| Ocean Optics ドライバーのインストール | Ocean Optics のUSBドライバーを導入する（管理者権限が必要） |
+
+### Ocean Optics のドライバー
+
+Ocean Optics の装置を使う場合は、USBドライバー（SeaBreeze）を一度だけ導入します。
+次のどれかから実行できます。どれも管理者権限が必要で、Windowsの確認（UAC）が表示されます。
+
+- インストーラーの「Ocean Optics (SeaBreeze) の USB ドライバーをインストールする」を選ぶ（新規インストール時のみ表示されます）
+- セットアップウィザードまたはHardware Configurationで Ocean Optics を選んだときに表示される **Install Ocean Optics driver…** ボタン
+- スタートメニューの「Ocean Optics ドライバーのインストール」
+
+導入後、装置が認識されたかどうかが表示されます。
+
+### 初回起動
+
+初回起動時に設定ウィザードが表示されるので、装置メーカー、接続情報、回折格子などを設定してください。
+以前にソースから起動していたPCでは、ウィザードの **Load existing spectrometerConfig.json…** から以前の設定ファイルを読み込めます。
+ウィザードの各項目と設定ファイルの仕様については[ハードウェア設定](hardware-config.md)を参照してください。
+
+## 更新
+
+新しい版が公開されると、FluoRaPressée の **Help** メニューに「Update available」が表示されます（起動時に1日1回まで確認します。確認できなくても何も表示されません）。
+**Help → Check for Updates…** で、いつでも手動で確認できます。
+
+1. 更新のダイアログの **Download FluoRaPressee-Setup-…exe** を押し、インストーラーをダウンロードします。
+2. **FluoRaPressée をすべて終了**してから、ダウンロードしたインストーラーを実行します。
+   起動したまま実行すると、インストーラーが「FluoRaPressée が実行中です」と表示して終了を求めます。測定中でないことを確かめてから終了し、OKを押してください。
+3. インストール先の選択は省略され、前回と同じ場所が上書きされます。設定と較正データはそのまま引き継がれます。
+
+更新でも[SmartScreen の警告](#インストールの手順)が表示されます。
+インターネットにつながらないPCでは、別のPCでダウンロードしたインストーラーをUSBメモリなどで持ち込み、同じ手順で実行してください。
+詳しくは[Helpメニュー](usage/menu/help.md)を参照してください。
+
+### 古い版に戻す
+
+新しい版で問題が起きた場合は、古い版のインストーラーを[Releases](https://github.com/khsacc/FluoraPressee/releases)から入手して実行すると、その版に戻せます。
+ただし、新しい版が新しい形式で保存したデータ（構成カタログなど）は、古い版では使えなくなることがあります。
+その場合、古い版はデータを書き換えずに理由を表示し、そのデータを使う機能だけを止めます。新しい版に戻せば、そのまま使えます。
+
+## アンインストール
+
+Windowsの「設定 → アプリ」から FluoRaPressée をアンインストールします。
+設定と較正データ（[保存場所](data-formats/index.md#アプリが自動で保存するファイル)）は、装置に結びついた資産のため**削除されません**。不要であれば手動で削除してください。
+
+## 同じPCでソース版とインストール版を使う場合
+
+開発用PCなどでソースから起動する版とインストール版の両方がある場合、設定と較正データは両者で共有されます。
+**装置を使うメイン画面は、PC全体で同時に1つしか起動できません**（2つ目は「別の FluoRaPressée が装置を使用中です」と表示して終了します）。
+デバッグモードとAnalysis Modeには、この制限はありません。
+
+## ソースから起動する（開発者向け）
+
+### 必須環境
+
+- Python 3.9以上、3.13以下
+
+### リポジトリの取得
 
 ```powershell
 git clone https://github.com/khsacc/FluoRaPressee.git
 cd FluoRaPressee
 ```
 
-## Andor / Princeton Instruments
+### Andor / Princeton Instruments
 
 `setup.bat`を実行します。
 プロジェクト内に`.venv`が作成され、必要なPythonパッケージがインストールされます。
+装置メーカーのランタイムは[インストール版](#装置メーカーのランタイム)と同様に必要です。
 
-使用する装置に応じて、次のランタイムもインストールしてください。
-
-- Andor：Andor SDK（装置に付属のCD-ROMにインストーラーが入っている）
-- Princeton Instruments：PICam Runtime（オンラインでダウンロード可能）
-
-## Ocean Optics
+### Ocean Optics
 
 Windowsでは`setup_oceanoptics.bat`を管理者として実行します。
 
@@ -42,10 +125,10 @@ macOSまたはLinuxでOcean Opticsを使用する場合は、次を実行しま�
 ./setup_oceanoptics.sh
 ```
 
-## 初回起動
+### 起動と更新
 
-Windowsでは`FluoRaPressee_run.bat`を実行します。
-初回起動時に設定ウィザードが表示されるので、装置メーカー、接続情報、回折格子などを設定してください。
+Windowsでは`FluoraPressee_run.bat`を実行します。
+更新は `git pull` のあと `setup.bat` を実行し直します（Help → Check for Updates… は、新しい版があるかどうかの表示だけを行います）。
 
-ウィザード完了後、装置設定はリポジトリルートの`spectrometerConfig.json`に保存されます。
-ウィザードの各項目と設定ファイルの仕様については[ハードウェア設定](hardware-config.md)を参照してください。
+以前の版では `spectrometerConfig.json` などをリポジトリ直下に保存していました。
+現在の版を初めて起動すると、これらは自動的に[ユーザーデータの保存場所](data-formats/index.md#アプリが自動で保存するファイル)へ移され、リポジトリ直下の元のファイルは `.migrated` を付けた名前に変わります。

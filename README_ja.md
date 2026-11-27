@@ -24,6 +24,15 @@
 
 ## インストール方法 
 
+### インストール版（推奨）
+
+Pythonを必要としないWindows用インストーラーを[GitHub Releases](https://github.com/khsacc/FluoraPressee/releases)で配布しています。
+`FluoRaPressee-Setup-<バージョン>.exe` をダウンロードして実行してください（管理者権限は不要です）。
+新しい版が出るとアプリの Help メニューで通知され、同じ手順で上書き更新できます。
+詳しくは[オンラインマニュアルのインストール](https://khsacc.github.io/FluoRaPressee/installation)を参照してください。
+
+### ソースから起動する（開発者向け）
+
 1. リポジトリをクローンします。AndorまたはPrinceton Instrumentsを使用する場合は、``setup.bat``をダブルクリック
    （またはコマンドプロンプト/PowerShellから実行）します。Ocean Opticsを使用する場合は、代わりに
    ``setup_oceanoptics.bat``を右クリックして「管理者として実行」します。

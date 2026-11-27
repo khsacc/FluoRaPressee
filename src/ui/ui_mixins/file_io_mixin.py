@@ -140,7 +140,7 @@ class FileIOMixin:
         self.positioned_configuration_id = configuration_id
         self.positioned_configuration_slot_id = slot_id
         self.axis_source = axis_source
-        self._bump_instrument_state()
+        self._bump_instrument_state("calibration_applied")
         self.lbl_loaded_configuration.setText(f"Loaded: {label}")
         self.update_plot_labels()
         self.sync_fit_range_to_spectrum(force=True)
@@ -177,7 +177,7 @@ class FileIOMixin:
         self.active_configuration_slot_id = None
         self.positioned_configuration_id = None
         self.positioned_configuration_slot_id = None
-        self._bump_instrument_state()
+        self._bump_instrument_state("configuration_cleared")
         self.lbl_loaded_configuration.setText("Loaded: None")
         self.update_plot_labels()
         self._refresh_after_axis_change()
@@ -197,7 +197,7 @@ class FileIOMixin:
         self.calib_laser_wl = None
         self.active_configuration_id = None
         self.active_configuration_slot_id = None
-        self._bump_instrument_state()
+        self._bump_instrument_state("calibration_deactivated")
         self.configuration_label = f"{self.configuration_label} (calibration invalidated: {reason})"
         self.lbl_loaded_configuration.setText(f"Loaded: {self.configuration_label}")
         self.update_plot_labels()
@@ -364,6 +364,8 @@ class FileIOMixin:
             self._release_acquisition_gate()
 
     def on_load_configuration(self):
+        if self._configuration_catalog_unavailable():
+            return
         # Keep the dialog itself outside the gate: otherwise every API request would
         # get 409 for as long as the operator is still deciding
         # (work_API_standby.md Step 0 手順3).
@@ -418,7 +420,7 @@ class FileIOMixin:
         self.positioned_configuration_id = configuration_id
         self.positioned_configuration_slot_id = slot_id
         self.axis_source = "pixel"
-        self._bump_instrument_state()
+        self._bump_instrument_state("pixel_configuration_applied")
         self.lbl_loaded_configuration.setText(f"Loaded: {label} (pixel axis)")
         self.update_plot_labels()
         self.sync_fit_range_to_spectrum(force=True)
@@ -676,7 +678,7 @@ class FileIOMixin:
             QMessageBox.information(self, "Success", "Background saved successfully.")
             self.loaded_bg_data = bg_arr
             self.loaded_bg_metadata = bg_meta
-            self._bump_instrument_state()
+            self._bump_instrument_state("background_acquired")
             self.lbl_loaded_bg.setText(f"Loaded: {os.path.basename(file_path)}")
             self.radio_bg_on.setChecked(True)
             self.on_fit_settings_changed()
@@ -695,7 +697,7 @@ class FileIOMixin:
                     bg_arr, bg_meta = self.file_io.load_background(file_path)
                     self.loaded_bg_data = bg_arr
                     self.loaded_bg_metadata = bg_meta
-                    self._bump_instrument_state()
+                    self._bump_instrument_state("background_loaded")
                     self.lbl_loaded_bg.setText(f"Loaded: {os.path.basename(file_path)}")
                     self.radio_bg_on.setChecked(True)
                     self.on_fit_settings_changed()
@@ -773,18 +775,8 @@ class FileIOMixin:
                     fit_file_path = file_path.rsplit('.', 1)[0] + "_fitting_results.txt"
                     pressure_info = None
                     pw = self.pressure_window
-                    if pw is not None and pw.isVisible() and pw.current_pressure is not None:
-                        lam0_value = pw.current_zero_peak_at_current_t
-                        if lam0_value is None:
-                            lam0_value = pw.spin_lam0_t0.value() if pw.radio_on.isChecked() else pw.spin_lam0.value()
-                        pressure_info = {
-                            "pressure":     pw.current_pressure,
-                            "pressure_err": pw.current_pressure_err,
-                            "scale":        pw.combo_p_scale.currentText(),
-                            "sensor":       pw.combo_sensor.currentText(),
-                            "lam0":         lam0_value,
-                            "lam0_unit":    pw.unit,
-                        }
+                    if pw is not None and pw.isVisible():
+                        pressure_info = pw.pressure_info_for_save()
                     self.file_io.save_fitting_results(fit_file_path, self.latest_fit_res,
                                                       getattr(self, 'latest_fit_func', 'Unknown'),
                                                       pressure_info=pressure_info)

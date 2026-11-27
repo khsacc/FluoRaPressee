@@ -1,6 +1,14 @@
 """Failure handling around the GUI's named-client persistence layer."""
+import json
+import os
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
+
+from src.core.app_paths import ENV_DATA_DIR
+from src.core.data_versions import UnsupportedDataVersionError
 
 from src.core.api_clients import LastSeenRegistry
 from src.ui.ui_mixins.api_mixin import ApiMixin, local_ip_address
@@ -167,6 +175,75 @@ class LocalIpAddressCachingTests(unittest.TestCase):
         self.assertEqual(second, "192.0.2.5")
         hostname.assert_called_once()
         byname.assert_called_once()
+
+
+class PlainConfigHarness(ConfigMixin):
+    """Uses the real load/save path, only redirected to temporary folders."""
+
+
+class StartupHarness(ApiMixin, ConfigMixin):
+    """The real load path as the window's constructor calls it."""
+
+
+class LegacyKeyIsolationTests(unittest.TestCase):
+    """work_updater.md 方針4: FLUORAPRESSEE_DATA_DIR must keep the real key untouched."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name) / "repo"
+        self.data = Path(self._tmp.name) / "data"
+        self.repo.mkdir()
+        self.legacy = self.repo / "fluora_pressee_api_key.json"
+        self.legacy.write_text(json.dumps({"api_key": "real-secret"}), encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_environment_variable_leaves_the_legacy_file_alone(self):
+        before = self.legacy.read_bytes()
+        with patch.object(sys, "frozen", False, create=True), \
+                patch.dict(os.environ, {ENV_DATA_DIR: str(self.data)}), \
+                patch("src.core.app_paths.repo_root", return_value=self.repo):
+            clients = PlainConfigHarness().load_api_clients()
+
+        self.assertEqual(self.legacy.read_bytes(), before)
+        self.assertNotEqual(clients[0]["key"], "real-secret")
+        saved = json.loads((self.data / "api_clients.json").read_text(encoding="utf-8"))
+        self.assertNotEqual(saved["clients"][0]["key"], "real-secret")
+
+    def test_migration_still_happens_without_the_environment_variable(self):
+        # Patch the rule and the folder instead of clearing the variable: without it
+        # the real user-data folder would be used.
+        with patch("src.ui.ui_mixins.config_mixin.legacy_api_key_path", return_value=self.legacy), \
+                patch("src.core.api_clients.default_api_clients_path",
+                      return_value=self.data / "api_clients.json"):
+            clients = PlainConfigHarness().load_api_clients()
+
+        self.assertEqual(clients[0]["key"], "real-secret")
+        self.assertFalse(self.legacy.exists())
+
+    def test_newer_file_is_neither_saved_nor_regenerated(self):
+        self.data.mkdir()
+        path = self.data / "api_clients.json"
+        path.write_text(json.dumps({"version": 99, "clients": []}), encoding="utf-8")
+        before = path.read_bytes()
+        with patch.dict(os.environ, {ENV_DATA_DIR: str(self.data)}):
+            with self.assertRaises(UnsupportedDataVersionError):
+                PlainConfigHarness().load_api_clients()
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_newer_file_does_not_stop_the_window_from_starting(self):
+        # SpectrometerGUI.__init__ loads the clients even with the API off.
+        self.data.mkdir()
+        path = self.data / "api_clients.json"
+        path.write_text(json.dumps({"version": 99, "clients": []}), encoding="utf-8")
+        before = path.read_bytes()
+        gui = StartupHarness()
+        with patch.dict(os.environ, {ENV_DATA_DIR: str(self.data)}):
+            clients = gui.load_api_client_list_at_startup()
+        self.assertEqual(clients, ())
+        self.assertEqual(gui._api_clients, ())
+        self.assertEqual(path.read_bytes(), before)
 
 
 if __name__ == "__main__":

@@ -27,9 +27,12 @@ description: 現在の状態を返すエンドポイント
     "actual_center_wavelength_nm": 694.0,
     "roi_mode": "1d_roi", "roi_start": 100, "roi_end": 140
   },
-  "instrument_state_token": "3f2a91c0:14"
+  "instrument_state_token": "3f2a91c0:14",
+  "app_version": "0.1.0b1"
 }
 ```
+- `app_version`は動作中の FluoRaPressée のバージョンです。ソースから起動している場合は
+  `0.1.0b1+dev.g1a2b3c4d` のようにコミットが付きます。
 - `instrument_state_token`は**不透明な文字列**で、等値比較のみに使います。
   [`POST /acquire`](acquire.md)の`expected_state_token`にそのまま渡すと、
   ここで確認した状態のままであることを保証して取得できます。

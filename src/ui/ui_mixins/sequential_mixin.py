@@ -170,7 +170,7 @@ class SequentialMixin:
         if enabled:
             self.toggle_fitting_panel()
             if reapply_hardware:
-                self.apply_roi_settings()
+                self.apply_roi_settings(force=True)
             else:
                 self._sync_roi_widget_states()
 
