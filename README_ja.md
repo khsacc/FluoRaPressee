@@ -45,8 +45,7 @@ Pythonを必要としないWindows用インストーラーを[GitHub Releases](h
    * Princeton Instrumentsの場合: PICam Runtime（カメラ用）。分光器（Acton SP シリーズ）はシリアル接続のため、PC側のCOMポート番号を確認しておきます。
    * Ocean Opticsの場合: ``setup.bat``を先に実行する必要はありません。``setup_oceanoptics.bat``の1回の実行で、
      仮想環境の作成、共通パッケージと``seabreeze``のインストール、装置の検出確認まで行われます。
-     Windowsでは装置を検出できない場合だけ``seabreeze_os_setup``でUSBドライバーを導入します。
-     複数機種用のINFをまとめて登録するため、一部が署名関連で失敗することがありますが、使用する装置を認識して測定できれば他機種用の失敗を解消する必要はありません。
+     Windowsでは装置を接続してから実行してください。ドライバーが必要な場合は実機のUSBハードウェアIDを照合し、対応するINFだけを表示して登録します。
      詳しくは[ドライバーの説明](https://khsacc.github.io/FluoRaPressee/installation#ocean-optics-のドライバー)を参照してください。
      macOS/Linuxでは``./setup_oceanoptics.sh``を``./setup.sh``の代わりに実行します。
 3. ``spectrometerConfig.json``が存在しない状態でアプリを初めて起動すると、セットアップウィザードが自動的に開きます。
