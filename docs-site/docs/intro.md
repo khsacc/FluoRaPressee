@@ -5,6 +5,8 @@ title: はじめに
 description: FluoRaPresséeオンラインマニュアル
 ---
 
+import Link from '@docusaurus/Link';
+
 # 
 
 ![](../../logo/catch.svg)
@@ -23,9 +25,20 @@ FluoRaPresséeは、高圧実験で使用することを念頭に置いて開発
 
 といった点が挙げられます。
 
-![](../static/img/main_gui_combined.jpg)
+<div className="manual-buttons">
+  <Link
+    className="button manual-button"
+    href="pathname:///files/FRP_simple_manual_v0.1.0_OceanOptics.pdf">
+    {'Ocean Optics用簡易マニュアル（PDF）'}
+  </Link>
+  <Link
+    className="button manual-button"
+    href="pathname:///files/FRP_PF18C_manual_simple.pdf">
+    {'KEK PF BL-18C用簡易マニュアル（PDF）'}
+  </Link>
+</div>
 
-[KEK PF BL-18C用簡易マニュアル](pathname:///files/FRP_PF18C_manual_simple.pdf)
+![](../static/img/main_gui_combined.jpg)
 
 ## 対応機種
 

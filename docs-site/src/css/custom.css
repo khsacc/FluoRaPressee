@@ -28,3 +28,25 @@
   --ifm-color-primary-lightest: #ffffff;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
 }
+
+.manual-buttons {
+  display: grid;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  gap: var(--ifm-paragraph-margin-bottom);
+  margin-block-end: var(--ifm-paragraph-margin-bottom);
+}
+
+/* Colors from logo/catch.svg. */
+.manual-button {
+  --ifm-button-background-color: #9d6764;
+  --ifm-button-border-color: var(--ifm-button-background-color);
+  --ifm-button-border-radius: 0;
+  --ifm-button-color: #fff;
+  white-space: normal;
+}
+
+.manual-button:hover,
+.manual-button:active {
+  --ifm-button-background-color: #6b4c52;
+}
