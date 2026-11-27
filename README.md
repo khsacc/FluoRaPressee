@@ -83,7 +83,10 @@ by the base `setup.bat`/`setup.sh`.
 1. On Windows, right-click `setup_oceanoptics.bat` and choose **Run as administrator**. Do not run
    `setup.bat` first. On macOS/Linux, run `./setup_oceanoptics.sh` instead of `./setup.sh`.
    The Ocean Optics setup script creates `.venv`, installs all standard dependencies and
-   `seabreeze`, and runs `seabreeze_os_setup` for the required OS-level configuration.
+   `seabreeze`. On Windows, connect the instrument before running setup. The tool checks device
+   detection and, when a driver is needed, shows and registers only the INF packages that match
+   the connected hardware. macOS/Linux use the upstream OS setup directly.
+   See the [driver troubleshooting guide](https://khsacc.github.io/FluoRaPressee/installation#ocean-optics-のドライバー).
 2. Set `"model": "OceanOptics"` in `spectrometerConfig.json` (the setup wizard on first launch
    also offers this as a supplier choice).
 

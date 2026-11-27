@@ -25,7 +25,7 @@ Set-StrictMode -Version Latest
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\FluoRaPressee"
 
 function Install-Silently {
-    param([string]$Path)
+    param([string]$Path, [string]$ExpectedMode = "")
     Write-Host "Installing $Path"
     $process = Start-Process -FilePath $Path -Wait -PassThru -ArgumentList @(
         "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=`"$Path.log`""
@@ -33,6 +33,12 @@ function Install-Silently {
     if (Test-Path "$Path.log") { Get-Content "$Path.log" | Select-String "FluoRaPressee|Error|error" }
     if ($process.ExitCode -ne 0) {
         throw "$Path exited with code $($process.ExitCode)"
+    }
+    if ($ExpectedMode) {
+        $log = Get-Content -LiteralPath "$Path.log" -Raw
+        if ($log -notmatch "FluoRaPressee installer mode: $ExpectedMode(?:;|\r?\n)") {
+            throw "Installer did not detect expected mode: $ExpectedMode"
+        }
     }
 }
 
@@ -42,10 +48,18 @@ if ($PreviousInstaller) {
     # must remove it (方針6).
     New-Item -ItemType File -Force -Path (Join-Path $InstallDir "_internal\stale-file-from-old-version.txt") | Out-Null
 }
-Install-Silently $Installer
+if ($PreviousInstaller) {
+    Install-Silently $Installer -ExpectedMode "update"
+} else {
+    Install-Silently $Installer -ExpectedMode "install"
+}
 
 $stale = Join-Path $InstallDir "_internal\stale-file-from-old-version.txt"
 if (Test-Path $stale) { throw "_internal was not cleared on update" }
+
+# Even the first release must exercise existing-install detection. The same exe
+# is also used to reinstall the same version, so this must remain update mode.
+Install-Silently $Installer -ExpectedMode "update"
 
 $SmokeData = Join-Path ([System.IO.Path]::GetTempPath()) "FluoRaPressee-install-test-$PID"
 $PreviousDataDir = $env:FLUORAPRESSEE_DATA_DIR  # restored below, as in build_windows.ps1

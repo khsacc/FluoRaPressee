@@ -44,8 +44,10 @@ Pythonを必要としないWindows用インストーラーを[GitHub Releases](h
    * Andorの場合: Andor SDK
    * Princeton Instrumentsの場合: PICam Runtime（カメラ用）。分光器（Acton SP シリーズ）はシリアル接続のため、PC側のCOMポート番号を確認しておきます。
    * Ocean Opticsの場合: ``setup.bat``を先に実行する必要はありません。``setup_oceanoptics.bat``の1回の実行で、
-     仮想環境の作成、共通パッケージと``seabreeze``のインストール、``seabreeze_os_setup``による
-     OS依存の設定まで自動的に行われます。macOS/Linuxでは``./setup_oceanoptics.sh``を``./setup.sh``の代わりに実行します。
+     仮想環境の作成、共通パッケージと``seabreeze``のインストール、装置の検出確認まで行われます。
+     Windowsでは装置を接続してから実行してください。ドライバーが必要な場合は実機のUSBハードウェアIDを照合し、対応するINFだけを表示して登録します。
+     詳しくは[ドライバーの説明](https://khsacc.github.io/FluoRaPressee/installation#ocean-optics-のドライバー)を参照してください。
+     macOS/Linuxでは``./setup_oceanoptics.sh``を``./setup.sh``の代わりに実行します。
 3. ``spectrometerConfig.json``が存在しない状態でアプリを初めて起動すると、セットアップウィザードが自動的に開きます。
    装置メーカー・接続設定・回折格子構成などを入力すると、``spectrometerConfig.json``がプロジェクトルートに
    生成されます。ウィザードの各ステップおよび``spectrometerConfig.json``自体の詳しい仕様は

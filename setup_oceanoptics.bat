@@ -35,17 +35,10 @@ if errorlevel 1 exit /b 1
 call .venv\Scripts\python.exe -m pip check
 if errorlevel 1 exit /b 1
 
-echo Running seabreeze_os_setup to install the Windows SeaBreeze drivers...
-call .venv\Scripts\seabreeze_os_setup.exe
+echo Checking the Ocean Optics driver and installing it only if needed...
+call .venv\Scripts\python.exe packaging\oceanoptics_driver.py
 if errorlevel 1 (
-    echo ERROR: seabreeze_os_setup failed. The Ocean Optics driver was not confirmed.
-    exit /b 1
-)
-
-echo Verifying that SeaBreeze can enumerate the instrument...
-call .venv\Scripts\python.exe -c "from seabreeze.spectrometers import list_devices; d=list_devices(); print('Detected:', d); raise SystemExit(0 if d else 1)"
-if errorlevel 1 (
-    echo ERROR: SeaBreeze still cannot detect an instrument. Unplug/reconnect it and run this script again.
+    echo ERROR: Ocean Optics device detection was not confirmed. See the messages above.
     exit /b 1
 )
 
