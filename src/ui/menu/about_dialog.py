@@ -34,7 +34,7 @@ def show_about_dialog(parent=None):
     text = (
         "<h3>FluoRaPressée</h3>"
         "<p>Spectrometer control &amp; analysis for high-pressure experiments<br>"
-        "Hiroki Kobayashi (The University of Tokyo)</p>"
+        "Hiroki Kobayashi, 2026</p>"
         f"<table>{table}</table>"
         f'<p><a href="{REPOSITORY_URL}">{REPOSITORY_URL}</a></p>'
     )
