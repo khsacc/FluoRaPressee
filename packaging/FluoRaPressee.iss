@@ -290,8 +290,9 @@ begin
     if WizardForm.YesRadio.Visible then
       WizardForm.FinishedLabel.Caption := FmtMessage(CustomMessage('UpdateRestartDescription'), ['{#AppVersion}']) + #13#10
     else
-      WizardForm.FinishedLabel.Caption := FmtMessage(CustomMessage('UpdateFinishedDescription'), ['{#AppVersion}']) +
-        #13#10#13#10 + SetupMessage(msgClickFinish) + #13#10;
+      WizardForm.FinishedLabel.Caption :=
+        FmtMessage(CustomMessage('UpdateFinishedDescription'), ['{#AppVersion}']) + #13#10#13#10 +
+        SetupMessage(msgClickFinish) + #13#10;
     HeightChange := WizardForm.FinishedLabel.AdjustHeight;
     WizardForm.RunList.Top := WizardForm.RunList.Top + HeightChange;
     WizardForm.RunList.Height := WizardForm.RunList.Height - HeightChange;
